@@ -331,7 +331,8 @@ export default function App() {
           });
           if (docSnap && docSnap.exists()) {
             const data = docSnap.data();
-            if (!data.hasAcceptedTerms) {
+            const hasAcceptedTermsLocal = localStorage.getItem('hasAcceptedTerms') === 'true';
+            if (!data.hasAcceptedTerms && !hasAcceptedTermsLocal) {
               setShowTermsModal(true);
             } else {
               setShowTermsModal(false);
@@ -367,7 +368,10 @@ export default function App() {
               setIsDriveConnected(true);
             }
           } else {
-            setShowTermsModal(true);
+            const hasAcceptedTermsLocal = localStorage.getItem('hasAcceptedTerms') === 'true';
+            if (!hasAcceptedTermsLocal) {
+              setShowTermsModal(true);
+            }
           }
         } catch (err) {
           console.error("Error fetching profile:", err);
@@ -3008,6 +3012,23 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </Link>
                   ))}
                 </nav>
+
+                <button 
+                  onClick={() => handleOptimize()}
+                  disabled={isOptimizing || isExtracting}
+                  className={`ml-4 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hidden lg:flex items-center gap-2 transition-all shadow-lg ${
+                    isDarkMode 
+                      ? 'bg-emerald-500 text-black hover:bg-emerald-400 shadow-emerald-500/20' 
+                      : 'bg-black text-white hover:bg-slate-800 shadow-black/20'
+                  } ${isOptimizing || isExtracting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isOptimizing ? (
+                    <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Zap className="w-3 h-3" />
+                  )}
+                  {isOptimizing ? 'Running...' : 'Optimize'}
+                </button>
               </div>
               <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
                   <button onClick={() => setFastMode(!fastMode)} className={`hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full border transition-colors text-[10px] font-bold ${
@@ -3551,13 +3572,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       <li><span className="font-semibold">Conservative:</span> {MODE_DESCRIPTIONS.conservative}</li>
                                       <li><span className="font-semibold">Balanced:</span> {MODE_DESCRIPTIONS.balanced}</li>
                                       <li><span className="font-semibold">Aggressive:</span> {MODE_DESCRIPTIONS.aggressive}</li>
-                                      <li><span className="font-semibold">Player-Coach:</span> {MODE_DESCRIPTIONS["Player-Coach"]}</li>
                                     </ul>
                                   </motion.div>
                                 )}
                               </AnimatePresence>
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                {(['conservative', 'balanced', 'aggressive', 'Player-Coach'] as const).map((m) => (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {(['conservative', 'balanced', 'aggressive'] as const).map((m) => (
                                   <button
                                     key={m}
                                     onClick={() => setMode(m)}
@@ -4865,6 +4885,35 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           isDarkMode={isDarkMode}
           resumeData={data}
         />
+
+        {/* Floating Quick Optimize Button */}
+        <motion.button
+          initial={{ opacity: 0.15, scale: 0.9 }}
+          animate={{ opacity: 0.15, scale: 1 }}
+          whileHover={{ opacity: 1, scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={() => handleOptimize()}
+          disabled={isOptimizing || isExtracting}
+          className={`fixed bottom-24 right-8 z-[100] group flex items-center gap-3 p-4 rounded-2xl shadow-2xl transition-all duration-300 border ${
+            isDarkMode 
+              ? 'bg-emerald-500 text-black shadow-emerald-500/30 border-emerald-400/50' 
+              : 'bg-neutral-900 text-white shadow-black/20 border-black/10'
+          } ${isOptimizing || isExtracting ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
+        >
+          <div className="relative">
+            <Zap className={`w-5 h-5 ${isOptimizing ? 'fill-current animate-pulse' : ''}`} />
+            {isOptimizing && (
+              <motion.div 
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+                className="absolute -inset-1 border-2 border-current border-t-transparent rounded-full"
+              />
+            )}
+          </div>
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-500 whitespace-nowrap">
+            {isOptimizing ? 'Nexus Processing...' : 'Quick Optimize'}
+          </span>
+        </motion.button>
       </footer>
       </div>
     </div>
