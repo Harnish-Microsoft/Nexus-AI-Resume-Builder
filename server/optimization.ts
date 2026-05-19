@@ -16,9 +16,11 @@ export function trimInput(text: string, maxLength: number = 8000): string {
 }
 
 export async function extractRelevantResumeData(resumeText: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
-  const isHybridOpenAI = pipelineType === 'hybrid-openai' && openaiApiKey;
+  // Even in hybrid-openai, we prefer Gemini for extraction to reduce costs and maintain 'hybrid' nature.
+  // We only use OpenAI if geminiApiKey is missing or specifically forced (not common for extraction).
+  const useOpenAIForExtraction = false; // Forced to false to ensure Gemini is used for cheap steps
 
-  if (isHybridOpenAI) {
+  if (useOpenAIForExtraction && openaiApiKey) {
     const openai = new OpenAI({ apiKey: openaiApiKey });
     const trimmedResume = trimInput(resumeText, 15000);
     const prompt = `
@@ -67,7 +69,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
         _model: "gpt-4o" 
       };
     } catch (error) {
-      console.error("Error extracting resume data with OpenAI:", error);
+      console.warn("Error extracting resume data with OpenAI, falling back to Gemini:", error);
     }
   }
 
@@ -152,9 +154,10 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
 }
 
 export async function extractJDKeywords(jobDescription: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
-  const isHybridOpenAI = pipelineType === 'hybrid-openai' && openaiApiKey;
+  // Similar to resume extraction, prefer Gemini for JD keyword extraction.
+  const useOpenAIForExtraction = false;
 
-  if (isHybridOpenAI) {
+  if (useOpenAIForExtraction && openaiApiKey) {
     const openai = new OpenAI({ apiKey: openaiApiKey });
     const trimmedJD = trimInput(jobDescription, 10000);
     const prompt = `
@@ -182,7 +185,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
         _model: "gpt-4o" 
       };
     } catch (error) {
-      console.error("Error extracting JD keywords with OpenAI:", error);
+      console.warn("Error extracting JD keywords with OpenAI, falling back to Gemini:", error);
     }
   }
 

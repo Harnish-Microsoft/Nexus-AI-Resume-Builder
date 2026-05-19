@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 
 export async function generatePerRole(
   experience: any[], 
@@ -8,9 +9,12 @@ export async function generatePerRole(
   audience?: string,
   mode?: string,
   customPrompt?: string,
-  brainDump?: string
+  brainDump?: string,
+  engine: 'gemini' | 'openai' = 'gemini',
+  openaiKey: string = ''
 ) {
   const genAI = new GoogleGenAI({ apiKey: geminiKey });
+  const oai = openaiKey ? new OpenAI({ apiKey: openaiKey }) : null;
 
   const promises = experience.map(async (role, index) => {
     const prompt = `
@@ -49,13 +53,24 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
 `;
 
     try {
-      const res = await genAI.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json" }
-      });
+      let text = "[]";
+      
+      if (engine === 'openai' && oai) {
+        const completion = await oai.chat.completions.create({
+          model: "gpt-4o-mini", // Use mini for speed and cost in per-role generation
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" }
+        });
+        text = completion.choices[0].message.content || "[]";
+      } else {
+        const res = await genAI.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { responseMimeType: "application/json" }
+        });
+        text = res.text || "[]";
+      }
 
-      const text = res.text || "[]";
       let bullets = [];
       try {
         const parsed = JSON.parse(text);

@@ -19,6 +19,7 @@ import {
   Cpu,
   BarChart3,
   Info,
+  Loader2,
   Moon,
   Sun,
   Trash2,
@@ -62,10 +63,10 @@ import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
-import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
+import { ResumeData, SuitabilityResult, Certification, MasterResume, FAANGInsights } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, getFAANGInsights } from './services/geminiService';
 import { RouterConfig } from './services/aiRouter';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
@@ -113,7 +114,7 @@ const LoadingSpinner = () => (
   </div>
 );
 
-type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic';
+type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic' | 'Player-Coach';
 
 import { CommandPalette } from './components/CommandPalette';
 
@@ -249,6 +250,9 @@ export default function App() {
     setMasterResumes([...masterResumes, newResume]);
   };
 
+  const [faangInsights, setFaangInsights] = useState<FAANGInsights | null>(null);
+  const [isFetchingFAANG, setIsFetchingFAANG] = useState(false);
+
   const [resumeText, setResumeText] = useState(() => {
     const selected = masterResumes.find(r => r.id === selectedResumeId) || masterResumes[0];
     return (selected && selected.data) ? JSON.stringify(selected.data, null, 2) : "{}";
@@ -311,7 +315,7 @@ export default function App() {
     }
   }, [encryptedApiKey]);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info', duration?: number) => {
     setToast({ message, type });
   };
 
@@ -1770,6 +1774,41 @@ export default function App() {
       setError(err.message || 'Failed to check suitability. Please try again.');
     } finally {
       setIsCheckingSuitability(false);
+    }
+  };
+
+  const handleGetFAANGInsights = async () => {
+    if (!targetCompany || targetCompany === 'none') {
+      setError('Please select a target FAANG company from Corporate DNA Tailoring first.');
+      return;
+    }
+    
+    if (!jobDescription && !jobUrl) {
+      setError('Please provide a job description or URL to get tailored FAANG insights.');
+      return;
+    }
+
+    setIsFetchingFAANG(true);
+    setFaangInsights(null);
+    setError(null);
+    try {
+      let finalJobDescription = jobDescription;
+      if (!finalJobDescription && jobUrl) {
+        finalJobDescription = await fetchJobDescription(jobUrl, getRouterConfig());
+      }
+      
+      const insights = await getFAANGInsights(
+        targetCompany,
+        targetRole || "Professional Candidate",
+        finalJobDescription,
+        getRouterConfig()
+      );
+      setFaangInsights(insights);
+    } catch (err: any) {
+      console.error("FAANG insights fetching failed:", err);
+      setError(err.message || 'Failed to fetch FAANG insights.');
+    } finally {
+      setIsFetchingFAANG(false);
     }
   };
 
@@ -3382,6 +3421,84 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   )}
                                 </AnimatePresence>
                               </div>
+
+                              {/* FAANG Insight Engine */}
+                              {['google', 'amazon', 'meta', 'apple', 'netflix'].includes(targetCompany) && (
+                                <div className={`p-4 rounded-xl border animate-in fade-in slide-in-from-top-2 duration-300 ${isDarkMode ? 'bg-indigo-500/5 border-indigo-500/20' : 'bg-indigo-50 border-indigo-200'}`}>
+                                  <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center gap-2">
+                                      <Zap className="w-3.5 h-3.5 text-indigo-500" />
+                                      <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">FAANG DNA Booster</span>
+                                    </div>
+                                    <button 
+                                      onClick={handleGetFAANGInsights}
+                                      disabled={isFetchingFAANG || (!jobDescription && !jobUrl)}
+                                      className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all ${
+                                        isFetchingFAANG 
+                                          ? 'bg-indigo-500/20 text-indigo-300 cursor-not-allowed' 
+                                          : 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-sm shadow-indigo-500/20'
+                                      }`}
+                                    >
+                                      {isFetchingFAANG ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : 'Generate Insights'}
+                                    </button>
+                                  </div>
+
+                                  <AnimatePresence mode="wait">
+                                    {faangInsights ? (
+                                      <motion.div 
+                                        key="faang-results"
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        className="space-y-3 overflow-hidden"
+                                      >
+                                        <p className={`text-[10px] leading-relaxed italic border-l-2 border-indigo-500 pl-2 ${isDarkMode ? 'text-indigo-200/70' : 'text-indigo-800/70'}`}>
+                                          {faangInsights.summary}
+                                        </p>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                          <div>
+                                            <h4 className={`text-[9px] font-black uppercase tracking-wider opacity-60 mb-2 ${isDarkMode ? 'text-indigo-200' : 'text-indigo-900'}`}>Key Terminologies</h4>
+                                            <div className="flex flex-wrap gap-1">
+                                              {faangInsights.keywords.map((kw, i) => (
+                                                <span key={i} className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[8px] font-medium border border-indigo-500/20">{kw}</span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <h4 className={`text-[9px] font-black uppercase tracking-wider opacity-60 mb-2 ${isDarkMode ? 'text-amber-200' : 'text-amber-900'}`}>Company Values</h4>
+                                            <div className="flex flex-wrap gap-1">
+                                              {faangInsights.leadership_principles?.map((lp, i) => (
+                                                <span key={i} className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 text-[8px] font-medium border border-amber-500/20">{lp}</span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div>
+                                          <h4 className={`text-[9px] font-black uppercase tracking-wider opacity-60 mb-2 ${isDarkMode ? 'text-indigo-200' : 'text-indigo-900'}`}>FAANG Strategy Tips</h4>
+                                          <ul className="space-y-1.5">
+                                            {faangInsights.culture_alignment_tips.map((tip, i) => (
+                                              <li key={i} className="text-[9px] flex items-start gap-2">
+                                                <div className="w-1 h-1 rounded-full bg-indigo-400 mt-1.5 shrink-0 shadow-sm shadow-indigo-400" />
+                                                <span className={`${isDarkMode ? 'text-white/70' : 'text-black/70'} leading-snug`}>{tip}</span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      </motion.div>
+                                    ) : !isFetchingFAANG && (
+                                      <div className="text-center py-2">
+                                        <div className={`text-[9px] font-medium ${isDarkMode ? 'text-white/40' : 'text-black/40'}`}>
+                                          Click to inject <span className="font-bold text-indigo-500">{TARGET_COMPANIES.find(c => c.id === targetCompany)?.label}</span> Corporate DNA insights
+                                        </div>
+                                      </div>
+                                    )}
+                                  </AnimatePresence>
+                                </div>
+                              )}
 
                               {/* Brain Dump Input */}
                               <div className="space-y-2">

@@ -39,22 +39,58 @@ try {
   const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "") 
     ? firebaseConfig.firestoreDatabaseId 
     : undefined;
-  db = getFirestore(app, dbId);
+  
+  if (dbId) {
+    console.log(`[Server] Attempting to initialize Firestore with DB ID: ${dbId}`);
+    db = getFirestore(app, dbId);
+  } else {
+    db = getFirestore(app);
+  }
 } catch (e) {
-  console.warn("[Server] Failed to initialize Firestore with specified database ID, falling back to default.");
+  console.error("[Server] Critical Firestore initialization error:", e);
   db = getFirestore(app);
 }
 
+// Global error handler for Firestore to detect Permission Denied early
+db.listCollections().then(() => {
+  console.log("[Server] Firestore connection verified.");
+}).catch(err => {
+  console.error("[Server] Firestore connection test failed:", err.message);
+  if (err.message.includes("PERMISSION_DENIED") || err.message.includes("not found")) {
+    console.warn("[Server] Detected potential database ID mismatch. Falling back to default database.");
+    db = getFirestore(app);
+  }
+});
+
 // Helper to get API keys from Firestore securely
 async function getApiKeys(idToken: string) {
-    if (idToken === "SYSTEM_PIPELINE") return null;
+    if (idToken === "SYSTEM_PIPELINE") return { gemini: process.env.GEMINI_API_KEY };
     try {
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      const uid = decodedToken.uid;
-      const doc = await db.collection("users").doc(uid).get();
+      let uid: string;
+      try {
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        uid = decodedToken.uid;
+      } catch (authError: any) {
+        console.warn(`[getApiKeys] Auth verification failed: ${authError.message}. Using system keys.`);
+        return { gemini: process.env.GEMINI_API_KEY };
+      }
+
+      let doc;
+      try {
+        doc = await db.collection("users").doc(uid).get();
+      } catch (firestoreError: any) {
+        console.error(`[getApiKeys] Firestore read failed for UID ${uid}:`, firestoreError.message);
+        // If Permission Denied, it's likely a DB ID issue. Fall back to system key instead of breaking.
+        if (firestoreError.message.includes("PERMISSION_DENIED") || firestoreError.message.includes("7")) {
+          console.warn("[getApiKeys] Falling back to system Gemini API key due to database permissions.");
+          return { gemini: process.env.GEMINI_API_KEY };
+        }
+        throw firestoreError;
+      }
       
-      if (!doc.exists) {
-        return null; // Return null instead of throwing
+      if (!doc || !doc.exists) {
+        console.log(`[getApiKeys] No profile found for ${uid}. Using system keys.`);
+        return { gemini: process.env.GEMINI_API_KEY };
       }
       
       let data = doc.data();
@@ -192,6 +228,59 @@ async function startServer() {
 
   app.get("/api/health-check", (req, res) => {
     res.json({ status: "alive", timestamp: new Date().toISOString() });
+  });
+
+  // Alias for backward compatibility and simpler calls
+  app.post("/api/optimize", async (req, res) => {
+    const { prompt, model, engine, encryptedKey } = req.body;
+    const authHeader = req.header('Authorization');
+    const idToken = authHeader?.startsWith('Bearer ') ? authHeader.split('Bearer ')[1] : "SYSTEM_PIPELINE";
+
+    try {
+      console.log(`[Server] /api/optimize called with ${engine}/${model}`);
+      
+      // Determine keys
+      let geminiKey = process.env.GEMINI_API_KEY;
+      if (idToken !== "SYSTEM_PIPELINE") {
+        try {
+          const keys = await getApiKeys(idToken);
+          if (keys) geminiKey = keys.gemini || geminiKey;
+        } catch (e) {
+          console.warn("[Server] Could not fetch user keys for /api/optimize, using system keys.");
+        }
+      }
+
+      if (engine === 'gemini') {
+        const genAI = new GoogleGenAI({ apiKey: geminiKey || "", httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
+        const response = await genAI.models.generateContent({
+          model: model || "gemini-3-flash-preview",
+          contents: [{ role: 'user', parts: [{ text: prompt }] }]
+        });
+        return res.json({ result: response.text });
+      } else if (engine === 'openai') {
+        let openaiKey = "";
+        try {
+          const keys = await getApiKeys(idToken);
+          openaiKey = keys?.openai || "";
+        } catch (e) {}
+
+        if (!openaiKey) {
+            return res.status(400).json({ error: "OpenAI API key is missing. Please save it in your profile." });
+        }
+
+        const openai = new OpenAI({ apiKey: openaiKey });
+        const completion = await openai.chat.completions.create({
+            model: model || "gpt-4o-mini",
+            messages: [{ role: "user", content: prompt }]
+        });
+        return res.json({ result: completion.choices[0].message.content });
+      } else {
+        return res.status(400).json({ error: `Engine ${engine} not supported in simple optimize route.` });
+      }
+    } catch (error: any) {
+      console.error("[Server] /api/optimize Error:", error);
+      res.status(500).json({ error: error.message || "Failed to process AI request" });
+    }
   });
 
   app.get("/api/generate-resume-pdf", async (req, res) => {
@@ -795,11 +884,7 @@ async function startServer() {
       console.log("[Pipeline] Step 2: Trimming Content...");
       const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords);
       
-      console.log("=== OPTIMIZED INPUT EXPERIENCE ===");
-      console.dir(optimizedInput.experience, { depth: null });
-
-      // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
-      const finalPrompt = `
+      const finalPromptBase = `
         You are a senior executive resume strategist. 
         Optimize this structured resume data for the target role: ${targetRole}.
         Audience: ${audience}. Mode: ${mode}.
@@ -819,96 +904,108 @@ async function startServer() {
           - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized," "Spearheaded."
           - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". Focus entirely on Azure Infrastructure.
         ` : ''}
-
-        INPUT DATA (Optimized):
-        ${JSON.stringify(optimizedInput, null, 2)}
-        
-        STRICT RULES:
-        1. TONE & FOCUS: Maintain a professional, concise, executive-level tone suitable for FAANG, Senior Cloud Architect, or Director-level infrastructure roles. Focus heavily on these JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
-        
-        2. PRESERVE TITLES: Do NOT modify job titles under any circumstances. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
-        
-        3. INCLUDE ALL ROLES: You MUST include every single role provided in the INPUT DATA. Do not skip any jobs, even very old ones.
-        
-        4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA. Do not "suggest" certifications if the user doesn't have them.
-        
-        5. BREVITY & DENSITY: Bullet points MUST be dense and achievement-oriented (recommended length: 15-20 words). Prioritize hard skills, tools, and scale metrics over verbose filler jargon.
-        
-        6. RECENT ROLE EXPANSION (Post-2018) - ABSOLUTE REQUIREMENT: You MUST output EXACTLY 4 to 5 bullet points for EVERY single role that occurred after 2018. DO NOT merge, combine, or consolidate the original bullets, even if the role was only a few months long. If the input has 5 bullets for a recent role, you must rewrite and output exactly 4 or 5 bullets. No exceptions.
-        
-        7. OLDER ROLE COMPRESSION (Pre-2018): Provide EXACTLY one (1) bullet point maximum for roles and projects that occurred before 2018. Focus on foundational infrastructure experience.
-        
-        8. SOURCE ANCHORING (CRITICAL): Each experience entry contains ORIGINAL BULLETS. You MUST derive new bullets ONLY from that specific role’s original content. Do NOT borrow, reuse, or "hallucinate" content from other roles to fill gaps.
-        
-        9. BALANCED IaC: Terraform/IaC references are permitted but limited to 2 bullet points TOTAL across the entire resume.
-        
-        10. VERB CONTROL: Avoid forbidden buzzwords like "Spearheaded", "Visionary", "Dynamic", or "Guru". For execution bullets, use allowed verbs: "Deployed", "Maintained", "Utilized", "Provisioned".
-        
-        11. ANTI-DUPLICATION: Avoid semantic repetition across roles. Each role should demonstrate distinct business or technical impact. Do not repeat identical achievement phrasing.
-        
-        12. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative entirely on Azure Infrastructure, HA/DR, and Governance.
-        
-        
-        OUTPUT SCHEMA (MUST MATCH EXACTLY):
-        {
-          "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
-          "summary": "string",
-          "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
-          "experience": [ { "id": "string", "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
-          "projects": [ { "title": "string", "description": "string" } ],
-          "education": ["string"],
-          "certifications": [
-            { "name": "string", "issuer": "string", "date": "string" }
-          ],
-          "ats_keywords_from_jd": ["string"],
-          "ats_keywords_added_to_resume": ["string"],
-          "keyword_gap": ["string"],
-          "match_score": 85,
-          "baseline_score": 60,
-          "improvement_notes": ["string"],
-          "audience_alignment_notes": "string",
-          "why_this_job": "string",
-          "rejection_reasons": ["string"],
-          "star_stories": [
-            { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" }
-          ],
-          "audit_report": {
-            "score": 85,
-            "flags": [
-              { "id": "string", "type": "string", "message": "string", "fix": "string", "severity": "high" }
-            ],
-            "trajectory": {
-              "stage": "acceleration",
-              "description": "string",
-              "recommendation": "string"
-            }
-          }
-        }
       `;
 
       let result;
       let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
 
       if (pipelineType === 'hybrid-openai') {
-        // OPENAI BRANCH
+        // OPENAI BRANCH - Now using the improved Split Generation Strategy
         try {
-          console.log(`[Hybrid Pipeline] Step 3: Premium OpenAI Generation (${usedModel})...`);
+          console.log(`[Hybrid Pipeline] Step 3: Split Generation (OpenAI ${usedModel})...`);
           const openai = new OpenAI({ apiKey: openaiKey });
-          const chatCompletion = await openai.chat.completions.create({
-            model: usedModel,
-            messages: [{ 
-              role: "system", 
-              content: "You are a senior executive resume strategist. Output strictly JSON." 
-            }, { 
-              role: "user", 
-              content: finalPrompt
-            }],
-            response_format: { type: "json_object" }
-          });
+          
+          const metaPrompt = `
+            ${finalPromptBase}
+            
+            Optimize the meta-sections of this resume.
+            Keywords: ${optimizedInput.jd_keywords.join(', ')}.
+            
+            INPUT DATA:
+            ${JSON.stringify({
+              personal_info: optimizedInput.personal_info,
+              summary: optimizedInput.summary,
+              skills: optimizedInput.skills,
+              projects: optimizedInput.projects,
+              education: optimizedInput.education,
+              certifications: optimizedInput.certifications,
+              jd_keywords: optimizedInput.jd_keywords
+            }, null, 2)}
+            
+            RULES:
+            - Summary: Approx 100 words.
+            - Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
+            - DO NOT invent certifications.
+            - Brevity & Density: Bullet points MUST be concise and dense (max 15 words).
+            - GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
+            
+            OUTPUT JSON SCHEMA:
+            {
+              "personal_info": { ... },
+              "summary": "...",
+              "skills": { "Category 1": ["skill1", ...], ... },
+              "projects": [...],
+              "education": [...],
+              "certifications": [...],
+              "ats_keywords_from_jd": [...],
+              "ats_keywords_added_to_resume": [...],
+              "keyword_gap": [...],
+              "match_score": 85,
+              "improvement_notes": [...],
+              "why_this_job": "...",
+              "audience_alignment_notes": "...",
+              "star_stories": [
+                { "bullet": "The highly optimized bullet", "situation": "...", "task": "...", "action": "...", "result": "..." }
+              ],
+              "audit_report": {
+                "score": 85,
+                "flags": [
+                  { "id": "f1", "type": "...", "message": "...", "fix": "...", "severity": "high" }
+                ],
+                "trajectory": { "stage": "acceleration", "description": "...", "recommendation": "..." },
+                "faangInsights": {
+                  "company": "${targetCompany || 'Target'}",
+                  "keywords": ["..."],
+                  "skills": ["..."],
+                  "leadership_principles": ["..."],
+                  "culture_alignment_tips": ["..."],
+                  "summary": "Tailored FAANG level advice..."
+                }
+              }
+            }
+          `;
 
-          const responseText = chatCompletion.choices[0].message.content || "";
-          const genInput = chatCompletion.usage?.prompt_tokens || 0;
-          const genOutput = chatCompletion.usage?.completion_tokens || 0;
+          const [metaCompletion, roleResults] = await Promise.all([
+            openai.chat.completions.create({
+              model: usedModel,
+              messages: [{ role: "system", content: "You are a senior executive resume strategist. Output strictly JSON." }, { role: "user", content: metaPrompt }],
+              response_format: { type: "json_object" }
+            }),
+            generatePerRole(
+              optimizedInput.experience, 
+              geminiKey, 
+              targetCompany, 
+              targetRole,
+              audience,
+              mode,
+              customPrompt,
+              brainDump,
+              'openai',
+              openaiKey
+            )
+          ]);
+
+          const metaText = metaCompletion.choices[0].message.content || "{}";
+          const metaData = JSON.parse(metaText);
+          const finalExperience = deduplicateAndScore(roleResults);
+
+          const responseData = {
+            ...metaData,
+            experience: finalExperience
+          };
+
+          const genInput = metaCompletion.usage?.prompt_tokens || 0;
+          const genOutput = metaCompletion.usage?.completion_tokens || 0;
 
           logUsage({
             userId: "anonymous",
@@ -936,7 +1033,7 @@ async function startServer() {
           });
 
           result = {
-            result: responseText,
+            result: JSON.stringify(responseData),
             usage: {
               promptTokenCount: genInput,
               candidatesTokenCount: genOutput,
@@ -948,14 +1045,14 @@ async function startServer() {
             _model: usedModel
           };
         } catch (openaiError: any) {
-          console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash...", openaiError.message);
-          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use the cheap Gemini we have
+          console.warn("[Pipeline] OpenAI Premium (Hybrid Split) Failed, falling back to Gemini Flash...", openaiError.message);
+          // FALLBACK
           const fallbackModelName = "gemini-3-flash-preview";
           const genAI = new GoogleGenAI({ apiKey: geminiKey });
           
           const fallbackResult = await genAI.models.generateContent({
             model: fallbackModelName,
-            contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+            contents: [{ role: 'user', parts: [{ text: finalPromptBase + "\nOutput strictly JSON following the full OptimizationResult schema." }] }],
             config: { responseMimeType: "application/json" }
           });
           
@@ -1038,6 +1135,14 @@ async function startServer() {
                 "stage": "acceleration",
                 "description": "...",
                 "recommendation": "..."
+              },
+              "faangInsights": {
+                "company": "${targetCompany || 'Target'}",
+                "keywords": ["..."],
+                "skills": ["..."],
+                "leadership_principles": ["..."],
+                "culture_alignment_tips": ["..."],
+                "summary": "Tailored FAANG level advice..."
               }
             }
           }

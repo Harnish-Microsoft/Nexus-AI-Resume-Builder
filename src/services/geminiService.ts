@@ -2,7 +2,7 @@ import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
-import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport } from "../types";
+import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport, FAANGInsights } from "../types";
 import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
 
@@ -342,7 +342,7 @@ export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
   targetRole: string,
-  mode: "conservative" | "balanced" | "aggressive" | "Player-Coach",
+  mode: "conservative" | "balanced" | "aggressive" | "Player-Coach" | "automatic",
   audience: string,
   config: RouterConfig,
   linkedInUrl?: string,
@@ -848,10 +848,6 @@ export async function selectBestMasterResume(
   if (resumes.length === 1) return resumes[0].id;
 
   const routedConfig = routeTask('rewrite_resume', config);
-  const apiKey = await getDecryptedKey(routedConfig.apiKey || '');
-  const ai = new GoogleGenAI({ apiKey });
-  const model = ai.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
-
   const mastersSummary = resumes.map((m) => {
     const content = typeof m.data === 'string' ? m.data : JSON.stringify(m.data);
     return `ID: ${m.id}\nName: ${m.name}\nContext: ${content.substring(0, 1500)}...`;
@@ -871,13 +867,8 @@ export async function selectBestMasterResume(
   `;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: "application/json" }
-    });
-    
-    const text = result.response.text();
-    const resultText = extractJson(text);
+    const data = await callAI(prompt, 'gemini-3.1-flash-lite', 'gemini', routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.selectedId;
   } catch (error) {
@@ -1157,6 +1148,48 @@ export async function generateMasterResume(
     return JSON.parse(resultText);
   } catch (error) {
     console.error("Error generating master resume bullets:", error);
+    throw error;
+  }
+}
+
+export async function getFAANGInsights(
+  companyId: string,
+  targetRole: string,
+  jobDescription: string,
+  config: RouterConfig
+): Promise<FAANGInsights> {
+  const routedConfig = routeTask('rewrite_resume', config);
+  const prompt = `
+    ROLE: FAANG Interview & Career Coach.
+    COMPANY: ${companyId.toUpperCase()}
+    TARGET ROLE: ${targetRole}
+    JOB CONTEXT: ${jobDescription.substring(0, 3000)}
+    
+    TASK: Provide specific keywords, skills, and cultural alignment tips for this specific FAANG company relative to the JD.
+    FAANG context to incorporate:
+    - Google: Googlyness, algorithmic complexity, system design at scale, "No ogres", internal tooling (Borg, Bazel).
+    - Amazon: 16 Leadership Principles, "Day 1" mentality, customer obsession, writing over talking (6-pagers).
+    - Meta: Move fast, impact, efficiency, open source, performance measurement, "Building social value".
+    - Apple: Privacy, design, perfectionism, closed ecosystem, craft, "Thinking different".
+    - Netflix: Context not control, high talent density, keeper test, transparency, "Dream Team".
+    
+    STRICT JSON OUTPUT:
+    {
+      "company": "${companyId}",
+      "keywords": ["5-7 specific technical or cultural keywords"],
+      "skills": ["5-7 specific technical skills"],
+      "leadership_principles": ["Relevant principles if Amazon, or values for others"],
+      "culture_alignment_tips": ["3-5 actionable tips"],
+      "summary": "Short 1-2 sentence overview of what this company values for this role"
+    }
+  `;
+
+  try {
+    const data = await callAI(prompt, 'gemini-3-flash-preview', 'gemini', routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    return JSON.parse(resultText);
+  } catch (error) {
+    console.error("Error getting FAANG insights:", error);
     throw error;
   }
 }

@@ -25,13 +25,13 @@ export const AUDIENCES = [
 
 export const TARGET_COMPANIES = [
   { id: 'none', label: 'Generic Tech', icon: '💻', signal: 'standard technical excellence' },
-  { id: 'amazon', label: 'Amazon', icon: '📦', signal: 'Ownership, Bias for Action, Dive Deep' },
-  { id: 'microsoft', label: 'Microsoft', icon: '🪟', signal: 'Enterprise Scale, Cloud Transformation' },
-  { id: 'google', label: 'Google', icon: '🔍', signal: 'Systems Design, Scale, Algorithmic Impact' },
-  { id: 'meta', label: 'Meta', icon: '♾️', signal: 'Move Fast, Ship Impact, Performance' },
-  { id: 'apple', label: 'Apple', icon: '🍎', signal: 'Precision, User Experience, Discretion' },
+  { id: 'google', label: 'Google', icon: '🔍', signal: 'L3-L9 scale, Algorithmic Impact, Go/Python proficiency' },
+  { id: 'amazon', label: 'Amazon', icon: '📦', signal: '16 Leadership Principles, Ownership, Bias for Action' },
+  { id: 'meta', label: 'Meta', icon: '♾️', signal: 'Move Fast, Ship Impact, High performance culture' },
+  { id: 'apple', label: 'Apple', icon: '🍎', signal: 'Precision Engineering, UI/UX focus, Secrecy & Craft' },
+  { id: 'netflix', label: 'Netflix', icon: '🍿', signal: 'Freedom & Responsibility, Excellence, High-density talent' },
+  { id: 'microsoft', label: 'Microsoft', icon: '🪟', signal: 'Enterprise Scale, Azure/Cloud Transformation' },
   { id: 'accenture', label: 'Accenture', icon: '📈', signal: 'Client Value, Global Delivery' },
-  { id: 'infosys', label: 'Infosys', icon: '🌐', signal: 'Managed Services, Transformation' },
 ];
 
 export const MODEL_PRICING: Record<string, { input: number, output: number }> = {
