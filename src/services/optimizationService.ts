@@ -57,6 +57,11 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
     Extract the top 15-20 essential keywords and requirements from this job description.
     Include technical skills, tools, methodologies, and soft skills mentioned.
     
+    STRICT RULE: Do NOT include keywords related to Kubernetes, K8s, Docker, containers, or microservices. 
+    Focus on:
+    1. Azure Infrastructure (Networking, Policy, Identity, Governance, BCDR, VMs).
+    2. Senior Leadership/Management (Strategic Planning, SLA management, Team Leadership, Service Delivery, Stakeholder Management, Managerial competencies).
+    
     Return only a JSON array of strings.
     
     JOB DESCRIPTION:

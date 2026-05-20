@@ -51,12 +51,13 @@ export const improveTextWithAI = async (
       You are a professional resume strategist.
       
       Tasks:
-      1. Rewrite tailored to the job description.
-      2. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
-      3. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
-      4. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
-      5. No fluff: Replace vague responsibilities with high-impact accomplishments.
-      6. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
+      1. Rewrite tailored to the job description and target role.
+      2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
+      3. SENIOR LEADERSHIP & STRATEGIC IMPACT: For senior roles (Manager, CTO, IT Head, Service Delivery Manager), emphasize strategic planning, team management, stakeholder engagement, and business outcomes (SLAs, Cost Control, Efficiency).
+      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact and leadership depth.
+      5. ACTION VERBS: Start with strong executive verbs (Steer, Orchestrate, Spearhead, Optimize, Manage).
+      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
       - Clean structured resume
@@ -96,12 +97,13 @@ export const rewriteSectionWithAI = async (
       You are a professional resume strategist.
       
       Tasks:
-      1. Rewrite tailored to the job description.
-      2. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
-      3. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
-      4. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
-      5. No fluff: Replace vague responsibilities with high-impact accomplishments.
-      6. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
+      1. Rewrite tailored to the job description and target role.
+      2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
+      3. SENIOR LEADERSHIP & STRATEGIC IMPACT: For senior roles (Manager, CTO, IT Head, Service Delivery Manager), emphasize strategic planning, team management, stakeholder engagement, and business outcomes (SLAs, Cost Control, Efficiency).
+      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact and leadership depth.
+      5. ACTION VERBS: Start with strong executive verbs (Steer, Orchestrate, Spearhead, Optimize, Managed).
+      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
       - Clean structured resume in JSON format

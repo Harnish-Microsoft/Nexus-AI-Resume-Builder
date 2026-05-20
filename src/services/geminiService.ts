@@ -146,29 +146,6 @@ export async function getDecryptedKey(encryptedKey: string): Promise<string> {
   return process.env.GEMINI_API_KEY || '';
 }
 
-
-// Centralized Fallback Handler
-export async function callWithModelFallback(
-  prompt: string,
-  modelHierarchy: string[],
-  engine: EngineType,
-  encryptedKey?: string
-) {
-  let lastError: any;
-  for (const model of modelHierarchy) {
-    try {
-      return await callAI(prompt, model, engine, encryptedKey);
-    } catch (error: any) {
-      console.warn(`[GeminiService] Model ${model} failed, attempting next if available...`);
-      lastError = error;
-      const errorMsg = error?.message?.toLowerCase() || "";
-      const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
-      if (!isQuotaError) break; // If not quota, don't fallback
-    }
-  }
-  throw lastError;
-}
-
 async function callAI(prompt: string, model: string, engine: EngineType, encryptedKey?: string) {
   const idToken = await auth.currentUser?.getIdToken();
 
@@ -177,7 +154,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   }
 
   // Fallback Logic definitions
-  const FALLBACK_GEMINI_MODEL = "gemini-3-flash-preview";
+  const FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite";
   
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
@@ -190,14 +167,10 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
       const ai = new GoogleGenAI({ apiKey });
       
-      // Attempt primary model, fallback to gemini-3-flash-preview on error
+      // Attempt primary model, fallback to gemini-3.1-flash-lite on error
       const executeWithFallback = async (modelToTry: string): Promise<any> => {
         const isThinkingModel = modelToTry.includes('thinking') || modelToTry.includes(':thinking');
-        
-        // Map old models to new allowed ones based on the requested hierarchy
-        let targetModel = modelToTry;
-        if (modelToTry.includes('gemini-1.5-pro')) targetModel = 'gemini-3.1-pro-preview';
-        else if (modelToTry.includes('gemini-1.5-flash')) targetModel = 'gemini-3-flash-preview';
+        const cleanModel = modelToTry.replace(':thinking', '').replace('gemini-1.5-pro', 'gemini-3.1-pro-preview').replace('gemini-1.5-flash', 'gemini-3-flash-preview');
               
         const config = {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
@@ -206,7 +179,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
         try {
           const response = await ai.models.generateContent({ 
-            model: targetModel,
+            model: cleanModel,
             contents: prompt,
             config
           });
@@ -224,7 +197,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
           const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
           
           if (isQuotaError && modelToTry !== FALLBACK_GEMINI_MODEL) {
-            console.warn(`[Gemini Service] Quota reached for ${targetModel}. Falling back to ${FALLBACK_GEMINI_MODEL}...`);
+            console.warn(`[Gemini Service] Quota reached for ${cleanModel}. Falling back to ${FALLBACK_GEMINI_MODEL}...`);
             return await executeWithFallback(FALLBACK_GEMINI_MODEL);
           }
           throw innerError;
@@ -355,8 +328,7 @@ Return ONLY a JSON object with the following structure:
 `;
 
   try {
-    const modelHierarchy = ["gemini-3.5-flash", "gemini-3-flash-preview"];
-    const data = await callWithModelFallback(prompt, modelHierarchy, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, modelToUse, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     if (!resultText) throw new Error("No response from AI");
     return JSON.parse(resultText);
@@ -490,18 +462,12 @@ ${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejec
 ${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
 
-AUTO-INJECTED CORPORATE DNA:
-${targetCompany === 'amazon' ? 'EMPHASIZE: "Ownership", "Bias for Action", and "Data-driven results".' : 
-  targetCompany === 'microsoft' ? 'EMPHASIZE: "Enterprise Scale", "Cloud Transformation", and "Collaborative Ecosystems".' :
-  targetCompany === 'google' ? 'EMPHASIZE: "Systems Design", "Extreme Scale", "Algorithmic Efficiency".' :
-  targetCompany === 'meta' ? 'EMPHASIZE: "Moving Fast", "Shipping Engineering Impact", and "Performance Optimization".' :
-  targetCompany === 'accenture' || targetCompany === 'infosys' ? 'EMPHASIZE: "Client Delivery", "Global Managed Services", and "Cross-functional Deployment".' :
-  'EMPHASIZE: "Strategic Business Impact", "Operational Excellence", "Enterprise Modernization", and "Corporate ROI". Use professional, executive-level vocabulary.'}
-
-GLOBAL NEGATIVE CONSTRAINTS (THE USER HAS NO EXPOSURE TO THESE):
-- ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps", "Azure DevOps", "Infrastructure as Code", "Terraform", "Ansible", "Kubernetes", "Docker", "DevSecOps".
-- PIVOT: If the source mentions "CI/CD" or "Pipelines", rewrite it as "Standardized Multi-Environment Provisioning" or "Release Orchestration".
-- PIVOT: If the source mentions "DevOps", rewrite it as "Unified Infrastructure Operations".
+CORPORATE DNA TAILORING:
+${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership" and "Bias for Action".' : ''}
+${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale" and "Cloud Transformation".' : ''}
+${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design" and "Innovation".' : ''}
+${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Shipping Engineering Impact".' : ''}
+${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery" and "Managed Services".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
 
 STRICT PROFESSIONAL GUIDELINES:
 - SCANNABILITY: Optimize for quick reading. Use clear bullet points.
@@ -854,8 +820,7 @@ export async function analyzeBestAudiences(
   };
 
   try {
-    const modelHierarchy = ["gemini-3.5-flash", "gemini-3-flash-preview"];
-    const data = await callWithModelFallback(prompt, modelHierarchy, 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, modelToUse, 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText || '[]');
     return Array.isArray(parsed) ? parsed : (parsed.audiences || [targetRole]);

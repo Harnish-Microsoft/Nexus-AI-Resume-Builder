@@ -27,7 +27,7 @@ ROLE DATA:
 ${JSON.stringify(role)}
 
 CORPORATE DNA TAILORING (DEMONSTRATE, DO NOT DECLARE):
-${targetCompany ? `Tailor appropriately for ${targetCompany}. Focus on specific impacts and technologies relevant to their industry.` : 'Tailor for a high-impact CORPORATE execution style. Focus on Strategic Business Impact, Operational Excellence, and Enterprise-level ROI.'}
+${targetCompany ? `Tailor appropriately for ${targetCompany}. Focus on specific impacts and technologies relevant to their industry.` : ''}
 
 GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
 1. ZERO-SHOT ANTI-HALLUCINATION: Use ONLY the provided role data. Do NOT invent numbers, percentages, budgets, or metrics.
@@ -37,13 +37,10 @@ GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
 4. COMPREHENSIVE DETAIL: Include all significant achievements provided in the source ROLE DATA. Do not arbitrarily cap the number of bullet points unless necessary for layout (aim for high impact).
 5. CLOUD & INFRASTRUCTURE: Use professional terminology naturally.
 6. NO ARBITRARY COMPRESSION: Older roles should still be accurately represented with multiple bullet points if the source data contains them.
-7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps", "Azure DevOps", "Infrastructure as Code", "Terraform", "Ansible", "Kubernetes", "Docker", "DevSecOps". 
-   - PIVOT: If the source mentions "CI/CD" or "Pipelines", rewrite it as "Standardized Multi-Environment Provisioning" or "Release Orchestration".
-   - PIVOT: If the source mentions "DevOps", rewrite it as "Unified Infrastructure Operations".
+7. ACCURATE TERMINOLOGY: Include all relevant technical skills and tools (e.g., CI/CD, DevOps, Cloud Platforms) as they appear in the source data.
 8. PLAYER-COACH MODE: ONLY IF mode is 'Player-Coach':
    - BALANCE: 60% Execution (Azure infra), 40% Leadership (Mentoring, Architecture reviews).
    - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized."
-   - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps", "Azure DevOps". Focus entirely on Azure Core Infrastructure & Operations.
 9. GOOGLE XYZ FORMULA: ALL high-impact bullets MUST conform to the formula: "Accomplished [X] as measured by [Y], by doing [Z]."
    - [X] = The impact or accomplishment. What did you achieve?
    - [Y] = The metrics, data, or scale. (Example: "Improving performance by 20%", "Generating $50k revenue", "Supporting 1M+ active users").
@@ -57,7 +54,6 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
 
     try {
       let text = "[]";
-      let usage = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
       
       if (engine === 'openai' && oai) {
         const completion = await oai.chat.completions.create({
@@ -66,11 +62,6 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
           response_format: { type: "json_object" }
         });
         text = completion.choices[0].message.content || "[]";
-        usage = {
-          promptTokenCount: completion.usage?.prompt_tokens || 0,
-          candidatesTokenCount: completion.usage?.completion_tokens || 0,
-          totalTokenCount: completion.usage?.total_tokens || 0
-        };
       } else {
         const res = await genAI.models.generateContent({
           model: "gemini-3-flash-preview",
@@ -78,11 +69,6 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
           config: { responseMimeType: "application/json" }
         });
         text = res.text || "[]";
-        usage = {
-          promptTokenCount: res.usageMetadata?.promptTokenCount || 0,
-          candidatesTokenCount: res.usageMetadata?.candidatesTokenCount || 0,
-          totalTokenCount: (res.usageMetadata?.promptTokenCount || 0) + (res.usageMetadata?.candidatesTokenCount || 0)
-        };
       }
 
       let bullets = [];
@@ -94,26 +80,20 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
       }
 
       return {
-        roleData: {
-          id: role.id || `role_${index + 1}`,
-          role: role.role,
-          company: role.company,
-          duration: role.duration,
-          bullets: bullets
-        },
-        usage
+        id: role.id || `role_${index + 1}`,
+        role: role.role,
+        company: role.company,
+        duration: role.duration,
+        bullets: bullets
       };
     } catch (err) {
       console.error(`[RoleGen] Failed for ${role.id || index}:`, err);
       return {
-        roleData: {
-          id: role.id || `role_${index + 1}`,
-          role: role.role,
-          company: role.company,
-          duration: role.duration,
-          bullets: role.original_bullets || []
-        },
-        usage: { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 }
+        id: role.id || `role_${index + 1}`,
+        role: role.role,
+        company: role.company,
+        duration: role.duration,
+        bullets: role.original_bullets || []
       };
     }
   });
