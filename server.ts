@@ -909,18 +909,24 @@ async function startServer() {
         ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
         ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
         
-        CORPORATE DNA TAILORING:
-        ${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership", "Bias for Action", and "Data-driven results". Use terminology from Amazon Leadership Principles.' : ''}
-        ${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale", "Cloud Transformation", and "Collaborative Ecosystems".' : ''}
-        ${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design", "Extreme Scale", "Algorithmic Efficiency", and "Google XYZ Formula".' : ''}
-        ${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast", "Shipping End-to-End Impact", and "Performance Optimization".' : ''}
-        ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery", "Global Managed Services", and "Cross-functional Deployment".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
+        AUTO-INJECTED CORPORATE DNA:
+        ${targetCompany === 'amazon' ? 'EMPHASIZE: "Ownership", "Bias for Action", and "Data-driven results". Use Amazon Leadership Principles terminology.' : 
+          targetCompany === 'microsoft' ? 'EMPHASIZE: "Enterprise Scale", "Cloud Transformation", and "Collaborative Ecosystems".' :
+          targetCompany === 'google' ? 'EMPHASIZE: "Systems Design", "Extreme Scale", "Algorithmic Efficiency", and "Google XYZ Formula".' :
+          targetCompany === 'meta' ? 'EMPHASIZE: "Moving Fast", "Shipping End-to-End Impact", and "Performance Optimization".' :
+          targetCompany === 'accenture' || targetCompany === 'infosys' ? 'EMPHASIZE: "Client Delivery", "Global Managed Services", and "Cross-functional Deployment".' :
+          'EMPHASIZE: "Strategic Business Impact", "Operational Excellence", "Enterprise Modernization", and "Corporate ROI". Use professional, executive-level vocabulary.'}
+        
+        GLOBAL NEGATIVE CONSTRAINTS (THE USER HAS NO EXPOSURE TO THESE):
+        - ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps", "Azure DevOps", "Infrastructure as Code", "Terraform", "Ansible", "Kubernetes", "Docker", "DevSecOps".
+        - PIVOT: If the source mentions "CI/CD" or "Pipelines", rewrite it as "Standardized Multi-Environment Provisioning" or "Release Orchestration".
+        - PIVOT: If the source mentions "DevOps", rewrite it as "Unified Infrastructure Operations".
         
         PLAYER-COACH MODE:
         ${mode === 'Player-Coach' ? `
           - 60/40 BALANCE: 60% Execution (Azure infra, Site Recovery, Entra ID), 40% Leadership (Mentoring, Agile pods, Architecture reviews).
           - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized," "Spearheaded."
-          - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". Focus entirely on Azure Infrastructure.
+          - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps", "Azure DevOps". Focus entirely on Azure Core Infrastructure & Operations.
         ` : ''}
       `;
 
@@ -952,9 +958,8 @@ async function startServer() {
             
             RULES:
             - Summary: Approx 100 words.
-            - Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
-            - DO NOT invent certifications.
-            - Brevity & Density: Bullet points MUST be concise and dense (max 15 words).
+            - Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. 
+            - TERMINOLOGY RULES: Rename 'DevOps & Automation' to 'Infrastructure Operations'. Strictly replace 'CI/CD Pipeline Design' with 'Release Governance & Provisioning'.
             - GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
             
             OUTPUT JSON SCHEMA:

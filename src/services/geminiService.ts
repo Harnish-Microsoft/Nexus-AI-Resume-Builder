@@ -490,12 +490,18 @@ ${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejec
 ${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
 
-CORPORATE DNA TAILORING:
-${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership" and "Bias for Action".' : ''}
-${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale" and "Cloud Transformation".' : ''}
-${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design" and "Innovation".' : ''}
-${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Shipping Engineering Impact".' : ''}
-${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery" and "Managed Services".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
+AUTO-INJECTED CORPORATE DNA:
+${targetCompany === 'amazon' ? 'EMPHASIZE: "Ownership", "Bias for Action", and "Data-driven results".' : 
+  targetCompany === 'microsoft' ? 'EMPHASIZE: "Enterprise Scale", "Cloud Transformation", and "Collaborative Ecosystems".' :
+  targetCompany === 'google' ? 'EMPHASIZE: "Systems Design", "Extreme Scale", "Algorithmic Efficiency".' :
+  targetCompany === 'meta' ? 'EMPHASIZE: "Moving Fast", "Shipping Engineering Impact", and "Performance Optimization".' :
+  targetCompany === 'accenture' || targetCompany === 'infosys' ? 'EMPHASIZE: "Client Delivery", "Global Managed Services", and "Cross-functional Deployment".' :
+  'EMPHASIZE: "Strategic Business Impact", "Operational Excellence", "Enterprise Modernization", and "Corporate ROI". Use professional, executive-level vocabulary.'}
+
+GLOBAL NEGATIVE CONSTRAINTS (THE USER HAS NO EXPOSURE TO THESE):
+- ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps", "Azure DevOps", "Infrastructure as Code", "Terraform", "Ansible", "Kubernetes", "Docker", "DevSecOps".
+- PIVOT: If the source mentions "CI/CD" or "Pipelines", rewrite it as "Standardized Multi-Environment Provisioning" or "Release Orchestration".
+- PIVOT: If the source mentions "DevOps", rewrite it as "Unified Infrastructure Operations".
 
 STRICT PROFESSIONAL GUIDELINES:
 - SCANNABILITY: Optimize for quick reading. Use clear bullet points.
