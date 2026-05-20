@@ -146,6 +146,29 @@ export async function getDecryptedKey(encryptedKey: string): Promise<string> {
   return process.env.GEMINI_API_KEY || '';
 }
 
+
+// Centralized Fallback Handler
+export async function callWithModelFallback(
+  prompt: string,
+  modelHierarchy: string[],
+  engine: EngineType,
+  encryptedKey?: string
+) {
+  let lastError: any;
+  for (const model of modelHierarchy) {
+    try {
+      return await callAI(prompt, model, engine, encryptedKey);
+    } catch (error: any) {
+      console.warn(`[GeminiService] Model ${model} failed, attempting next if available...`);
+      lastError = error;
+      const errorMsg = error?.message?.toLowerCase() || "";
+      const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
+      if (!isQuotaError) break; // If not quota, don't fallback
+    }
+  }
+  throw lastError;
+}
+
 async function callAI(prompt: string, model: string, engine: EngineType, encryptedKey?: string) {
   const idToken = await auth.currentUser?.getIdToken();
 
@@ -154,7 +177,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   }
 
   // Fallback Logic definitions
-  const FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite";
+  const FALLBACK_GEMINI_MODEL = "gemini-3-flash-preview";
   
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
@@ -167,10 +190,14 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
       const ai = new GoogleGenAI({ apiKey });
       
-      // Attempt primary model, fallback to gemini-3.1-flash-lite on error
+      // Attempt primary model, fallback to gemini-3-flash-preview on error
       const executeWithFallback = async (modelToTry: string): Promise<any> => {
         const isThinkingModel = modelToTry.includes('thinking') || modelToTry.includes(':thinking');
-        const cleanModel = modelToTry.replace(':thinking', '').replace('gemini-1.5-pro', 'gemini-3.1-pro-preview').replace('gemini-1.5-flash', 'gemini-3-flash-preview');
+        
+        // Map old models to new allowed ones based on the requested hierarchy
+        let targetModel = modelToTry;
+        if (modelToTry.includes('gemini-1.5-pro')) targetModel = 'gemini-3.1-pro-preview';
+        else if (modelToTry.includes('gemini-1.5-flash')) targetModel = 'gemini-3-flash-preview';
               
         const config = {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
@@ -179,7 +206,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
         try {
           const response = await ai.models.generateContent({ 
-            model: cleanModel,
+            model: targetModel,
             contents: prompt,
             config
           });
@@ -197,7 +224,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
           const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
           
           if (isQuotaError && modelToTry !== FALLBACK_GEMINI_MODEL) {
-            console.warn(`[Gemini Service] Quota reached for ${cleanModel}. Falling back to ${FALLBACK_GEMINI_MODEL}...`);
+            console.warn(`[Gemini Service] Quota reached for ${targetModel}. Falling back to ${FALLBACK_GEMINI_MODEL}...`);
             return await executeWithFallback(FALLBACK_GEMINI_MODEL);
           }
           throw innerError;
@@ -328,7 +355,8 @@ Return ONLY a JSON object with the following structure:
 `;
 
   try {
-    const data = await callAI(prompt, modelToUse, routedConfig.engine, routedConfig.apiKey);
+    const modelHierarchy = ["gemini-3.5-flash", "gemini-3-flash-preview"];
+    const data = await callWithModelFallback(prompt, modelHierarchy, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     if (!resultText) throw new Error("No response from AI");
     return JSON.parse(resultText);
@@ -820,7 +848,8 @@ export async function analyzeBestAudiences(
   };
 
   try {
-    const data = await callAI(prompt, modelToUse, 'gemini', routedConfig.apiKey);
+    const modelHierarchy = ["gemini-3.5-flash", "gemini-3-flash-preview"];
+    const data = await callWithModelFallback(prompt, modelHierarchy, 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText || '[]');
     return Array.isArray(parsed) ? parsed : (parsed.audiences || [targetRole]);

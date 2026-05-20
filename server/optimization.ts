@@ -108,30 +108,13 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   `;
 
   // Stage 1: Extraction
-  let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3-flash-preview";
+  const modelHierarchy = ["gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-3-flash-preview"];
 
-  try {
-    try {
-      console.log(`[Nexus AI] Stage 1: Extraction. Attempting with ${primaryModel}...`);
-      const response = await genAI.models.generateContent({
-        model: primaryModel,
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
-      });
-      const text = response.text || "";
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-      
-      if (parsed) {
-        return { data: parsed, usage: (response as any).usageMetadata, _model: primaryModel };
-      }
-    } catch (quotaError: any) {
-      const errorMsg = quotaError?.message?.toLowerCase() || "";
-      if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
-        console.warn(`[Optimization] ${primaryModel} quota reached. Falling back to ${fallbackModel}...`);
+  for (const model of modelHierarchy) {
+      try {
+        console.log(`[Nexus AI] Stage 1: Extraction. Attempting with ${model}...`);
         const response = await genAI.models.generateContent({
-          model: fallbackModel,
+          model: model,
           contents: prompt,
           config: { responseMimeType: "application/json" }
         });
@@ -140,17 +123,19 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
         const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
         
         if (parsed) {
-          return { data: parsed, usage: (response as any).usageMetadata, _model: fallbackModel };
+          return { data: parsed, usage: (response as any).usageMetadata, _model: model };
         }
-      } else {
-        throw quotaError;
+      } catch (quotaError: any) {
+        const errorMsg = quotaError?.message?.toLowerCase() || "";
+        if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
+          console.warn(`[Optimization] ${model} quota reached. Trying next...`);
+          continue;
+        } else {
+          throw quotaError;
+        }
       }
-    }
-    return { data: null, usage: null };
-  } catch (error) {
-    console.error("Error extracting resume data:", error);
-    return { data: null, usage: null };
   }
+  return { data: null, usage: null };
 }
 
 export async function extractJDKeywords(jobDescription: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
@@ -201,30 +186,13 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   `;
 
   // Stage 1: JD Analysis
-  let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3-flash-preview";
+  const modelHierarchy = ["gemini-3.5-flash", "gemini-3-flash-preview"];
 
-  try {
-    try {
-      console.log(`[Nexus AI] Stage 1: JD Keywords. Attempting with ${primaryModel}...`);
-      const response = await genAI.models.generateContent({
-        model: primaryModel,
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
-      });
-      const text = response.text || "";
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      const keywords = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-      
-      if (keywords && keywords.length > 0) {
-        return { data: keywords, usage: (response as any).usageMetadata, _model: primaryModel };
-      }
-    } catch (quotaError: any) {
-      const errorMsg = quotaError?.message?.toLowerCase() || "";
-      if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
-        console.warn(`[Optimization] ${primaryModel} quota reached. Falling back to ${fallbackModel}...`);
+  for (const model of modelHierarchy) {
+      try {
+        console.log(`[Nexus AI] Stage 1: JD Keywords. Attempting with ${model}...`);
         const response = await genAI.models.generateContent({
-          model: fallbackModel,
+          model: model,
           contents: prompt,
           config: { responseMimeType: "application/json" }
         });
@@ -233,17 +201,19 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
         const keywords = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
         
         if (keywords && keywords.length > 0) {
-          return { data: keywords, usage: (response as any).usageMetadata, _model: fallbackModel };
+          return { data: keywords, usage: (response as any).usageMetadata, _model: model };
         }
-      } else {
-        throw quotaError;
+      } catch (quotaError: any) {
+        const errorMsg = quotaError?.message?.toLowerCase() || "";
+        if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
+          console.warn(`[Optimization] ${model} quota reached. Trying next...`);
+          continue;
+        } else {
+          throw quotaError;
+        }
       }
-    }
-    return { data: [], usage: null };
-  } catch (error) {
-    console.error("Error extracting JD keywords:", error);
-    return { data: [], usage: null };
   }
+  return { data: [], usage: null };
 }
 
 export function trimContentForAI(resumeData: any, keywords: string[]) {
