@@ -256,6 +256,24 @@ async function startServer() {
           model: model || "gemini-3-flash-preview",
           contents: [{ role: 'user', parts: [{ text: prompt }] }]
         });
+        
+        // Log Usage
+        const inputTokens = response.usageMetadata?.promptTokenCount || 0;
+        const outputTokens = response.usageMetadata?.candidatesTokenCount || 0;
+        const usedModel = model || "gemini-3-flash-preview";
+        
+        logUsage({
+          userId: idToken !== "SYSTEM_PIPELINE" ? idToken : "system",
+          model: usedModel,
+          inputTokens,
+          outputTokens,
+          totalTokens: inputTokens + outputTokens,
+          cacheHit: false,
+          endpoint: "/api/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(usedModel, inputTokens, outputTokens)
+        });
+
         return res.json({ result: response.text });
       } else if (engine === 'openai') {
         let openaiKey = "";
@@ -707,9 +725,9 @@ async function startServer() {
         } as UsageLog;
       });
 
-      const totalRequests = logs.filter(l => l.endpoint === "/api/v2/optimize").length;
-      const totalTokens = logs.reduce((sum, l) => sum + l.totalTokens, 0);
-      const totalCost = logs.reduce((sum, l) => sum + l.cost, 0);
+      const totalRequests = logs.length;
+      const totalTokens = logs.reduce((sum, l) => sum + (l.totalTokens || 0), 0);
+      const totalCost = logs.reduce((sum, l) => sum + (l.cost || 0), 0);
       const cacheHits = logs.filter(l => l.cacheHit).length;
       const cacheHitRatio = totalRequests > 0 ? (cacheHits / totalRequests) * 100 : 0;
 
@@ -997,7 +1015,15 @@ async function startServer() {
 
           const metaText = metaCompletion.choices[0].message.content || "{}";
           const metaData = JSON.parse(metaText);
-          const finalExperience = deduplicateAndScore(roleResults);
+          
+          // Role results now include usage
+          const finalExperience = deduplicateAndScore(roleResults.map(r => r.roleData));
+          
+          const roleUsage = roleResults.reduce((acc, r) => ({
+            input: acc.input + r.usage.promptTokenCount,
+            output: acc.output + r.usage.candidatesTokenCount,
+            total: acc.total + r.usage.totalTokenCount
+          }), { input: 0, output: 0, total: 0 });
 
           const responseData = {
             ...metaData,
@@ -1007,8 +1033,9 @@ async function startServer() {
           const genInput = metaCompletion.usage?.prompt_tokens || 0;
           const genOutput = metaCompletion.usage?.completion_tokens || 0;
 
+          // Log main generation
           logUsage({
-            userId: "anonymous",
+            userId: idToken || "anonymous",
             model: usedModel,
             inputTokens: genInput,
             outputTokens: genOutput,
@@ -1018,6 +1045,21 @@ async function startServer() {
             timestamp: Date.now(),
             cost: calculateCost(usedModel, genInput, genOutput)
           });
+
+          // Log aggregated role generation
+          if (roleUsage.total > 0) {
+            logUsage({
+              userId: idToken || "anonymous",
+              model: "gpt-4o-mini",
+              inputTokens: roleUsage.input,
+              outputTokens: roleUsage.output,
+              totalTokens: roleUsage.total,
+              cacheHit: false,
+              endpoint: "/api/v2/optimize (roles)",
+              timestamp: Date.now(),
+              cost: calculateCost("gpt-4o-mini", roleUsage.input, roleUsage.output)
+            });
+          }
 
           // Log Gemini Extraction
           logUsage({
@@ -1173,7 +1215,13 @@ async function startServer() {
         
         // 3. Deduplicate and Score
         console.log("[Pipeline] Deduplicating and Scoring...");
-        const finalExperience = deduplicateAndScore(roleResults);
+        const finalExperience = deduplicateAndScore(roleResults.map(r => r.roleData));
+
+        const roleUsage = roleResults.reduce((acc, r) => ({
+          input: acc.input + (r.usage?.promptTokenCount || 0),
+          output: acc.output + (r.usage?.candidatesTokenCount || 0),
+          total: acc.total + (r.usage?.totalTokenCount || 0)
+        }), { input: 0, output: 0, total: 0 });
 
         const finalResult = {
           ...metaData,
@@ -1190,7 +1238,7 @@ async function startServer() {
           usage: {
             promptTokenCount: metaResponse.usageMetadata?.promptTokenCount || 0,
             candidatesTokenCount: metaResponse.usageMetadata?.candidatesTokenCount || 0,
-            totalTokenCount: metaResponse.usageMetadata?.totalTokenCount || 0
+            totalTokenCount: (metaResponse.usageMetadata?.promptTokenCount || 0) + (metaResponse.usageMetadata?.candidatesTokenCount || 0)
           },
           geminiUsage,
           intermediateData: { resumeData, jdKeywords },
@@ -1199,6 +1247,50 @@ async function startServer() {
           _split_gen: true,
           _agents: true
         };
+
+        // Log Usage for Gemini Generation
+        const genInput = metaResponse.usageMetadata?.promptTokenCount || 0;
+        const genOutput = metaResponse.usageMetadata?.candidatesTokenCount || 0;
+        
+        logUsage({
+          userId: idToken,
+          model: usedModel,
+          inputTokens: genInput,
+          outputTokens: genOutput,
+          totalTokens: genInput + genOutput,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(usedModel, genInput, genOutput)
+        });
+
+        // Log Role Generation Usage
+        if (roleUsage.total > 0) {
+          logUsage({
+            userId: idToken,
+            model: "gemini-3-flash-preview",
+            inputTokens: roleUsage.input,
+            outputTokens: roleUsage.output,
+            totalTokens: roleUsage.total,
+            cacheHit: false,
+            endpoint: "/api/v2/optimize (roles)",
+            timestamp: Date.now(),
+            cost: calculateCost("gemini-3-flash-preview", roleUsage.input, roleUsage.output)
+          });
+        }
+
+        // Log Gemini Extraction
+        logUsage({
+          userId: idToken,
+          model: extractionModelUsed,
+          inputTokens: geminiUsage.promptTokenCount,
+          outputTokens: geminiUsage.candidatesTokenCount,
+          totalTokens: geminiUsage.totalTokenCount,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
+        });
 
         console.log("[Pipeline] Split Generation Complete.");
 
@@ -1290,8 +1382,14 @@ async function startServer() {
       // ===============================
       // 5. DEDUP + SCORE
       // ===============================
-      const cleaned = deduplicateAndScore(roles);
+      const cleaned = deduplicateAndScore(roles.map(r => r.roleData));
   
+      const roleUsage = roles.reduce((acc, r) => ({
+        input: acc.input + (r.usage?.promptTokenCount || 0),
+        output: acc.output + (r.usage?.candidatesTokenCount || 0),
+        total: acc.total + (r.usage?.totalTokenCount || 0)
+      }), { input: 0, output: 0, total: 0 });
+
       const totalScore = cleaned.reduce((sum, r: any) => sum + (r.score || 0), 0);
   
       // ===============================
@@ -1306,6 +1404,41 @@ async function startServer() {
       // ===============================
       // 7. RESPONSE
       // ===============================
+      
+      // Log usage for the main generation (rough estimate if not provided by individual methods)
+      // Since generatePerRole and runAgents also use tokens, we should ideally track them there.
+      // For now, let's log extraction at least.
+      
+      const extractionInput = (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0);
+      const extractionOutput = (resumeExtraction?.usage?.candidatesTokenCount || 0) + (jdExtraction?.usage?.candidatesTokenCount || 0);
+      
+      logUsage({
+        userId: idToken || "anonymous",
+        model: "gemini-3-flash-preview",
+        inputTokens: extractionInput,
+        outputTokens: extractionOutput,
+        totalTokens: extractionInput + extractionOutput,
+        cacheHit: false,
+        endpoint: "/api/v3/optimize",
+        timestamp: Date.now(),
+        cost: calculateCost("gemini-3-flash-preview", extractionInput, extractionOutput)
+      });
+
+      // Log Role Generation Usage for V3
+      if (roleUsage.total > 0) {
+        logUsage({
+          userId: idToken || "anonymous",
+          model: "gemini-3-flash-preview",
+          inputTokens: roleUsage.input,
+          outputTokens: roleUsage.output,
+          totalTokens: roleUsage.total,
+          cacheHit: false,
+          endpoint: "/api/v3/optimize (roles)",
+          timestamp: Date.now(),
+          cost: calculateCost("gemini-3-flash-preview", roleUsage.input, roleUsage.output)
+        });
+      }
+
       res.json({
         experience: cleaned,
         score: totalScore,

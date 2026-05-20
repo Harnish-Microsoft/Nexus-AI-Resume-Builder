@@ -54,6 +54,7 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
 
     try {
       let text = "[]";
+      let usage = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
       
       if (engine === 'openai' && oai) {
         const completion = await oai.chat.completions.create({
@@ -62,6 +63,11 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
           response_format: { type: "json_object" }
         });
         text = completion.choices[0].message.content || "[]";
+        usage = {
+          promptTokenCount: completion.usage?.prompt_tokens || 0,
+          candidatesTokenCount: completion.usage?.completion_tokens || 0,
+          totalTokenCount: completion.usage?.total_tokens || 0
+        };
       } else {
         const res = await genAI.models.generateContent({
           model: "gemini-3-flash-preview",
@@ -69,6 +75,11 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
           config: { responseMimeType: "application/json" }
         });
         text = res.text || "[]";
+        usage = {
+          promptTokenCount: res.usageMetadata?.promptTokenCount || 0,
+          candidatesTokenCount: res.usageMetadata?.candidatesTokenCount || 0,
+          totalTokenCount: (res.usageMetadata?.promptTokenCount || 0) + (res.usageMetadata?.candidatesTokenCount || 0)
+        };
       }
 
       let bullets = [];
@@ -80,20 +91,26 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
       }
 
       return {
-        id: role.id || `role_${index + 1}`,
-        role: role.role,
-        company: role.company,
-        duration: role.duration,
-        bullets: bullets
+        roleData: {
+          id: role.id || `role_${index + 1}`,
+          role: role.role,
+          company: role.company,
+          duration: role.duration,
+          bullets: bullets
+        },
+        usage
       };
     } catch (err) {
       console.error(`[RoleGen] Failed for ${role.id || index}:`, err);
       return {
-        id: role.id || `role_${index + 1}`,
-        role: role.role,
-        company: role.company,
-        duration: role.duration,
-        bullets: role.original_bullets || []
+        roleData: {
+          id: role.id || `role_${index + 1}`,
+          role: role.role,
+          company: role.company,
+          duration: role.duration,
+          bullets: role.original_bullets || []
+        },
+        usage: { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 }
       };
     }
   });
