@@ -61,6 +61,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
     Focus on:
     1. Azure Infrastructure (Networking, Policy, Identity, Governance, BCDR, VMs).
     2. Senior Leadership/Management (Strategic Planning, SLA management, Team Leadership, Service Delivery, Stakeholder Management, Managerial competencies).
+    3. Do not include fake technologies or unsupported skills.
     
     Return only a JSON array of strings.
     

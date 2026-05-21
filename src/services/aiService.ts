@@ -51,12 +51,12 @@ export const improveTextWithAI = async (
       You are a professional resume strategist.
       
       Tasks:
-      1. Rewrite tailored to the job description and target role.
+      1. Rewrite tailored to the job description and target role following strict FAANG-level standards and the STAR method (Situation, Task, Action, Result).
       2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
       3. SENIOR LEADERSHIP & STRATEGIC IMPACT: For senior roles (Manager, CTO, IT Head, Service Delivery Manager), emphasize strategic planning, team management, stakeholder engagement, and business outcomes (SLAs, Cost Control, Efficiency).
-      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact and leadership depth.
+      4. ACHIEVEMENT FOCUS: Every bullet point MUST follow the STAR framework (Situation, Task, Action, Result) and convey clear impact and leadership depth. 
       5. ACTION VERBS: Start with strong executive verbs (Steer, Orchestrate, Spearhead, Optimize, Manage).
-      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      6. No fluff: Replace vague responsibilities with high-impact accomplishments. Do not add fake technologies.
       7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
@@ -97,12 +97,12 @@ export const rewriteSectionWithAI = async (
       You are a professional resume strategist.
       
       Tasks:
-      1. Rewrite tailored to the job description and target role.
+      1. Rewrite tailored to the job description and target role following strict FAANG-level standards and the STAR method (Situation, Task, Action, Result).
       2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
       3. SENIOR LEADERSHIP & STRATEGIC IMPACT: For senior roles (Manager, CTO, IT Head, Service Delivery Manager), emphasize strategic planning, team management, stakeholder engagement, and business outcomes (SLAs, Cost Control, Efficiency).
-      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact and leadership depth.
+      4. ACHIEVEMENT FOCUS: Every bullet point MUST follow the STAR framework (Situation, Task, Action, Result) and convey clear impact and leadership depth. 
       5. ACTION VERBS: Start with strong executive verbs (Steer, Orchestrate, Spearhead, Optimize, Managed).
-      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      6. No fluff: Replace vague responsibilities with high-impact accomplishments. Do not add fake technologies.
       7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
