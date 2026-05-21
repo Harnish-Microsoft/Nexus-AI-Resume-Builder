@@ -277,6 +277,7 @@ JOB URL: ${url}
 export async function evaluateSuitability(
   resumeText: string,
   jobDescription: string,
+  targetRole: string,
   config: RouterConfig,
   fastMode: boolean = false
 ): Promise<SuitabilityResult> {
@@ -290,10 +291,19 @@ export async function evaluateSuitability(
   }
 
   const prompt = `
-You are an expert technical recruiter screening a candidate's resume against a job description.
+ACT AS:
+You are a Senior Prompt Engineer specializing in FAANG-level technical recruiting and executive leadership positioning.
+
+TASK:
+Evaluate the candidate's suitability for the role of: ${targetRole || 'requested position from JD'}.
 The current date is ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
-Your goal is to quickly evaluate if the candidate is a good fit, a stretch, or not recommended.
-Additionally, perform a focus Audit identifying flaws in wording, metrics, and alignment.
+
+AUDIT REQUIREMENTS:
+1. STAR Compliance: Audit bullet points for Situation, Task, Action, Result.
+2. Executive Verbs: Check for strong verbs (Steer, Orchestrate) vs weak ones (Managed, Helped).
+3. Scale & Impact: Verify presence of measurable metrics and enterprise scale.
+4. Negative Constraints: Flag any accidental mentions of K8s, Docker, or DevOps automation.
+5. Leadership Depth: Ensure strategic management and business outcomes are emphasized.
 
 CRITICAL INSTRUCTIONS FOR AUDIT:
 1. Impact: Audit every bullet point. Do they convey clear impact? If not, flag it.
@@ -455,32 +465,36 @@ export async function optimizeResume(
   }
 
   const prompt = `
-ROLE: Professional Resume Strategist.
+ACT AS:
+You are a Senior Prompt Engineer specializing in FAANG-level resume engineering, executive branding, ATS optimization, and STAR-method resume transformation.
+
+YOUR ROLE:
+A Principal Resume Strategist & FAANG Technical Recruiter focused on Cloud Leadership branding.
 THE CURRENT DATE: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons based on lack of impact/metrics.' : 'TASK: Rewrite resume into a top-tier professional document.'}
+${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons based on lack of impact/metrics.' : 'TASK: Rewrite resume into a top-tier FAANG-style executive document.'}
 
 ${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
 
 CORPORATE DNA TAILORING:
-${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership" and "Bias for Action".' : ''}
-${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale" and "Cloud Transformation".' : ''}
-${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design" and "Innovation".' : ''}
-${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Shipping Engineering Impact".' : ''}
-${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery" and "Managed Services".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
+${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership", "Bias for Action", and "Data-driven results".' : ''}
+${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale", "Cloud Transformation", and "Collaborative Ecosystems".' : ''}
+${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design", "Extreme Scale", and "Google XYZ Formula".' : ''}
+${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Shipping End-to-End Engineering Impact".' : ''}
+${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery", "Global Managed Services", and "IT Transformation".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
 
-STRICT PROFESSIONAL GUIDELINES:
-- SCANNABILITY: Optimize for quick reading. Use clear bullet points.
-- ACHIEVEMENT FOCUS: Every bullet point should highlight an achievement or leadership impact (mentoring, team scaling, cross-functional driving). 
-- METRICS & OUTCOMES: Achievement bullets should include metrics (%, $, time, scale) where possible. If metrics are unavailable, include clear leadership impact.
-- ACTION VERBS: Start every bullet with high-impact verbs: Led, Developed, Managed, Optimized, Scaled, Spearheaded.
-- IMPACT OVER TASKS: Focus solely on accomplishments and business outcomes.
-- HALLUCINATION PREVENTION: DO NOT invent, fabricate, suggest, or add any certifications, projects, experience, employers, or skills that are not explicitly present in the original resume text.
-- PRESERVE TITLES: Do not change job titles. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
-- DIFFERENTIATION: You MUST tailor the output specifically to the provided Job Description. Do not rely on generic templates from previous optimizations; if the JD differs, the optimized resume MUST reflect those specific needs.
-- TEAM SIZE: The user manages a 20-member team in their current role. Do not infer or hallucinate team sizes like "4".
-- INCLUDE ALL ROLES: You MUST include EVERY single role present in the input resume.
-- MAX 2 PAGES: Content must fit A4 layout.
+STRICT FAANG & LEADERSHIP RULES:
+- STAR METHOD: EVERY bullet point MUST follow the STAR framework (Situation, Task, Action, Result).
+- ACHIEVEMENT FOCUS: Show ownership, measurable impact, scale (e.g., "10+ customer environments", "500+ VMs"), and business value.
+- ACTION VERBS: Start with strong executive verbs (Steer, Orchestrate, Spearhead, Optimize, Standardized, Governed, Modernized).
+- STRATEGIC POSITIONING: Position the candidate for high-level roles (Director, CTO-track, Head of Cloud Ops).
+- GLOBAL NEGATIVE CONSTRAINTS: DO NOT include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure.
+- HALLUCINATION PREVENTION: DO NOT invent, fabricate, or add fake technologies or certifications.
+- PRESERVE TITLES: STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
+- MAX 5 BULLETS: No more than 5 high-impact bullets per role.
+- SCANNABILITY: Optimize for quick, high-density executive reading.
+- TEAM SIZE: The user manages a 20-member team in their current role.
+- INCLUDE ALL ROLES: Include every role from the input.
 
 ADVANCED FEATURES:
 1. STAR METHOD: For high-impact experiences, generate a companion STAR story (Situation, Task, Action, Result).

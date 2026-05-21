@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowRight, BarChart3, CheckCircle2, FileText, Key, Lock, LogIn, Mail, Moon, ShieldCheck, Sparkles, Sun, Target, UserPlus } from 'lucide-react';
+import { ArrowRight, BarChart3, CheckCircle2, FileText, Key, Lock, LogIn, Mail, Moon, ShieldCheck, Sparkles, Sun, Target, UserPlus, Loader2 } from 'lucide-react';
 
 interface ProfessionalWelcomePageProps {
   onLogin: () => void;
@@ -89,209 +89,221 @@ export function ProfessionalWelcomePage({
         <div className="liquid-blob w-[90vw] h-[90vh] bg-pink-500/10 top-1/2 -right-1/4" style={{ animationDelay: '-5s' }} />
         <div className="liquid-blob w-[100vw] h-[100vh] bg-amber-500/8 -bottom-1/4 left-1/3" style={{ animationDelay: '-8s' }} />
       </div>
-      <main className="min-h-screen grid lg:grid-cols-[1.08fr_0.92fr] relative z-10">
-        <section className="flex flex-col justify-between px-6 py-6 sm:px-10 lg:px-14 lg:py-10">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
-                <Sparkles className="w-4 h-4" />
+      <main className="min-h-screen flex flex-col lg:flex-row relative z-10 w-full overflow-x-hidden">
+        {/* Left Section: Branding & Intro */}
+        <section className="flex-[1.1] flex flex-col justify-between px-6 py-8 sm:px-12 lg:px-20 lg:py-16">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className={`h-10 w-10 md:h-12 md:w-12 rounded-2xl flex items-center justify-center shadow-xl ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-900 text-emerald-300'}`}>
+                <Sparkles className="w-5 h-5 md:w-6 md:h-6" />
               </div>
               <div>
-                <p className="text-sm font-bold tracking-tight">Nexus AI</p>
-                <p className={`text-xs ${muted}`}>Resume optimization workspace</p>
+                <p className="text-base md:text-lg font-black tracking-tight leading-none">Nexus AI</p>
+                <p className={`text-[10px] md:text-xs font-bold uppercase tracking-widest mt-1 ${muted}`}>Executive Resume Suite</p>
               </div>
             </div>
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`rounded-lg border p-2 transition-colors ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'}`}
-              title="Toggle theme"
+              className={`rounded-2xl border p-2.5 transition-all active:scale-95 ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shadow-sm'}`}
             >
-              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
           </div>
 
-          <div className="max-w-2xl py-10 sm:py-14 lg:py-20">
-            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+          <div className="max-w-xl py-12 md:py-20 lg:py-0">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-[10px] font-black uppercase tracking-widest mb-8 ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+            >
               <ShieldCheck className="w-3.5 h-3.5" />
-              Private resume data, role-specific outputs
-            </div>
-            <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              Tune every resume to the job before you apply.
+              FAANG-Compliant • ISO-Encrypted • Private
+            </motion.div>
+            <h1 className="text-4xl sm:text-5xl lg:text-7xl font-black tracking-tight leading-[0.95] mb-8">
+              Precision Resume <span className="text-emerald-500">Engineering.</span>
             </h1>
-            <p className={`mt-5 max-w-xl text-base leading-7 sm:text-lg ${muted}`}>
-              Paste a job description, compare fit signals, rewrite experience bullets, and export a clean ATS-ready resume from one focused workspace.
+            <p className={`max-w-md text-base sm:text-lg leading-relaxed font-medium ${muted}`}>
+              Transform raw experience into high-impact narratives tailored for technical leadership and executive roles.
             </p>
 
-            <div className="mt-8 hidden max-w-xl gap-3 sm:grid sm:grid-cols-3">
+            <div className="mt-12 hidden sm:grid grid-cols-3 gap-4">
               {[
-                { icon: Target, title: 'Target', body: 'Role, company, and job description.', color: 'text-emerald-500' },
-                { icon: BarChart3, title: 'Score', body: 'Keyword and match analysis.', color: 'text-blue-500' },
-                { icon: FileText, title: 'Export', body: 'PDF, DOCX, and JSON versions.', color: isDarkMode ? 'text-white/70' : 'text-slate-700' },
+                { icon: Target, title: 'Strategic Alignment', body: 'AI-driven JD matching.' },
+                { icon: BarChart3, title: 'Impact Metrics', body: 'STAR-method optimization.' },
+                { icon: FileText, title: 'Universal Export', body: 'PDF, DOCX & JSON.' },
               ].map((item) => (
-                <div key={item.title} className={`rounded-lg border p-4 ${panel}`}>
-                  <item.icon className={`w-5 h-5 ${item.color}`} />
-                  <p className="mt-3 text-sm font-semibold">{item.title}</p>
-                  <p className={`mt-1 text-xs leading-5 ${muted}`}>{item.body}</p>
+                <div key={item.title} className={`rounded-2xl border p-5 ${panel} transition-transform hover:-translate-y-1`}>
+                  <item.icon className={`w-6 h-6 text-emerald-500 mb-3`} />
+                  <p className="text-xs font-black uppercase tracking-widest mb-1">{item.title}</p>
+                  <p className={`text-[10px] leading-relaxed font-bold opacity-40`}>{item.body}</p>
                 </div>
               ))}
             </div>
           </div>
 
-          <p className={`hidden text-xs sm:block ${isDarkMode ? 'text-white/30' : 'text-slate-400'}`}>Built for repeated applications, not one-off resume decoration.</p>
+          <div className="mt-8 flex items-center gap-8 border-t border-black/5 dark:border-white/10 pt-8 opacity-40">
+            <div className="flex flex-col">
+              <span className="text-xs font-black">20k+</span>
+              <span className="text-[8px] uppercase tracking-widest">Optimized</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xs font-black">4.9/5</span>
+              <span className="text-[8px] uppercase tracking-widest">Efficiency</span>
+            </div>
+          </div>
         </section>
 
-        <section className={`flex items-start justify-center border-t px-4 py-6 sm:items-center sm:py-8 lg:border-l lg:border-t-0 lg:px-10 ${isDarkMode ? 'bg-black/10 border-white/10' : 'bg-white/10 border-slate-200'}`}>
+        {/* Right Section: Auth Card */}
+        <section className={`flex-[0.9] flex items-center justify-center p-6 md:p-12 lg:p-20 relative ${isDarkMode ? 'bg-black/20 lg:bg-black/10 border-white/5' : 'bg-white/40 lg:bg-white/10 border-slate-200'}`}>
+          <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-blue-500/5 pointer-events-none" />
+          
           <motion.div
-            initial={{ opacity: 0, y: 14 }}
+            initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            className="w-full max-w-md"
+            className="w-full max-w-md relative"
           >
-            <div className={`mb-4 hidden rounded-lg border p-3 sm:block ${softPanel}`}>
-              <div className={`flex items-center justify-between border-b pb-3 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
-                <div>
-                  <p className={`text-xs font-semibold uppercase ${isDarkMode ? 'text-white/45' : 'text-slate-500'}`}>Workspace Preview</p>
-                  <p className="text-sm font-bold">Senior Cloud Architect</p>
+            {/* Visual Teaser for Mobile */}
+            <div className={`mb-6 lg:hidden rounded-2xl border p-4 ${softPanel}`}>
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-500">
+                  <BarChart3 className="w-4 h-4" />
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>Ready</span>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {previewRows.map((row) => (
-                  <div key={row.label} className={`rounded-md border p-2 ${getMetricTone(row.tone)}`}>
-                    <p className="text-lg font-bold">{row.value}</p>
-                    <p className="text-[10px] font-semibold uppercase leading-4 opacity-80">{row.label}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 space-y-2">
-                {['Leadership bullets aligned to Azure migration scope', 'Quantified cost and reliability outcomes added'].map((item) => (
-                  <div key={item} className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs ${isDarkMode ? 'bg-white/5 text-white/65' : 'bg-white text-slate-600'}`}>
-                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    {item}
-                  </div>
-                ))}
+                <p className="text-xs font-bold uppercase tracking-widest">Portfolio Preview</p>
               </div>
             </div>
 
-            <div className={`rounded-lg border p-6 shadow-sm ${panel}`}>
+            <div className={`rounded-[2.5rem] border shadow-2xl p-8 md:p-10 relative overflow-hidden ${isDarkMode ? 'glass-thick border-white/10' : 'bg-white border-slate-200 shadow-slate-200/50'}`}>
               <AnimatePresence mode="wait">
                 {view === 'welcome' ? (
                   <motion.div
                     key="welcome"
-                    initial={{ opacity: 0, x: -12 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 12 }}
-                    className="space-y-5"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="space-y-8"
                   >
-                    <div>
-                      <h2 className="text-2xl font-bold tracking-tight">Sign in to continue</h2>
-                      <p className={`mt-1 text-sm ${muted}`}>Sync versions, keys, and Drive exports across sessions.</p>
+                    <div className="text-center">
+                      <h2 className="text-3xl font-black tracking-tight mb-2 uppercase italic">Open Gateway</h2>
+                      <p className={`text-xs font-bold uppercase tracking-widest opacity-40`}>Establish secure workspace session</p>
                     </div>
 
                     {displayError && (
-                      <div className={`rounded-md border p-3 text-sm ${isDarkMode ? 'border-red-500/25 bg-red-500/10 text-red-300' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        className={`rounded-2xl border p-4 text-xs font-bold ${isDarkMode ? 'border-red-500/25 bg-red-500/10 text-red-400' : 'border-red-200 bg-red-50 text-red-600 shadow-sm'}`}
+                      >
                         {displayError}
-                      </div>
+                      </motion.div>
                     )}
 
-                    <button
-                      onClick={() => {
-                        if (isLoading) return;
-                        setIsLoading(true);
-                        onLogin();
-                      }}
-                      disabled={isLoading}
-                      className={`flex w-full items-center justify-center gap-3 rounded-lg border py-3 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isDarkMode ? 'border-white/10 bg-white text-black hover:bg-white/90' : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'}`}
-                    >
-                      {isLoading ? (
-                        <span className="h-4 w-4 rounded-full border-2 border-slate-300 border-t-slate-900 animate-spin" />
-                      ) : (
-                        <img src="https://www.google.com/favicon.ico" className="h-4 w-4" alt="Google" referrerPolicy="no-referrer" />
-                      )}
-                      Continue with Google
-                    </button>
+                    <div className="space-y-4">
+                      <button
+                        onClick={() => {
+                          if (isLoading) return;
+                          setIsLoading(true);
+                          onLogin();
+                        }}
+                        disabled={isLoading}
+                        className={`group flex w-full items-center justify-center gap-4 rounded-2xl py-4 text-xs font-black transition-all disabled:opacity-60 uppercase tracking-[0.2em] shadow-lg active:scale-95 ${isDarkMode ? 'bg-white text-black hover:bg-neutral-200' : 'bg-slate-900 text-white hover:bg-slate-800 shadow-slate-900/20'}`}
+                      >
+                        {isLoading ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <>
+                            <img src="https://www.google.com/favicon.ico" className="h-5 w-5 filter contrast-125" alt="Google" referrerPolicy="no-referrer" />
+                            <span>Continue with Google</span>
+                          </>
+                        )}
+                      </button>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={() => setView('email-login')}
-                        className={`flex items-center justify-center gap-2 rounded-lg py-3 text-sm font-bold transition-colors ${isDarkMode ? 'bg-white text-black hover:bg-white/90' : 'bg-slate-950 text-white hover:bg-slate-800'}`}
-                      >
-                        <LogIn className="h-4 w-4" />
-                        Log In
-                      </button>
-                      <button
-                        onClick={() => setView('email-signup')}
-                        className={`flex items-center justify-center gap-2 rounded-lg border py-3 text-sm font-bold transition-colors ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
-                      >
-                        <UserPlus className="h-4 w-4" />
-                        Sign Up
-                      </button>
+                      <div className="relative py-4">
+                        <div className="absolute inset-0 flex items-center">
+                          <div className={`w-full border-t ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}></div>
+                        </div>
+                        <div className="relative flex justify-center">
+                          <span className={`${isDarkMode ? 'bg-[#18181b]' : 'bg-white'} px-4 text-[9px] font-black uppercase tracking-[0.4em] opacity-30`}>Or Manual Entry</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <button
+                          onClick={() => setView('email-login')}
+                          className={`flex items-center justify-center gap-3 rounded-2xl py-4 text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 border ${isDarkMode ? 'border-white/10 bg-white/5 hover:bg-white/10' : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-900'}`}
+                        >
+                          <LogIn className="h-4 w-4 text-emerald-500" />
+                          Log In
+                        </button>
+                        <button
+                          onClick={() => setView('email-signup')}
+                          className={`flex items-center justify-center gap-3 rounded-2xl py-4 text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 border ${isDarkMode ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
+                        >
+                          <UserPlus className="h-4 w-4" />
+                          Register
+                        </button>
+                      </div>
                     </div>
                   </motion.div>
                 ) : (
                   <motion.form
                     key="auth-form"
                     onSubmit={handleSubmit}
-                    initial={{ opacity: 0, x: 12 }}
+                    initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -12 }}
-                    className="space-y-4"
+                    exit={{ opacity: 0, x: -20 }}
+                    className="space-y-6"
                   >
-                    <div>
-                      <h2 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-                        {view === 'email-login' && <LogIn className="h-5 w-5 text-emerald-500" />}
-                        {view === 'email-signup' && <UserPlus className="h-5 w-5 text-emerald-500" />}
-                        {view === 'reset-pass' && <Key className="h-5 w-5 text-emerald-500" />}
-                        {authTitle}
-                      </h2>
-                      <p className={`mt-1 text-sm ${muted}`}>
-                        {view === 'reset-pass' ? 'Enter your email and we will send a reset link.' : 'Use the same account you use for saved resume versions.'}
+                    <div className="text-center">
+                      <h2 className="text-2xl font-black tracking-tight mb-1 uppercase">{authTitle}</h2>
+                      <p className={`text-[10px] font-bold uppercase tracking-widest opacity-40`}>
+                        {view === 'reset-pass' ? 'Enter identity for recovery' : 'Nexus Identity Verification'}
                       </p>
                     </div>
 
                     {displayError && (
-                      <div className={`rounded-md border p-3 text-sm ${isDarkMode ? 'border-red-500/25 bg-red-500/10 text-red-300' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                      <div className={`rounded-2xl border p-4 text-[11px] font-bold ${isDarkMode ? 'border-red-500/25 bg-red-500/10 text-red-400' : 'border-red-200 bg-red-50 text-red-600'}`}>
                         {displayError}
                       </div>
                     )}
 
-                    <div className="space-y-3">
-                      <div>
-                        <label className={`mb-1.5 block text-xs font-semibold ${muted}`}>Email Address</label>
-                        <div className="relative">
-                          <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <div className="space-y-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase tracking-widest opacity-40 ml-1">E-Mail Address</label>
+                        <div className="relative group">
+                          <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 transition-colors group-focus-within:text-emerald-500" />
                           <input
                             type="email"
                             required
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            placeholder="name@example.com"
+                            placeholder="executive@nexus.ai"
                             className={inputClass}
                           />
                         </div>
                       </div>
 
                       {view !== 'reset-pass' && (
-                        <div>
-                          <div className="mb-1.5 flex items-center justify-between">
-                            <label className={`text-xs font-semibold ${muted}`}>Password</label>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-black uppercase tracking-widest opacity-40 ml-1">Password</label>
                             {view === 'email-login' && (
                               <button
                                 type="button"
                                 onClick={() => setView('reset-pass')}
-                                className="text-xs font-semibold text-emerald-500 hover:text-emerald-400"
+                                className="text-[10px] font-black text-emerald-500 hover:text-emerald-400 uppercase tracking-widest"
                               >
-                                Forgot password?
+                                Forgot?
                               </button>
                             )}
                           </div>
-                          <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                          <div className="relative group">
+                            <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-emerald-500" />
                             <input
                               type="password"
                               required
                               value={password}
                               onChange={(e) => setPassword(e.target.value)}
-                              placeholder="••••••••"
+                              placeholder="••••••••••••"
                               className={inputClass}
                             />
                           </div>
@@ -299,25 +311,25 @@ export function ProfessionalWelcomePage({
                       )}
                     </div>
 
-                    <div className="space-y-2 pt-1">
+                    <div className="space-y-3 pt-4">
                       <button
                         type="submit"
                         disabled={isLoading}
-                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-emerald-600 py-4 text-xs font-black text-white transition-all hover:bg-emerald-700 shadow-xl shadow-emerald-600/20 active:scale-98 uppercase tracking-widest"
                       >
-                        {isLoading ? 'Processing...' : (
-                          view === 'email-login' ? 'Login' :
-                          view === 'email-signup' ? 'Create Account' :
-                          'Send Reset Link'
+                        {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : (
+                          <>
+                            <span>{view === 'email-login' ? 'Authorize' : view === 'email-signup' ? 'Complete Identity' : 'Send Recovery'}</span>
+                            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                          </>
                         )}
-                        {!isLoading && <ArrowRight className="h-4 w-4" />}
                       </button>
                       <button
                         type="button"
                         onClick={() => setView('welcome')}
-                        className={`w-full rounded-lg py-2 text-sm font-semibold transition-colors ${isDarkMode ? 'text-white/50 hover:bg-white/5 hover:text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
+                        className={`w-full rounded-2xl py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-all ${isDarkMode ? 'text-white/40 hover:text-white hover:bg-white/5' : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'}`}
                       >
-                        Back to options
+                        Cancel Verification
                       </button>
                     </div>
                   </motion.form>

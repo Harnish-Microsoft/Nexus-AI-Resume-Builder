@@ -20,7 +20,7 @@
 
 @layer base {
   body {
-    @apply font-sans antialiased text-white overflow-hidden;
+    @apply font-sans antialiased text-white;
     background: #000000;
     text-rendering: optimizeLegibility;
   }
