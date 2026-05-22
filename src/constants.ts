@@ -3,6 +3,7 @@ export const MODE_DESCRIPTIONS = {
   balanced: "The 'Sweet Spot'. Improves clarity, strengthens action verbs, and strategically aligns keywords. Recommended.",
   aggressive: "Maximum Impact. Rewrites bullets for peak ATS compatibility and high-stakes competitive roles.",
   automatic: "Optimize based on Job Description requirements.",
+  "Player-Coach": "FAANG Leadership. Strict STAR-method transformation for Senior Azure Infrastructure & Operations roles.",
 };
 
 export const AUDIENCES = [

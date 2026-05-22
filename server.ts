@@ -885,9 +885,19 @@ async function startServer() {
       const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords);
       
       const finalPromptBase = `
-        You are a senior executive resume strategist. 
-        Optimize this structured resume data for the target role: ${targetRole}.
-        Audience: ${audience}. Mode: ${mode}.
+        ACT AS: Senior Executive Resume Strategist & FAANG Technical Recruiter.
+        
+        GOAL: Optimize this structured resume data for: ${targetRole}.
+        AUDIENCE: ${audience}. MODE: ${mode}.
+        
+        STRICT FAANG & STAR METHODOLOGY RULES:
+        1. EVERY BULLET MUST follow STAR (Situation, Task, Action, Result).
+        2. EVERY BULLET MUST start with a strong action verb (Architected, Spearheaded, Optimized, Standardized, Orchestrated, Led, Directed, Improved, Implemented, Streamlined, Governed, Enhanced, Coordinated, Modernized, Transformed).
+        3. Ownership & Impact: Show scale (e.g., $10M budget, 500+ subscriptions) and measurable business value (e.g., 40% cost reduction).
+        4. Focus Areas: Azure Infrastructure, Cloud Governance, Reliability, Hybrid Cloud, HA/DR, and FinOps.
+        5. DO NOT fabricates Kubernetes or deep Terraform engineering skills. Focus on Infrastructure & Operations Leadership.
+        6. AVOID: "Managed", "Supported", "Assisted", "Helped".
+        
         ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
         ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
         

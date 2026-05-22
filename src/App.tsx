@@ -2918,7 +2918,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     return (
       <div className={`h-screen flex flex-col items-center justify-center ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-neutral-50 text-neutral-900'}`}>
         <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
-        <h2 className="text-xl font-bold tracking-tighter opacity-50 uppercase">Securing Nexus AI...</h2>
+        <h2 className="text-xl font-bold tracking-tighter opacity-50 uppercase">Calibrating Azure Architect...</h2>
       </div>
     );
   }
@@ -2992,7 +2992,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex shrink-0 items-center justify-center transition-colors shadow-sm ${isDarkMode ? 'bg-emerald-500/20 border border-emerald-500/50' : 'bg-neutral-900 border border-black'}`}>
                         <Cpu className={`w-3 h-3 sm:w-4 sm:h-4 text-emerald-400`} />
                     </div>
-                    <span className={`tracking-tight text-[13px] sm:text-[15px] hidden md:inline-block ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>NEXUS AI</span>
+                    <span className={`tracking-tight text-[13px] sm:text-[15px] hidden md:inline-block ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>AZURE LEADERSHIP ARCHITECT</span>
                 </div>
 
                 <nav className="flex items-center gap-0.5 sm:gap-1">
@@ -3170,7 +3170,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <Zap className="w-5 h-5 text-emerald-500" />
                         </div>
                         <div>
-                          <h2 className="font-bold text-lg tracking-tight text-white">Resume Optimizer</h2>
+                          <h2 className="font-bold text-lg tracking-tight text-white">FAANG Resume Leadership Architect</h2>
                           <p className="text-[10px] opacity-70 uppercase font-black tracking-widest text-emerald-400">Tailored Content Engine</p>
                         </div>
                       </div>

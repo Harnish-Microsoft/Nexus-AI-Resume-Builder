@@ -30,22 +30,17 @@ CORPORATE DNA TAILORING (DEMONSTRATE, DO NOT DECLARE):
 ${targetCompany ? `Tailor appropriately for ${targetCompany}. Focus on specific impacts and technologies relevant to their industry.` : ''}
 
 GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
-1. ZERO-SHOT ANTI-HALLUCINATION: Use ONLY the provided role data. Do NOT invent numbers, percentages, budgets, or metrics.
-2. TENURE & TIMELINE AWARENESS: 
-   - For short tenures (under 6 months): Focus on "Rapid Delivery," "Auditing," or "Assessment." CRITICAL: Do NOT alter the job title or append the word "(Contract)" to short roles. Leave the title exactly as provided.
-3. BREVITY & DENSITY: Recruiters skim. Bullet points should be concise and impactful. Prioritize hard skills, tools, and metrics.
-4. COMPREHENSIVE DETAIL: Include all significant achievements provided in the source ROLE DATA. Do not arbitrarily cap the number of bullet points unless necessary for layout (aim for high impact).
-5. CLOUD & INFRASTRUCTURE: Use professional terminology naturally.
-6. NO ARBITRARY COMPRESSION: Older roles should still be accurately represented with multiple bullet points if the source data contains them.
-7. ACCURATE TERMINOLOGY: Include all relevant technical skills and tools (e.g., CI/CD, DevOps, Cloud Platforms) as they appear in the source data.
-8. PLAYER-COACH MODE: ONLY IF mode is 'Player-Coach':
-   - BALANCE: 60% Execution (Azure infra), 40% Leadership (Mentoring, Architecture reviews).
-   - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized."
-9. GOOGLE XYZ FORMULA: ALL high-impact bullets MUST conform to the formula: "Accomplished [X] as measured by [Y], by doing [Z]."
-   - [X] = The impact or accomplishment. What did you achieve?
-   - [Y] = The metrics, data, or scale. (Example: "Improving performance by 20%", "Generating $50k revenue", "Supporting 1M+ active users").
-   - [Z] = The mechanism, action, or skill used. (Example: "By implementing Terraform modules", "By re-architecting Azure SQL database").
-   - IF A BULLET HAS NO METRICS: You MUST pivot the phrasing to highlight the result of the action (e.g., "Led migration of [App] to [Cloud], reducing latency and improving deployment frequency" - implicit metrics).
+1. STAR METHODOLOGY: EVERY bullet point MUST follow STAR (Situation, Task, Action, Result).
+2. ACTION VERBS: EVERY bullet MUST start with a strong action verb (Architected, Spearheaded, Optimized, Standardized, Orchestrated, Led, Directed, Improved, Implemented, Streamlined, Governed, Enhanced, Coordinated, Modernized, Transformed).
+3. IMPACT & SCALE: High-impact bullets MUST conform to the formula: "Accomplished [Impact] as measured by [Scale/Metric], by [Action/Mechanism]."
+4. AVOID WEAK WORDING: Do NOT use "Managed", "Supported", "Assisted", "Helped", "Responsible for".
+5. FORBIDDEN TERMS: Unless present in source data, do NOT hallucinate deep "Kubernetes", "DevOps", "CI/CD", or "Microservices" experience. Focus on Infrastructure & Operations Leadership.
+6. AZURE LEADERSHIP FOCUS: Emphasize Landing Zones, Governance, Reliability, Hybrid Cloud, HA/DR, and FinOps.
+7. COMPREHENSIVE DETAIL: Include all significant achievements provided in the source ROLE DATA.
+8. FAANG LEADERSHIP MODE: ONLY IF mode is 'FAANG Leadership' or 'Player-Coach':
+   - BALANCE: 60% Technical Strategy (Azure infra), 40% Executive Leadership (Standardization, Mentoring, Governance).
+   - VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized."
+9. TENURE & TIMELINE AWARENESS: Do NOT alter the job title or append "(Contract)".
 
 
 OUTPUT SCHEMA:

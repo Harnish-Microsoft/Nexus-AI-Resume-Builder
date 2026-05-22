@@ -97,8 +97,8 @@ export function ProfessionalWelcomePage({
                 <Sparkles className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-sm font-bold tracking-tight">Nexus AI</p>
-                <p className={`text-xs ${muted}`}>Resume optimization workspace</p>
+                <p className="text-sm font-bold tracking-tight">Azure Architect AI</p>
+                <p className={`text-xs ${muted}`}>FAANG Infrastructure Leadership Workspace</p>
               </div>
             </div>
             <button
@@ -116,10 +116,10 @@ export function ProfessionalWelcomePage({
               Private resume data, role-specific outputs
             </div>
             <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              Tune every resume to the job before you apply.
+              Strict FAANG Strategy for Azure Infrastructure Leaders.
             </h1>
             <p className={`mt-5 max-w-xl text-base leading-7 sm:text-lg ${muted}`}>
-              Paste a job description, compare fit signals, rewrite experience bullets, and export a clean ATS-ready resume from one focused workspace.
+              Transform your experience into high-impact STAR bullets. Optimized for Microsoft, AWS, Google, and Global Enterprise targets.
             </p>
 
             <div className="mt-8 hidden max-w-xl gap-3 sm:grid sm:grid-cols-3">

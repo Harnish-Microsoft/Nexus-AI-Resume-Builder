@@ -1,6 +1,6 @@
 {
-  "name": "Nexus AI Resume App",
-  "description": "Premium AI-powered resume builder with iOS-style liquid glass aesthetics, featuring multi-agent optimization, real-time career tool integration, and high-performance ATS alignment.",
+  "name": "Azure Leadership Resume Architect",
+  "description": "FAANG-optimized executive branding and resume engineering for Azure Infrastructure Leaders, utilizing strict STAR methodology and ATS-aligned strategy.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

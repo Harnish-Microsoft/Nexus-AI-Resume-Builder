@@ -455,11 +455,20 @@ export async function optimizeResume(
   }
 
   const prompt = `
-ROLE: Professional Resume Strategist.
+ROLE: Senior Executive Resume Strategist & FAANG Technical Recruiter.
 THE CURRENT DATE: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons based on lack of impact/metrics.' : 'TASK: Rewrite resume into a top-tier professional document.'}
 
-${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
+TASK: ${recruiterSimulationMode ? 'Critical Hiring Manager Review.' : 'Rewrite resume into a STRICT FAANG-STYLE document following STAR methodology.'}
+
+STRICT FAANG & STAR METHODOLOGY RULES:
+1. EVERY BULLET MUST follow STAR (Situation, Task, Action, Result).
+2. EVERY BULLET MUST start with a strong action verb (Architected, Spearheaded, Optimized, Standardized, Orchestrated, Led, Directed, Improved, Implemented, Streamlined, Governed, Enhanced, Coordinated, Modernized, Transformed).
+3. Ownership & Impact: Show scale (e.g., $10M budget, 500+ subscriptions) and measurable business value (e.g., 40% cost reduction).
+4. Focus Areas: Azure Infrastructure, Cloud Governance, Reliability, Hybrid Cloud, HA/DR, and FinOps.
+5. NO FABRICATION: Do not exaggerate Kubernetes or deep Terraform engineering skills. Focus on Infrastructure & Operations Leadership.
+6. AVOID: "Managed", "Supported", "Assisted", "Helped".
+
+${customPrompt ? `CUSTOM INSTRUCTIONS: ${customPrompt}` : ''}
 ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
 
 CORPORATE DNA TAILORING:
