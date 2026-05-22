@@ -1771,7 +1771,7 @@ export default function App() {
         finalJobDescription = await fetchJobDescription(jobUrl, getRouterConfig());
       }
 
-      const result = await evaluateSuitability(resumeText, finalJobDescription, targetRole, getRouterConfig(), fastMode);
+      const result = await evaluateSuitability(resumeText, finalJobDescription, getRouterConfig(), fastMode);
       setSuitabilityResult(result);
     } catch (err: any) {
       console.error("Suitability check failed:", err);

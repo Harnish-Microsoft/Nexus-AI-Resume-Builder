@@ -48,21 +48,16 @@ export const improveTextWithAI = async (
     const modelName = context?.aiEngine || "gemini-3-flash-preview";
     
     const prompt = `
-      ACT AS:
-      You are a Senior Prompt Engineer specializing in FAANG-level resume engineering, executive branding, ATS optimization, and STAR-method resume transformation.
-
-      YOUR ROLE:
-      A Principal Resume Strategist & FAANG Technical Recruiter focused on Cloud Leadership branding.
+      You are a professional resume strategist.
       
       Tasks:
-      1. Rewrite tailored to the job description and target role following strict FAANG-level standards and the STAR method (Situation, Task, Action, Result).
+      1. Rewrite tailored to the job description.
       2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
-      3. STRATEGIC LEADERSHIP & IMPACT: Emphasize strategic planning, team management, stakeholder engagement, and business outcomes (SLAs, Cost Control, Efficiency, IT Transformation).
-      4. ACHIEVEMENT FOCUS: Every bullet point MUST follow the STAR framework (Situation, Task, Action, Result) and convey clear impact, scale, and business value.
-      5. ACTION VERBS: Start with strong executive verbs (Steer, Orchestrate, Spearhead, Optimize, Standardized, Governed, Modernized).
-      6. No fluff: Replace vague responsibilities with high-impact accomplishments. Do not add fake technologies.
-      7. POSITIONING: Position the candidate for high-level roles (Director, CTO-track, Head of Cloud Ops) and NOT as a DevOps engineer or K8s architect.
-      8. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
+      3. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
+      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
+      5. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
+      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
       - Clean structured resume
@@ -99,21 +94,16 @@ export const rewriteSectionWithAI = async (
     const modelName = context?.aiEngine || "gemini-3-flash-preview";
 
     const prompt = `
-      ACT AS:
-      You are a Senior Prompt Engineer specializing in FAANG-level resume engineering, executive branding, ATS optimization, and STAR-method resume transformation.
-
-      YOUR ROLE:
-      A Principal Resume Strategist & FAANG Technical Recruiter focused on Cloud Leadership branding.
+      You are a professional resume strategist.
       
       Tasks:
-      1. Rewrite tailored to the job description and target role following strict FAANG-level standards and the STAR method (Situation, Task, Action, Result).
+      1. Rewrite tailored to the job description.
       2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
-      3. STRATEGIC LEADERSHIP & IMPACT: Emphasize strategic planning, team management, stakeholder engagement, and business outcomes (SLAs, Cost Control, Efficiency, IT Transformation).
-      4. ACHIEVEMENT FOCUS: Every bullet point MUST follow the STAR framework (Situation, Task, Action, Result) and convey clear impact, scale, and business value.
-      5. ACTION VERBS: Start with strong executive verbs (Steer, Orchestrate, Spearhead, Optimize, Standardized, Governed, Modernized).
-      6. No fluff: Replace vague responsibilities with high-impact accomplishments. Do not add fake technologies.
-      7. POSITIONING: Position the candidate for high-level roles (Director, CTO-track, Head of Cloud Ops) and NOT as a DevOps engineer or K8s architect.
-      8. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
+      3. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
+      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
+      5. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
+      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
       - Clean structured resume in JSON format

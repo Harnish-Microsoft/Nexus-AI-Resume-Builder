@@ -15,12 +15,9 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 
   const prompt = `
-    ACT AS:
-    Senior Prompt Engineer & Cloud Leadership Strategist.
-    
-    Extract the most important information from this resume for a high-level Azure Leadership role.
+    Extract the most important information from this resume for a job application.
     Focus on:
-    1. All technical and soft skills (emphasizing Azure infra, governance, and leadership)
+    1. All technical and soft skills
     2. Every professional experience listed (Role, Company, Key Achievements)
     3. Education history
     4. Certifications
@@ -57,17 +54,10 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 
   const prompt = `
-    ACT AS:
-    Senior Prompt Engineer & FAANG Technical Recruiter.
-    
     Extract the top 15-20 essential keywords and requirements from this job description.
     Include technical skills, tools, methodologies, and soft skills mentioned.
     
-    STRICT RULE: Do NOT include keywords related to Kubernetes, K8s, Docker, containers, or microservices. 
-    Focus on:
-    1. Azure Infrastructure (Networking, Policy, Identity, Governance, BCDR, VMs).
-    2. Senior Leadership/Management (Strategic Planning, SLA management, Team Leadership, Service Delivery, Stakeholder Management, Managerial competencies).
-    3. Do not include fake technologies or unsupported skills.
+    STRICT RULE: Do NOT include keywords related to Kubernetes, K8s, Docker, containers, or microservices. Focus only on general cloud infrastructure, networking, and governance.
     
     Return only a JSON array of strings.
     
