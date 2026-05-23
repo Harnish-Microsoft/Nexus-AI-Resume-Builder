@@ -1,6 +1,6 @@
 {
-  "name": "Azure Leadership Resume Architect",
-  "description": "FAANG-optimized executive branding and resume engineering for Azure Infrastructure Leaders, utilizing strict STAR methodology and ATS-aligned strategy.",
+  "name": "NexusProAi - Resume Builder",
+  "description": "AI-powered FAANG-style resume builder with strict STAR methodology and executive branding.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

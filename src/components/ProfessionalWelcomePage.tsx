@@ -97,8 +97,8 @@ export function ProfessionalWelcomePage({
                 <Sparkles className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-sm font-bold tracking-tight">Azure Architect AI</p>
-                <p className={`text-xs ${muted}`}>FAANG Infrastructure Leadership Workspace</p>
+                <p className="text-sm font-bold tracking-tight">NexusProAi</p>
+                <p className={`text-xs ${muted}`}>FAANG Resume Optimization Workspace</p>
               </div>
             </div>
             <button
@@ -115,11 +115,11 @@ export function ProfessionalWelcomePage({
               <ShieldCheck className="w-3.5 h-3.5" />
               Private resume data, role-specific outputs
             </div>
-            <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              Strict FAANG Strategy for Azure Infrastructure Leaders.
+            <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl lg:text-5xl font-display">
+              Strict FAANG Strategy for Industry Leaders.
             </h1>
             <p className={`mt-5 max-w-xl text-base leading-7 sm:text-lg ${muted}`}>
-              Transform your experience into high-impact STAR bullets. Optimized for Microsoft, AWS, Google, and Global Enterprise targets.
+              Transform your experience into high-impact STAR bullets. Optimized for Microsoft, Google, Amazon, and Global Enterprise targets.
             </p>
 
             <div className="mt-8 hidden max-w-xl gap-3 sm:grid sm:grid-cols-3">
