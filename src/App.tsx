@@ -19,7 +19,6 @@ import {
   Cpu,
   BarChart3,
   Info,
-  Loader2,
   Moon,
   Sun,
   Trash2,
@@ -63,10 +62,10 @@ import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
-import { ResumeData, SuitabilityResult, Certification, MasterResume, FAANGInsights } from './types';
+import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, getFAANGInsights } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole } from './services/geminiService';
 import { RouterConfig } from './services/aiRouter';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
@@ -114,7 +113,7 @@ const LoadingSpinner = () => (
   </div>
 );
 
-type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic' | 'Player-Coach';
+type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic';
 
 import { CommandPalette } from './components/CommandPalette';
 
@@ -250,9 +249,6 @@ export default function App() {
     setMasterResumes([...masterResumes, newResume]);
   };
 
-  const [faangInsights, setFaangInsights] = useState<FAANGInsights | null>(null);
-  const [isFetchingFAANG, setIsFetchingFAANG] = useState(false);
-
   const [resumeText, setResumeText] = useState(() => {
     const selected = masterResumes.find(r => r.id === selectedResumeId) || masterResumes[0];
     return (selected && selected.data) ? JSON.stringify(selected.data, null, 2) : "{}";
@@ -315,7 +311,7 @@ export default function App() {
     }
   }, [encryptedApiKey]);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info', duration?: number) => {
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
   };
 
@@ -331,14 +327,16 @@ export default function App() {
           });
           if (docSnap && docSnap.exists()) {
             const data = docSnap.data();
-            const hasAcceptedTermsLocal = localStorage.getItem('hasAcceptedTerms') === 'true';
-            if (!data.hasAcceptedTerms && !hasAcceptedTermsLocal) {
+            if (!data.hasAcceptedTerms) {
               setShowTermsModal(true);
             } else {
               setShowTermsModal(false);
             }
             if (data.masterResume) {
               setResumeText(data.masterResume);
+            }
+            if (data.resumes) {
+              setMasterResumes(data.resumes);
             }
             if (data.customPrompt) {
               setCustomPrompt(data.customPrompt);
@@ -368,10 +366,7 @@ export default function App() {
               setIsDriveConnected(true);
             }
           } else {
-            const hasAcceptedTermsLocal = localStorage.getItem('hasAcceptedTerms') === 'true';
-            if (!hasAcceptedTermsLocal) {
-              setShowTermsModal(true);
-            }
+            setShowTermsModal(true);
           }
         } catch (err) {
           console.error("Error fetching profile:", err);
@@ -641,6 +636,7 @@ export default function App() {
       const dataToSync: any = {
         userId: user.uid,
         masterResume: resumeText || "",
+        resumes: masterResumes || [],
         customPrompt: customPrompt || "",
         settings: {
           versioningEnabled,
@@ -1781,41 +1777,6 @@ export default function App() {
     }
   };
 
-  const handleGetFAANGInsights = async () => {
-    if (!targetCompany || targetCompany === 'none') {
-      setError('Please select a target FAANG company from Corporate DNA Tailoring first.');
-      return;
-    }
-    
-    if (!jobDescription && !jobUrl) {
-      setError('Please provide a job description or URL to get tailored FAANG insights.');
-      return;
-    }
-
-    setIsFetchingFAANG(true);
-    setFaangInsights(null);
-    setError(null);
-    try {
-      let finalJobDescription = jobDescription;
-      if (!finalJobDescription && jobUrl) {
-        finalJobDescription = await fetchJobDescription(jobUrl, getRouterConfig());
-      }
-      
-      const insights = await getFAANGInsights(
-        targetCompany,
-        targetRole || "Professional Candidate",
-        finalJobDescription,
-        getRouterConfig()
-      );
-      setFaangInsights(insights);
-    } catch (err: any) {
-      console.error("FAANG insights fetching failed:", err);
-      setError(err.message || 'Failed to fetch FAANG insights.');
-    } finally {
-      setIsFetchingFAANG(false);
-    }
-  };
-
   const handleOptimize = async () => {
     console.log("[Nexus AI] handleOptimize started. Engine:", selectedEngine);
     setError(null);
@@ -1922,41 +1883,9 @@ export default function App() {
 
     const controller = new AbortController();
     setAbortController(controller);
-    
-    let finalResumeText = resumeText || "";
-
-    // SMART MASTER SELECTION STRATEGY
-    // If there are multiple resumes in Nexus Master, help the user pick the right base
-    if (masterResumes.length > 1) {
-      setOptimizationStatus("Selecting Best Master Resume profile...");
-      try {
-        const bestId = await selectBestMasterResume(
-          masterResumes,
-          jobDescription || jobUrl || "",
-          getRouterConfig()
-        );
-        
-        if (bestId) {
-          const selectedMaster = masterResumes.find(r => r.id === bestId);
-          if (selectedMaster) {
-            console.log("[Nexus AI] Auto-selected master resume:", selectedMaster.name);
-            setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === bestId })));
-            
-            const masterData = typeof selectedMaster.data === 'string' 
-              ? selectedMaster.data 
-              : JSON.stringify(selectedMaster.data, null, 2);
-              
-            finalResumeText = masterData;
-            setResumeText(masterData);
-            showToast(`Auto-selected Profile: ${selectedMaster.name}`, 'success', 5000);
-          }
-        }
-      } catch (err) {
-        console.error("[Nexus AI] Master selection failed, proceeding with default base:", err);
-      }
-    }
 
     try {
+      const finalResumeText = resumeText || "";
       const finalTargetRole = targetRole || "Professional Candidate";
       
       const routerConfig = getRouterConfig();
@@ -2918,7 +2847,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     return (
       <div className={`h-screen flex flex-col items-center justify-center ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-neutral-50 text-neutral-900'}`}>
         <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
-        <h2 className="text-xl font-bold tracking-tighter opacity-50 uppercase">Securing NexusProAi...</h2>
+        <h2 className="text-xl font-bold tracking-tighter opacity-50 uppercase">Securing Nexus AI...</h2>
       </div>
     );
   }
@@ -2992,7 +2921,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex shrink-0 items-center justify-center transition-colors shadow-sm ${isDarkMode ? 'bg-emerald-500/20 border border-emerald-500/50' : 'bg-neutral-900 border border-black'}`}>
                         <Cpu className={`w-3 h-3 sm:w-4 sm:h-4 text-emerald-400`} />
                     </div>
-                    <span className={`tracking-tight text-[13px] sm:text-[15px] hidden md:inline-block ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>NEXUS PRO AI</span>
+                    <span className={`tracking-tight text-[13px] sm:text-[15px] hidden md:inline-block ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>NEXUS AI</span>
                 </div>
 
                 <nav className="flex items-center gap-0.5 sm:gap-1">
@@ -3012,23 +2941,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </Link>
                   ))}
                 </nav>
-
-                <button 
-                  onClick={() => handleOptimize()}
-                  disabled={isOptimizing || isExtracting}
-                  className={`ml-4 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hidden lg:flex items-center gap-2 transition-all shadow-lg ${
-                    isDarkMode 
-                      ? 'bg-emerald-500 text-black hover:bg-emerald-400 shadow-emerald-500/20' 
-                      : 'bg-black text-white hover:bg-slate-800 shadow-black/20'
-                  } ${isOptimizing || isExtracting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  {isOptimizing ? (
-                    <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Zap className="w-3 h-3" />
-                  )}
-                  {isOptimizing ? 'Running...' : 'Optimize'}
-                </button>
               </div>
               <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
                   <button onClick={() => setFastMode(!fastMode)} className={`hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full border transition-colors text-[10px] font-bold ${
@@ -3170,8 +3082,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <Zap className="w-5 h-5 text-emerald-500" />
                         </div>
                         <div>
-                          <h2 className="font-bold text-lg tracking-tight text-white">NexusProAi Resume Optimizer</h2>
-                          <p className="text-[10px] opacity-70 uppercase font-black tracking-widest text-emerald-400">FAANG Leadership Engine</p>
+                          <h2 className="font-bold text-lg tracking-tight text-white">Resume Optimizer</h2>
+                          <p className="text-[10px] opacity-70 uppercase font-black tracking-widest text-emerald-400">Tailored Content Engine</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -3443,84 +3355,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 </AnimatePresence>
                               </div>
 
-                              {/* FAANG Insight Engine */}
-                              {['google', 'amazon', 'meta', 'apple', 'netflix'].includes(targetCompany) && (
-                                <div className={`p-4 rounded-xl border animate-in fade-in slide-in-from-top-2 duration-300 ${isDarkMode ? 'bg-indigo-500/5 border-indigo-500/20' : 'bg-indigo-50 border-indigo-200'}`}>
-                                  <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center gap-2">
-                                      <Zap className="w-3.5 h-3.5 text-indigo-500" />
-                                      <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">FAANG DNA Booster</span>
-                                    </div>
-                                    <button 
-                                      onClick={handleGetFAANGInsights}
-                                      disabled={isFetchingFAANG || (!jobDescription && !jobUrl)}
-                                      className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all ${
-                                        isFetchingFAANG 
-                                          ? 'bg-indigo-500/20 text-indigo-300 cursor-not-allowed' 
-                                          : 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-sm shadow-indigo-500/20'
-                                      }`}
-                                    >
-                                      {isFetchingFAANG ? (
-                                        <Loader2 className="w-3 h-3 animate-spin" />
-                                      ) : 'Generate Insights'}
-                                    </button>
-                                  </div>
-
-                                  <AnimatePresence mode="wait">
-                                    {faangInsights ? (
-                                      <motion.div 
-                                        key="faang-results"
-                                        initial={{ opacity: 0, height: 0 }}
-                                        animate={{ opacity: 1, height: 'auto' }}
-                                        exit={{ opacity: 0, height: 0 }}
-                                        className="space-y-3 overflow-hidden"
-                                      >
-                                        <p className={`text-[10px] leading-relaxed italic border-l-2 border-indigo-500 pl-2 ${isDarkMode ? 'text-indigo-200/70' : 'text-indigo-800/70'}`}>
-                                          {faangInsights.summary}
-                                        </p>
-                                        
-                                        <div className="grid grid-cols-2 gap-4">
-                                          <div>
-                                            <h4 className={`text-[9px] font-black uppercase tracking-wider opacity-60 mb-2 ${isDarkMode ? 'text-indigo-200' : 'text-indigo-900'}`}>Key Terminologies</h4>
-                                            <div className="flex flex-wrap gap-1">
-                                              {faangInsights.keywords.map((kw, i) => (
-                                                <span key={i} className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[8px] font-medium border border-indigo-500/20">{kw}</span>
-                                              ))}
-                                            </div>
-                                          </div>
-                                          <div>
-                                            <h4 className={`text-[9px] font-black uppercase tracking-wider opacity-60 mb-2 ${isDarkMode ? 'text-amber-200' : 'text-amber-900'}`}>Company Values</h4>
-                                            <div className="flex flex-wrap gap-1">
-                                              {faangInsights.leadership_principles?.map((lp, i) => (
-                                                <span key={i} className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 text-[8px] font-medium border border-amber-500/20">{lp}</span>
-                                              ))}
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        <div>
-                                          <h4 className={`text-[9px] font-black uppercase tracking-wider opacity-60 mb-2 ${isDarkMode ? 'text-indigo-200' : 'text-indigo-900'}`}>FAANG Strategy Tips</h4>
-                                          <ul className="space-y-1.5">
-                                            {faangInsights.culture_alignment_tips.map((tip, i) => (
-                                              <li key={i} className="text-[9px] flex items-start gap-2">
-                                                <div className="w-1 h-1 rounded-full bg-indigo-400 mt-1.5 shrink-0 shadow-sm shadow-indigo-400" />
-                                                <span className={`${isDarkMode ? 'text-white/70' : 'text-black/70'} leading-snug`}>{tip}</span>
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      </motion.div>
-                                    ) : !isFetchingFAANG && (
-                                      <div className="text-center py-2">
-                                        <div className={`text-[9px] font-medium ${isDarkMode ? 'text-white/40' : 'text-black/40'}`}>
-                                          Click to inject <span className="font-bold text-indigo-500">{TARGET_COMPANIES.find(c => c.id === targetCompany)?.label}</span> Corporate DNA insights
-                                        </div>
-                                      </div>
-                                    )}
-                                  </AnimatePresence>
-                                </div>
-                              )}
-
                               {/* Brain Dump Input */}
                               <div className="space-y-2">
                                 <div className="flex items-center justify-between">
@@ -3572,12 +3406,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       <li><span className="font-semibold">Conservative:</span> {MODE_DESCRIPTIONS.conservative}</li>
                                       <li><span className="font-semibold">Balanced:</span> {MODE_DESCRIPTIONS.balanced}</li>
                                       <li><span className="font-semibold">Aggressive:</span> {MODE_DESCRIPTIONS.aggressive}</li>
+                                      <li><span className="font-semibold">Player-Coach:</span> {MODE_DESCRIPTIONS["Player-Coach"]}</li>
                                     </ul>
                                   </motion.div>
                                 )}
                               </AnimatePresence>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                {(['conservative', 'balanced', 'aggressive'] as const).map((m) => (
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                {(['conservative', 'balanced', 'aggressive', 'Player-Coach'] as const).map((m) => (
                                   <button
                                     key={m}
                                     onClick={() => setMode(m)}
@@ -3660,9 +3495,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     >
                                       {selectedEngine === 'gemini' && (
                                         <>
-                                          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
-                                          <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
-                                          <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                                          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Preview)</option>
+                                          <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Preview)</option>
                                           <option value="gemini-2.0-flash-thinking-exp-01-21">Gemini Thinking</option>
                                         </>
                                       )}
@@ -4200,29 +4034,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       </div>
                     )}
                   </section>
-
-                  {/* Google Drive Status/Reconnect */}
-                  {!driveAccessToken && user && (
-                    <div className="mt-6 p-4 rounded-xl border border-dashed border-blue-500/30 bg-blue-500/5">
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="p-2 rounded-lg bg-blue-500/20 text-blue-500">
-                          <Cloud className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-sm">Cloud Backups</h3>
-                          <p className="text-[10px] opacity-60">Save & version your PDFs to Google Drive</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={handleConnectDrive}
-                        disabled={isAuthProcessing}
-                        className="w-full py-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold uppercase tracking-widest transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
-                      >
-                        {isAuthProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Cloud className="w-3.5 h-3.5" />}
-                        {isAuthProcessing ? "Connecting..." : "Connect Google Drive"}
-                      </button>
-                    </div>
-                  )}
 
                   {/* Google Drive Backups - Now integrated as a vertical component in profile */}
                   {driveAccessToken && (
@@ -4885,35 +4696,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           isDarkMode={isDarkMode}
           resumeData={data}
         />
-
-        {/* Floating Quick Optimize Button */}
-        <motion.button
-          initial={{ opacity: 0.15, scale: 0.9 }}
-          animate={{ opacity: 0.15, scale: 1 }}
-          whileHover={{ opacity: 1, scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => handleOptimize()}
-          disabled={isOptimizing || isExtracting}
-          className={`fixed bottom-24 right-8 z-[100] group flex items-center gap-3 p-4 rounded-2xl shadow-2xl transition-all duration-300 border ${
-            isDarkMode 
-              ? 'bg-emerald-500 text-black shadow-emerald-500/30 border-emerald-400/50' 
-              : 'bg-neutral-900 text-white shadow-black/20 border-black/10'
-          } ${isOptimizing || isExtracting ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
-        >
-          <div className="relative">
-            <Zap className={`w-5 h-5 ${isOptimizing ? 'fill-current animate-pulse' : ''}`} />
-            {isOptimizing && (
-              <motion.div 
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-                className="absolute -inset-1 border-2 border-current border-t-transparent rounded-full"
-              />
-            )}
-          </div>
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-500 whitespace-nowrap">
-            {isOptimizing ? 'Nexus Processing...' : 'Quick Optimize'}
-          </span>
-        </motion.button>
       </footer>
       </div>
     </div>

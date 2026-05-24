@@ -16,11 +16,9 @@ export function trimInput(text: string, maxLength: number = 8000): string {
 }
 
 export async function extractRelevantResumeData(resumeText: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
-  // Even in hybrid-openai, we prefer Gemini for extraction to reduce costs and maintain 'hybrid' nature.
-  // We only use OpenAI if geminiApiKey is missing or specifically forced (not common for extraction).
-  const useOpenAIForExtraction = false; // Forced to false to ensure Gemini is used for cheap steps
+  const isHybridOpenAI = pipelineType === 'hybrid-openai' && openaiApiKey;
 
-  if (useOpenAIForExtraction && openaiApiKey) {
+  if (isHybridOpenAI) {
     const openai = new OpenAI({ apiKey: openaiApiKey });
     const trimmedResume = trimInput(resumeText, 15000);
     const prompt = `
@@ -69,7 +67,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
         _model: "gpt-4o" 
       };
     } catch (error) {
-      console.warn("Error extracting resume data with OpenAI, falling back to Gemini:", error);
+      console.error("Error extracting resume data with OpenAI:", error);
     }
   }
 
@@ -109,7 +107,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
 
   // Stage 1: Extraction
   let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3-flash-preview";
+  let fallbackModel = "gemini-3.1-flash-lite-preview";
 
   try {
     try {
@@ -154,10 +152,9 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
 }
 
 export async function extractJDKeywords(jobDescription: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
-  // Similar to resume extraction, prefer Gemini for JD keyword extraction.
-  const useOpenAIForExtraction = false;
+  const isHybridOpenAI = pipelineType === 'hybrid-openai' && openaiApiKey;
 
-  if (useOpenAIForExtraction && openaiApiKey) {
+  if (isHybridOpenAI) {
     const openai = new OpenAI({ apiKey: openaiApiKey });
     const trimmedJD = trimInput(jobDescription, 10000);
     const prompt = `
@@ -185,7 +182,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
         _model: "gpt-4o" 
       };
     } catch (error) {
-      console.warn("Error extracting JD keywords with OpenAI, falling back to Gemini:", error);
+      console.error("Error extracting JD keywords with OpenAI:", error);
     }
   }
 
@@ -202,7 +199,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
 
   // Stage 1: JD Analysis
   let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3-flash-preview";
+  let fallbackModel = "gemini-3.1-flash-lite-preview";
 
   try {
     try {

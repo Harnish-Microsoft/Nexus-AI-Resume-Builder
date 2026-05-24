@@ -32,65 +32,18 @@ const app = admin.apps.length
   : admin.initializeApp({
       projectId: firebaseConfig.projectId,
     });
-
-// Robust Firestore initialization: fallback to default database if specific ID fails or is not provided
-let db: admin.firestore.Firestore;
-try {
-  const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "") 
-    ? firebaseConfig.firestoreDatabaseId 
-    : undefined;
-  
-  if (dbId) {
-    console.log(`[Server] Attempting to initialize Firestore with DB ID: ${dbId}`);
-    db = getFirestore(app, dbId);
-  } else {
-    db = getFirestore(app);
-  }
-} catch (e) {
-  console.error("[Server] Critical Firestore initialization error:", e);
-  db = getFirestore(app);
-}
-
-// Global error handler for Firestore to detect Permission Denied early
-db.listCollections().then(() => {
-  console.log("[Server] Firestore connection verified.");
-}).catch(err => {
-  console.error("[Server] Firestore connection test failed:", err.message);
-  if (err.message.includes("PERMISSION_DENIED") || err.message.includes("not found")) {
-    console.warn("[Server] Detected potential database ID mismatch. Falling back to default database.");
-    db = getFirestore(app);
-  }
-});
+const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 // Helper to get API keys from Firestore securely
 async function getApiKeys(idToken: string) {
-    if (idToken === "SYSTEM_PIPELINE") return { gemini: process.env.GEMINI_API_KEY };
+    if (idToken === "SYSTEM_PIPELINE") return { keys: null, uid: "SYSTEM" };
     try {
-      let uid: string;
-      try {
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        uid = decodedToken.uid;
-      } catch (authError: any) {
-        console.warn(`[getApiKeys] Auth verification failed: ${authError.message}. Using system keys.`);
-        return { gemini: process.env.GEMINI_API_KEY };
-      }
-
-      let doc;
-      try {
-        doc = await db.collection("users").doc(uid).get();
-      } catch (firestoreError: any) {
-        console.error(`[getApiKeys] Firestore read failed for UID ${uid}:`, firestoreError.message);
-        // If Permission Denied, it's likely a DB ID issue. Fall back to system key instead of breaking.
-        if (firestoreError.message.includes("PERMISSION_DENIED") || firestoreError.message.includes("7")) {
-          console.warn("[getApiKeys] Falling back to system Gemini API key due to database permissions.");
-          return { gemini: process.env.GEMINI_API_KEY };
-        }
-        throw firestoreError;
-      }
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const uid = decodedToken.uid;
+      const doc = await db.collection("users").doc(uid).get();
       
-      if (!doc || !doc.exists) {
-        console.log(`[getApiKeys] No profile found for ${uid}. Using system keys.`);
-        return { gemini: process.env.GEMINI_API_KEY };
+      if (!doc.exists) {
+        return { keys: null, uid }; // Return null instead of throwing
       }
       
       let data = doc.data();
@@ -106,22 +59,22 @@ async function getApiKeys(idToken: string) {
       }
 
       if (!data || !data.encryptedApiKey) {
-        return null; // Return null instead of throwing
+        return { keys: null, uid }; // Return null instead of throwing
       }
 
       // Decrypt the keys before returning
       try {
         const decrypted = decrypt(data.encryptedApiKey);
         try {
-          return JSON.parse(decrypted);
+          return { keys: JSON.parse(decrypted), uid };
         } catch (e) {
           // Fallback for older single-key format
-          return { gemini: decrypted };
+          return { keys: { gemini: decrypted }, uid };
         }
       } catch (error: any) {
         if (error.message.includes("DECRYPTION_FAILED")) {
           console.warn(`[Server] Decryption failed for user ${uid}. Treating as no key found.`);
-          return null;
+          return { keys: null, uid };
         }
         throw error;
       }
@@ -134,10 +87,29 @@ async function getApiKeys(idToken: string) {
 // Function to log usage to Firestore
 async function logUsage(log: UsageLog) {
   try {
+    // 1. Add to general analytics
     await db.collection("analytics").add({
       ...log,
       timestamp: FieldValue.serverTimestamp()
     });
+
+    // 2. Add to user-specific collection
+    if (log.userId && log.userId !== "anonymous" && log.userId !== "SYSTEM") {
+       const month = new Date(log.timestamp || Date.now()).toISOString().substring(0, 7);
+       const usageRef = db.collection(`users/${log.userId}/tokenUsage`).doc(month);
+       
+       const modelField = log.model.toLowerCase().includes('gemini') ? 'gemini' : 'openai';
+       
+       await usageRef.set({
+           userId: log.userId,
+           month,
+           [modelField]: {
+               input: FieldValue.increment(log.inputTokens),
+               output: FieldValue.increment(log.outputTokens)
+           },
+           updatedAt: FieldValue.serverTimestamp()
+       }, { merge: true });
+    }
   } catch (error) {
     console.error("Error logging usage to Firestore:", error);
   }
@@ -230,59 +202,6 @@ async function startServer() {
     res.json({ status: "alive", timestamp: new Date().toISOString() });
   });
 
-  // Alias for backward compatibility and simpler calls
-  app.post("/api/optimize", async (req, res) => {
-    const { prompt, model, engine, encryptedKey } = req.body;
-    const authHeader = req.header('Authorization');
-    const idToken = authHeader?.startsWith('Bearer ') ? authHeader.split('Bearer ')[1] : "SYSTEM_PIPELINE";
-
-    try {
-      console.log(`[Server] /api/optimize called with ${engine}/${model}`);
-      
-      // Determine keys
-      let geminiKey = process.env.GEMINI_API_KEY;
-      if (idToken !== "SYSTEM_PIPELINE") {
-        try {
-          const keys = await getApiKeys(idToken);
-          if (keys) geminiKey = keys.gemini || geminiKey;
-        } catch (e) {
-          console.warn("[Server] Could not fetch user keys for /api/optimize, using system keys.");
-        }
-      }
-
-      if (engine === 'gemini') {
-        const genAI = new GoogleGenAI({ apiKey: geminiKey || "", httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
-        const response = await genAI.models.generateContent({
-          model: model || "gemini-3-flash-preview",
-          contents: [{ role: 'user', parts: [{ text: prompt }] }]
-        });
-        return res.json({ result: response.text });
-      } else if (engine === 'openai') {
-        let openaiKey = "";
-        try {
-          const keys = await getApiKeys(idToken);
-          openaiKey = keys?.openai || "";
-        } catch (e) {}
-
-        if (!openaiKey) {
-            return res.status(400).json({ error: "OpenAI API key is missing. Please save it in your profile." });
-        }
-
-        const openai = new OpenAI({ apiKey: openaiKey });
-        const completion = await openai.chat.completions.create({
-            model: model || "gpt-4o-mini",
-            messages: [{ role: "user", content: prompt }]
-        });
-        return res.json({ result: completion.choices[0].message.content });
-      } else {
-        return res.status(400).json({ error: `Engine ${engine} not supported in simple optimize route.` });
-      }
-    } catch (error: any) {
-      console.error("[Server] /api/optimize Error:", error);
-      res.status(500).json({ error: error.message || "Failed to process AI request" });
-    }
-  });
-
   app.get("/api/generate-resume-pdf", async (req, res) => {
     try {
       const html = renderResumeToHTML();
@@ -326,8 +245,7 @@ async function startServer() {
     const folderId = process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID;
 
     if (!serviceAccountKey) {
-      console.warn("GOOGLE_SERVICE_ACCOUNT_KEY is not set. Drive fallback to Service Account will be unavailable.");
-      return null;
+      throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY is not set. Please add it to your environment variables.");
     }
 
     if (folderId && (folderId.startsWith('{') || folderId.includes('service_account'))) {
@@ -465,9 +383,7 @@ async function startServer() {
     const accessToken = req.query.accessToken as string | undefined;
     try {
       const drive = getDriveClient(accessToken);
-      if (!drive) {
-        return res.status(401).json({ error: "Google Drive is not connected. Please connect via OAuth in settings." });
-      }
+      
       const response = await drive.files.list({
         // List folders that are not trashed
         q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
@@ -501,9 +417,6 @@ async function startServer() {
     const accessToken = req.query.accessToken as string | undefined;
     try {
       const drive = getDriveClient(accessToken);
-      if (!drive) {
-        return res.status(401).json({ error: "Google Drive is not connected. Please connect via OAuth in settings." });
-      }
       const folderId = process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID;
       
       const query = folderId 
@@ -695,6 +608,30 @@ async function startServer() {
     res.json({ success: true, message: "Cache cleared successfully" });
   });
 
+  app.get("/api/user/token-usage", async (req, res) => {
+    const authHeader = req.header('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    
+    try {
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        const uid = decodedToken.uid;
+        
+        const snapshot = await db.collection(`users/${uid}/tokenUsage`).get();
+        const usage = snapshot.docs.map(doc => ({
+            month: doc.id,
+            ...doc.data()
+        }));
+        
+        res.json(usage);
+    } catch (error) {
+        console.error("Error fetching user token usage:", error);
+        res.status(500).json({ error: "Failed to fetch user token usage" });
+    }
+  });
+
   // Admin Analytics Endpoints
   app.get("/api/admin/stats", async (req, res) => {
     try {
@@ -844,7 +781,7 @@ async function startServer() {
       if (cachedResult) {
         // Log cache hit
         logUsage({
-          userId: "anonymous",
+          userId: uid,
           model: "cache",
           inputTokens: 0,
           outputTokens: 0,
@@ -870,7 +807,7 @@ async function startServer() {
 
       const resumeData = resumeExtraction?.data;
       const jdKeywords = jdExtraction?.data || [];
-      const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3-flash-preview";
+      const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3.1-flash-lite-preview";
       
       const geminiUsage = {
         promptTokenCount: (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0),
@@ -884,20 +821,14 @@ async function startServer() {
       console.log("[Pipeline] Step 2: Trimming Content...");
       const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords);
       
-      const finalPromptBase = `
-        ACT AS: Senior Executive Resume Strategist & FAANG Technical Recruiter.
-        
-        GOAL: Optimize this structured resume data for: ${targetRole}.
-        AUDIENCE: ${audience}. MODE: ${mode}.
-        
-        STRICT FAANG & STAR METHODOLOGY RULES:
-        1. EVERY BULLET MUST follow STAR (Situation, Task, Action, Result).
-        2. EVERY BULLET MUST start with a strong action verb (Architected, Spearheaded, Optimized, Standardized, Orchestrated, Led, Directed, Improved, Implemented, Streamlined, Governed, Enhanced, Coordinated, Modernized, Transformed).
-        3. Ownership & Impact: Show scale (e.g., $10M budget, 500+ subscriptions) and measurable business value (e.g., 40% cost reduction).
-        4. Focus Areas: Azure Infrastructure, Cloud Governance, Reliability, Hybrid Cloud, HA/DR, and FinOps.
-        5. DO NOT fabricates Kubernetes or deep Terraform engineering skills. Focus on Infrastructure & Operations Leadership.
-        6. AVOID: "Managed", "Supported", "Assisted", "Helped".
-        
+      console.log("=== OPTIMIZED INPUT EXPERIENCE ===");
+      console.dir(optimizedInput.experience, { depth: null });
+
+      // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
+      const finalPrompt = `
+        You are a senior executive resume strategist. 
+        Optimize this structured resume data for the target role: ${targetRole}.
+        Audience: ${audience}. Mode: ${mode}.
         ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
         ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
         
@@ -914,111 +845,99 @@ async function startServer() {
           - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized," "Spearheaded."
           - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". Focus entirely on Azure Infrastructure.
         ` : ''}
+
+        INPUT DATA (Optimized):
+        ${JSON.stringify(optimizedInput, null, 2)}
+        
+        STRICT RULES:
+        1. TONE & FOCUS: Maintain a professional, concise, executive-level tone suitable for FAANG, Senior Cloud Architect, or Director-level infrastructure roles. Focus heavily on these JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
+        
+        2. PRESERVE TITLES: Do NOT modify job titles under any circumstances. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
+        
+        3. INCLUDE ALL ROLES: You MUST include every single role provided in the INPUT DATA. Do not skip any jobs, even very old ones.
+        
+        4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA. Do not "suggest" certifications if the user doesn't have them.
+        
+        5. BREVITY & DENSITY: Bullet points MUST be dense and achievement-oriented (recommended length: 15-20 words). Prioritize hard skills, tools, and scale metrics over verbose filler jargon.
+        
+        6. RECENT ROLE EXPANSION (Post-2018) - ABSOLUTE REQUIREMENT: You MUST output EXACTLY 5 to 6 bullet points for EVERY single role that occurred after 2018. DO NOT merge, combine, or consolidate the original bullets, even if the role was only a few months long. If the input has 5 bullets for a recent role, you must rewrite and output exactly 4 or 5 bullets. No exceptions.
+        
+        7. OLDER ROLE COMPRESSION (Pre-2018): Provide EXACTLY one (1) bullet point maximum for roles and projects that occurred before 2018. Focus on foundational infrastructure experience.
+        
+        8. SOURCE ANCHORING (CRITICAL): Each experience entry contains ORIGINAL BULLETS. You MUST derive new bullets ONLY from that specific role’s original content. Do NOT borrow, reuse, or "hallucinate" content from other roles to fill gaps.
+        
+        9. BALANCED IaC: Terraform/IaC references are permitted but limited to 2 bullet points TOTAL across the entire resume.
+        
+        10. VERB CONTROL: Avoid forbidden buzzwords like "Spearheaded", "Visionary", "Dynamic", or "Guru". For execution bullets, use allowed verbs: "Deployed", "Maintained", "Utilized", "Provisioned".
+        
+        11. ANTI-DUPLICATION: Avoid semantic repetition across roles. Each role should demonstrate distinct business or technical impact. Do not repeat identical achievement phrasing.
+        
+        12. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative entirely on Azure Infrastructure, HA/DR, and Governance.
+        
+        
+        OUTPUT SCHEMA (MUST MATCH EXACTLY):
+        {
+          "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
+          "summary": "string",
+          "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
+          "experience": [ { "id": "string", "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
+          "projects": [ { "title": "string", "description": "string" } ],
+          "education": ["string"],
+          "certifications": [
+            { "name": "string", "issuer": "string", "date": "string" }
+          ],
+          "ats_keywords_from_jd": ["string"],
+          "ats_keywords_added_to_resume": ["string"],
+          "keyword_gap": ["string"],
+          "match_score": 85,
+          "baseline_score": 60,
+          "improvement_notes": ["string"],
+          "audience_alignment_notes": "string",
+          "why_this_job": "string",
+          "rejection_reasons": ["string"],
+          "star_stories": [
+            { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" }
+          ],
+          "audit_report": {
+            "score": 85,
+            "flags": [
+              { "id": "string", "type": "string", "message": "string", "fix": "string", "severity": "high" }
+            ],
+            "trajectory": {
+              "stage": "acceleration",
+              "description": "string",
+              "recommendation": "string"
+            }
+          }
+        }
       `;
 
       let result;
       let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
 
       if (pipelineType === 'hybrid-openai') {
-        // OPENAI BRANCH - Now using the improved Split Generation Strategy
+        // OPENAI BRANCH
         try {
-          console.log(`[Hybrid Pipeline] Step 3: Split Generation (OpenAI ${usedModel})...`);
+          console.log(`[Hybrid Pipeline] Step 3: Premium OpenAI Generation (${usedModel})...`);
           const openai = new OpenAI({ apiKey: openaiKey });
-          
-          const metaPrompt = `
-            ${finalPromptBase}
-            
-            Optimize the meta-sections of this resume.
-            Keywords: ${optimizedInput.jd_keywords.join(', ')}.
-            
-            INPUT DATA:
-            ${JSON.stringify({
-              personal_info: optimizedInput.personal_info,
-              summary: optimizedInput.summary,
-              skills: optimizedInput.skills,
-              projects: optimizedInput.projects,
-              education: optimizedInput.education,
-              certifications: optimizedInput.certifications,
-              jd_keywords: optimizedInput.jd_keywords
-            }, null, 2)}
-            
-            RULES:
-            - Summary: Approx 100 words.
-            - Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
-            - DO NOT invent certifications.
-            - Brevity & Density: Bullet points MUST be concise and dense (max 15 words).
-            - GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
-            
-            OUTPUT JSON SCHEMA:
-            {
-              "personal_info": { ... },
-              "summary": "...",
-              "skills": { "Category 1": ["skill1", ...], ... },
-              "projects": [...],
-              "education": [...],
-              "certifications": [...],
-              "ats_keywords_from_jd": [...],
-              "ats_keywords_added_to_resume": [...],
-              "keyword_gap": [...],
-              "match_score": 85,
-              "improvement_notes": [...],
-              "why_this_job": "...",
-              "audience_alignment_notes": "...",
-              "star_stories": [
-                { "bullet": "The highly optimized bullet", "situation": "...", "task": "...", "action": "...", "result": "..." }
-              ],
-              "audit_report": {
-                "score": 85,
-                "flags": [
-                  { "id": "f1", "type": "...", "message": "...", "fix": "...", "severity": "high" }
-                ],
-                "trajectory": { "stage": "acceleration", "description": "...", "recommendation": "..." },
-                "faangInsights": {
-                  "company": "${targetCompany || 'Target'}",
-                  "keywords": ["..."],
-                  "skills": ["..."],
-                  "leadership_principles": ["..."],
-                  "culture_alignment_tips": ["..."],
-                  "summary": "Tailored FAANG level advice..."
-                }
-              }
-            }
-          `;
+          const chatCompletion = await openai.chat.completions.create({
+            model: usedModel,
+            messages: [{ 
+              role: "system", 
+              content: "You are a senior executive resume strategist. Output strictly JSON." 
+            }, { 
+              role: "user", 
+              content: finalPrompt
+            }],
+            response_format: { type: "json_object" }
+          });
 
-          const [metaCompletion, roleResults] = await Promise.all([
-            openai.chat.completions.create({
-              model: usedModel,
-              messages: [{ role: "system", content: "You are a senior executive resume strategist. Output strictly JSON." }, { role: "user", content: metaPrompt }],
-              response_format: { type: "json_object" }
-            }),
-            generatePerRole(
-              optimizedInput.experience, 
-              geminiKey, 
-              targetCompany, 
-              targetRole,
-              audience,
-              mode,
-              customPrompt,
-              brainDump,
-              'openai',
-              openaiKey
-            )
-          ]);
-
-          const metaText = metaCompletion.choices[0].message.content || "{}";
-          const metaData = JSON.parse(metaText);
-          const finalExperience = deduplicateAndScore(roleResults);
-
-          const responseData = {
-            ...metaData,
-            experience: finalExperience
-          };
-
-          const genInput = metaCompletion.usage?.prompt_tokens || 0;
-          const genOutput = metaCompletion.usage?.completion_tokens || 0;
+          const responseText = chatCompletion.choices[0].message.content || "";
+          const genInput = chatCompletion.usage?.prompt_tokens || 0;
+          const genOutput = chatCompletion.usage?.completion_tokens || 0;
 
           logUsage({
-            userId: "anonymous",
+            userId: uid,
             model: usedModel,
             inputTokens: genInput,
             outputTokens: genOutput,
@@ -1031,7 +950,7 @@ async function startServer() {
 
           // Log Gemini Extraction
           logUsage({
-            userId: "anonymous",
+            userId: uid,
             model: extractionModelUsed,
             inputTokens: geminiUsage.promptTokenCount,
             outputTokens: geminiUsage.candidatesTokenCount,
@@ -1043,7 +962,7 @@ async function startServer() {
           });
 
           result = {
-            result: JSON.stringify(responseData),
+            result: responseText,
             usage: {
               promptTokenCount: genInput,
               candidatesTokenCount: genOutput,
@@ -1055,14 +974,14 @@ async function startServer() {
             _model: usedModel
           };
         } catch (openaiError: any) {
-          console.warn("[Pipeline] OpenAI Premium (Hybrid Split) Failed, falling back to Gemini Flash...", openaiError.message);
-          // FALLBACK
-          const fallbackModelName = "gemini-3-flash-preview";
+          console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash...", openaiError.message);
+          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use the cheap Gemini we have
+          const fallbackModelName = "gemini-3.1-flash-lite-preview";
           const genAI = new GoogleGenAI({ apiKey: geminiKey });
           
           const fallbackResult = await genAI.models.generateContent({
             model: fallbackModelName,
-            contents: [{ role: 'user', parts: [{ text: finalPromptBase + "\nOutput strictly JSON following the full OptimizationResult schema." }] }],
+            contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
             config: { responseMimeType: "application/json" }
           });
           
@@ -1145,14 +1064,6 @@ async function startServer() {
                 "stage": "acceleration",
                 "description": "...",
                 "recommendation": "..."
-              },
-              "faangInsights": {
-                "company": "${targetCompany || 'Target'}",
-                "keywords": ["..."],
-                "skills": ["..."],
-                "leadership_principles": ["..."],
-                "culture_alignment_tips": ["..."],
-                "summary": "Tailored FAANG level advice..."
               }
             }
           }
@@ -1193,6 +1104,31 @@ async function startServer() {
         // STEP 4: Agentic Review (Multi-Agent Refinement)
         console.log("[Pipeline] Step 4: Multi-Agent Review...");
         const agentFeedback = await runAgents(finalResult, geminiKey);
+
+        logUsage({
+          userId: uid,
+          model: usedModel,
+          inputTokens: metaResponse.usageMetadata?.promptTokenCount || 0,
+          outputTokens: metaResponse.usageMetadata?.candidatesTokenCount || 0,
+          totalTokens: metaResponse.usageMetadata?.totalTokenCount || 0,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(usedModel, metaResponse.usageMetadata?.promptTokenCount || 0, metaResponse.usageMetadata?.candidatesTokenCount || 0)
+        });
+        
+        // Log Gemini Extraction
+        logUsage({
+          userId: uid,
+          model: extractionModelUsed,
+          inputTokens: geminiUsage.promptTokenCount,
+          outputTokens: geminiUsage.candidatesTokenCount,
+          totalTokens: geminiUsage.totalTokenCount,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
+        });
 
         result = {
           result: JSON.stringify(finalResult),

@@ -15,7 +15,6 @@ export function TermsModal({ isOpen, onAccept, isDarkMode }: TermsModalProps) {
   if (!isOpen) return null;
 
   const handleAccept = async () => {
-    localStorage.setItem('hasAcceptedTerms', 'true');
     if (auth.currentUser) {
       await updateDoc(doc(db, 'users', auth.currentUser.uid), {
         hasAcceptedTerms: true

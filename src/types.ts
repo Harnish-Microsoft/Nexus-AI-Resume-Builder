@@ -131,16 +131,6 @@ export interface AuditReport {
   score: number;
   flags: RedFlag[];
   trajectory: TrajectoryAnalysis;
-  faangInsights?: FAANGInsights;
-}
-
-export interface FAANGInsights {
-  company: string;
-  keywords: string[];
-  skills: string[];
-  leadership_principles?: string[];
-  culture_alignment_tips: string[];
-  summary: string;
 }
 
 export enum OperationType {

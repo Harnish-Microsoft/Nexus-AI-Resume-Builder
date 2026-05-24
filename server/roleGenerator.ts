@@ -1,5 +1,4 @@
 import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
 
 export async function generatePerRole(
   experience: any[], 
@@ -9,12 +8,9 @@ export async function generatePerRole(
   audience?: string,
   mode?: string,
   customPrompt?: string,
-  brainDump?: string,
-  engine: 'gemini' | 'openai' = 'gemini',
-  openaiKey: string = ''
+  brainDump?: string
 ) {
   const genAI = new GoogleGenAI({ apiKey: geminiKey });
-  const oai = openaiKey ? new OpenAI({ apiKey: openaiKey }) : null;
 
   const promises = experience.map(async (role, index) => {
     const prompt = `
@@ -30,42 +26,36 @@ CORPORATE DNA TAILORING (DEMONSTRATE, DO NOT DECLARE):
 ${targetCompany ? `Tailor appropriately for ${targetCompany}. Focus on specific impacts and technologies relevant to their industry.` : ''}
 
 GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
-1. STAR METHODOLOGY: EVERY bullet point MUST follow STAR (Situation, Task, Action, Result).
-2. ACTION VERBS: EVERY bullet MUST start with a strong action verb (Architected, Spearheaded, Optimized, Standardized, Orchestrated, Led, Directed, Improved, Implemented, Streamlined, Governed, Enhanced, Coordinated, Modernized, Transformed).
-3. IMPACT & SCALE: High-impact bullets MUST conform to the formula: "Accomplished [Impact] as measured by [Scale/Metric], by [Action/Mechanism]."
-4. AVOID WEAK WORDING: Do NOT use "Managed", "Supported", "Assisted", "Helped", "Responsible for".
-5. FORBIDDEN TERMS: Unless present in source data, do NOT hallucinate deep "Kubernetes", "DevOps", "CI/CD", or "Microservices" experience. Focus on Infrastructure & Operations Leadership.
-6. AZURE LEADERSHIP FOCUS: Emphasize Landing Zones, Governance, Reliability, Hybrid Cloud, HA/DR, and FinOps.
-7. COMPREHENSIVE DETAIL: Include all significant achievements provided in the source ROLE DATA.
-8. FAANG LEADERSHIP MODE: ONLY IF mode is 'FAANG Leadership' or 'Player-Coach':
-   - BALANCE: 60% Technical Strategy (Azure infra), 40% Executive Leadership (Standardization, Mentoring, Governance).
-   - VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized."
-9. TENURE & TIMELINE AWARENESS: Do NOT alter the job title or append "(Contract)".
+1. ZERO-SHOT ANTI-HALLUCINATION: Use ONLY the provided role data. Do NOT invent numbers, percentages, budgets, or metrics.
+2. TENURE & TIMELINE AWARENESS: 
+   - For short tenures (under 6 months): Focus on "Rapid Delivery," "Auditing," or "Assessment." CRITICAL: Do NOT alter the job title or append the word "(Contract)" to short roles. Leave the title exactly as provided.
+3. BREVITY & DENSITY: Recruiters skim. Bullet points should be concise and impactful. Prioritize hard skills, tools, and metrics.
+4. COMPREHENSIVE DETAIL: You MUST generate UP TO 5 high-impact bullet points for this role. For modern roles (last 5-8 years), aim for exactly 5 bullets by synthesizing the provided data. For older roles, fewer is acceptable, but do not exceed 5 bullet points total.
+5. CLOUD & INFRASTRUCTURE: Use professional terminology naturally.
+6. NO ARBITRARY COMPRESSION: While limiting to 5 bullets, ensure they represent the core impact and complexity of the role.
+7. ACCURATE TERMINOLOGY: Include all relevant technical skills and tools (e.g., CI/CD, DevOps, Cloud Platforms) as they appear in the source data.
+8. PLAYER-COACH MODE: ONLY IF mode is 'Player-Coach':
+   - BALANCE: 60% Execution (Azure infra), 40% Leadership (Mentoring, Architecture reviews).
+   - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized."
+9. GOOGLE XYZ FORMULA: ALL high-impact bullets MUST conform to the formula: "Accomplished [X] as measured by [Y], by doing [Z]."
+   - [X] = The impact or accomplishment. What did you achieve?
+   - [Y] = The metrics, data, or scale. (Example: "Improving performance by 20%", "Generating $50k revenue", "Supporting 1M+ active users").
+   - [Z] = The mechanism, action, or skill used. (Example: "By implementing Terraform modules", "By re-architecting Azure SQL database").
+   - IF A BULLET HAS NO METRICS: You MUST pivot the phrasing to highlight the result of the action (e.g., "Led migration of [App] to [Cloud], reducing latency and improving deployment frequency" - implicit metrics).
 
 
 OUTPUT SCHEMA:
-Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role. Do not include keys, objects, or markdown formatting outside the array. Example: ["Bullet 1", "Bullet 2"]
+Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role (maximum 5). Do not include keys, objects, or markdown formatting outside the array. Example: ["Bullet 1", "Bullet 2", "Bullet 3", "Bullet 4", "Bullet 5"]
 `;
 
     try {
-      let text = "[]";
-      
-      if (engine === 'openai' && oai) {
-        const completion = await oai.chat.completions.create({
-          model: "gpt-4o-mini", // Use mini for speed and cost in per-role generation
-          messages: [{ role: "user", content: prompt }],
-          response_format: { type: "json_object" }
-        });
-        text = completion.choices[0].message.content || "[]";
-      } else {
-        const res = await genAI.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          config: { responseMimeType: "application/json" }
-        });
-        text = res.text || "[]";
-      }
+      const res = await genAI.models.generateContent({
+        model: "gemini-3.1-flash-lite-preview",
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: { responseMimeType: "application/json" }
+      });
 
+      const text = res.text || "[]";
       let bullets = [];
       try {
         const parsed = JSON.parse(text);

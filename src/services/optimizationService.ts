@@ -30,7 +30,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: prompt,
     config: { responseMimeType: "application/json" }
   });
@@ -57,8 +57,6 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
     Extract the top 15-20 essential keywords and requirements from this job description.
     Include technical skills, tools, methodologies, and soft skills mentioned.
     
-    STRICT RULE: Do NOT include keywords related to Kubernetes, K8s, Docker, containers, or microservices. Focus only on general cloud infrastructure, networking, and governance.
-    
     Return only a JSON array of strings.
     
     JOB DESCRIPTION:
@@ -66,7 +64,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: prompt,
     config: { responseMimeType: "application/json" }
   });

@@ -17,6 +17,18 @@
           "type": "string",
           "description": "The user's master resume data."
         },
+        "resumes": {
+          "type": "array",
+          "description": "User specific resumes.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "content": { "type": "string" }
+            }
+          }
+        },
         "customPrompt": {
           "type": "string",
           "description": "The user's custom AI optimization prompt."

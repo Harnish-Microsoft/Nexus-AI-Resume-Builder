@@ -52,12 +52,11 @@ export const improveTextWithAI = async (
       
       Tasks:
       1. Rewrite tailored to the job description.
-      2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
-      3. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
-      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
-      5. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
-      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
-      7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
+      2. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
+      3. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
+      4. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
+      5. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      6. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
       - Clean structured resume
@@ -98,12 +97,11 @@ export const rewriteSectionWithAI = async (
       
       Tasks:
       1. Rewrite tailored to the job description.
-      2. IGNORE KUBERNETES & MICROSERVICES: Do not include or suggest any mention of Kubernetes (K8s), Docker, containers, or microservices architecture. Focus entirely on Azure Infrastructure (VMs, Networking, Policy, Identity, Governance).
-      3. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
-      4. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
-      5. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
-      6. No fluff: Replace vague responsibilities with high-impact accomplishments.
-      7. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
+      2. LEADERSHIP & IMPACT: Focus on clear, impactful bullet points. Include leadership contributions (mentoring, leading teams) alongside measurable results.
+      3. ACHIEVEMENT FOCUS: Follow the pattern "Accomplished [Outcome] through [Actions]". Ensure every bullet conveys clear impact.
+      4. ACTION VERBS: Start with strong verbs (Led, Developed, Managed, Optimized).
+      5. No fluff: Replace vague responsibilities with high-impact accomplishments.
+      6. TITLE PRESERVATION (CRITICAL): STRICTLY preserve exact role titles (e.g., preserve "Officer IT cum Logistics").
       
       Output:
       - Clean structured resume in JSON format

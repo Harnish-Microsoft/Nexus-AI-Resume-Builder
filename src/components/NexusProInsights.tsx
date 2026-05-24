@@ -17,20 +17,17 @@ import {
   CheckCircle2,
   XCircle
 } from 'lucide-react';
-import { StarStory, AuditReport, FAANGInsights } from '../types';
+import { StarStory, AuditReport } from '../types';
 
 interface NexusProInsightsProps {
   isDarkMode: boolean;
   starStories?: StarStory[];
   auditReport?: AuditReport;
-  faangInsights?: FAANGInsights;
 }
 
 export const NexusProInsights: React.FC<NexusProInsightsProps> = ({ isDarkMode, starStories, auditReport }) => {
-  const [activeTab, setActiveTab] = useState<'interview' | 'audit' | 'faang'>('interview');
+  const [activeTab, setActiveTab] = useState<'interview' | 'audit'>('interview');
   const [expandedStar, setExpandedStar] = useState<number | null>(null);
-
-  const faangInsights = auditReport?.faangInsights;
 
   if (!starStories && !auditReport) {
     return (
@@ -63,36 +60,24 @@ export const NexusProInsights: React.FC<NexusProInsightsProps> = ({ isDarkMode, 
         <div className={`flex p-1 rounded-full border ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-black/5 border-black/5'}`}>
           <button 
             onClick={() => setActiveTab('interview')}
-            className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
+            className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
               activeTab === 'interview' 
                 ? 'bg-purple-600 text-white shadow-md' 
                 : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            Interview
+            Interview Bridge
           </button>
           <button 
             onClick={() => setActiveTab('audit')}
-            className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
+            className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
               activeTab === 'audit' 
                 ? 'bg-purple-600 text-white shadow-md' 
                 : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            Audit
+            Strategy Audit
           </button>
-          {faangInsights && (
-            <button 
-              onClick={() => setActiveTab('faang')}
-              className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeTab === 'faang' 
-                  ? 'bg-purple-600 text-white shadow-md' 
-                  : 'text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              Target
-            </button>
-          )}
         </div>
       </div>
 
@@ -280,101 +265,24 @@ export const NexusProInsights: React.FC<NexusProInsightsProps> = ({ isDarkMode, 
                   )}
                 </div>
               </div>
-            </motion.div>
-          )}
 
-          {activeTab === 'faang' && faangInsights && (
-            <motion.div 
-              key="faang"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.05 }}
-              className="space-y-6"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-purple-500/10">
-                  <Target className="w-4 h-4 text-purple-500" />
-                </div>
+              {/* Readiness Score */}
+              <div className={`p-6 rounded-3xl border shadow-xl flex items-center justify-between bg-gradient-to-br ${
+                isDarkMode ? 'from-purple-900/40 to-blue-900/40 border-purple-500/30' : 'from-purple-50 to-blue-50 border-purple-200'
+              }`}>
                 <div>
-                  <h4 className="text-xs font-black uppercase tracking-widest text-purple-500">{faangInsights.company} - DNA Alignment</h4>
-                  <p className="text-[10px] opacity-40 font-medium">Tailored for corporate culture & requirements.</p>
+                  <h4 className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">Executive Readiness Score</h4>
+                  <p className="text-[9px] opacity-40 font-medium">Weighted assessment of impact & trajectory.</p>
                 </div>
-              </div>
-
-              <div className={`p-5 rounded-3xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/10'}`}>
-                <p className="text-[11px] font-medium leading-relaxed italic opacity-70 mb-4">"{faangInsights.summary}"</p>
-                
-                <div className="space-y-4">
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-widest text-blue-500 mb-2">Priority Keywords</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {faangInsights.keywords.map((kw, i) => (
-                        <span key={i} className={`px-2 py-0.5 rounded text-[9px] font-bold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-100 text-blue-700'}`}>
-                          {kw}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-widest text-emerald-500 mb-2">Required Skills</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {faangInsights.skills.map((s, i) => (
-                        <span key={i} className={`px-2 py-0.5 rounded text-[9px] font-bold ${isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {faangInsights.leadership_principles && (
-                    <div>
-                      <div className="text-[9px] font-bold uppercase tracking-widest text-purple-500 mb-2">Leadership Principles</div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {faangInsights.leadership_principles.map((lp, i) => (
-                          <span key={i} className={`px-2 py-0.5 rounded text-[9px] font-bold ${isDarkMode ? 'bg-purple-500/10 text-purple-400' : 'bg-purple-100 text-purple-700'}`}>
-                            {lp}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className={`p-4 rounded-2xl border border-dashed ${isDarkMode ? 'bg-black/20 border-white/10' : 'bg-white border-black/10'}`}>
-                    <div className="text-[9px] font-bold uppercase tracking-widest opacity-50 mb-2">Culture Alignment Tips</div>
-                    <ul className="space-y-1.5">
-                      {faangInsights.culture_alignment_tips.map((tip, i) => (
-                        <li key={i} className="flex gap-2 text-[10px] opacity-70">
-                          <CheckCircle2 className="w-3 h-3 shrink-0 text-emerald-500 mt-0.5" />
-                          {tip}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-3xl font-black">{auditReport?.score || 0}</span>
+                  <span className="text-xs font-bold opacity-30">/ 100</span>
                 </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-
-      {/* Footer / Readiness Score (Always visible if not in faang tab) */}
-      {activeTab !== 'faang' && (
-        <div className={`p-6 border-t bg-gradient-to-br ${
-          isDarkMode ? 'from-purple-900/40 to-blue-900/40 border-white/5' : 'from-purple-50 to-blue-50 border-black/5'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <h4 className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">Executive Readiness Score</h4>
-              <p className="text-[9px] opacity-40 font-medium">Weighted assessment of impact & trajectory.</p>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-black">{auditReport?.score || 0}</span>
-              <span className="text-xs font-bold opacity-30">/ 100</span>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

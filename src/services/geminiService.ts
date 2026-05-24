@@ -2,7 +2,7 @@ import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
-import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport, FAANGInsights } from "../types";
+import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport } from "../types";
 import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
 
@@ -154,7 +154,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   }
 
   // Fallback Logic definitions
-  const FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite";
+  const FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite-preview";
   
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
@@ -167,10 +167,10 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
       const ai = new GoogleGenAI({ apiKey });
       
-      // Attempt primary model, fallback to gemini-3.1-flash-lite on error
+      // Attempt primary model, fallback to gemini-3.1-flash-lite-preview on error
       const executeWithFallback = async (modelToTry: string): Promise<any> => {
         const isThinkingModel = modelToTry.includes('thinking') || modelToTry.includes(':thinking');
-        const cleanModel = modelToTry.replace(':thinking', '').replace('gemini-1.5-pro', 'gemini-3.1-pro-preview').replace('gemini-1.5-flash', 'gemini-3-flash-preview');
+        const cleanModel = modelToTry.replace(':thinking', '');
               
         const config = {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
@@ -284,9 +284,9 @@ export async function evaluateSuitability(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.1-flash-lite';
+    modelToUse = 'gemini-3.1-flash-lite-preview';
   } else if (!modelToUse) {
-    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
+    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite-preview';
   }
 
   const prompt = `
@@ -342,7 +342,7 @@ export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
   targetRole: string,
-  mode: "conservative" | "balanced" | "aggressive" | "Player-Coach" | "automatic",
+  mode: "conservative" | "balanced" | "aggressive" | "Player-Coach",
   audience: string,
   config: RouterConfig,
   linkedInUrl?: string,
@@ -365,10 +365,10 @@ export async function optimizeResume(
     if (config.mode === 'production') {
       // In Hybrid mode, fastMode forces Gemini to save costs
       engineToUse = 'gemini';
-      modelToUse = 'gemini-3.1-flash-lite';
+      modelToUse = 'gemini-3.1-flash-lite-preview';
     } else {
       // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite-preview';
     }
   }
 
@@ -455,20 +455,11 @@ export async function optimizeResume(
   }
 
   const prompt = `
-ROLE: Senior Executive Resume Strategist & FAANG Technical Recruiter.
+ROLE: Professional Resume Strategist.
 THE CURRENT DATE: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons based on lack of impact/metrics.' : 'TASK: Rewrite resume into a top-tier professional document.'}
 
-TASK: ${recruiterSimulationMode ? 'Critical Hiring Manager Review.' : 'Rewrite resume into a STRICT FAANG-STYLE document following STAR methodology.'}
-
-STRICT FAANG & STAR METHODOLOGY RULES:
-1. EVERY BULLET MUST follow STAR (Situation, Task, Action, Result).
-2. EVERY BULLET MUST start with a strong action verb (Architected, Spearheaded, Optimized, Standardized, Orchestrated, Led, Directed, Improved, Implemented, Streamlined, Governed, Enhanced, Coordinated, Modernized, Transformed).
-3. Ownership & Impact: Show scale (e.g., $10M budget, 500+ subscriptions) and measurable business value (e.g., 40% cost reduction).
-4. Focus Areas: Azure Infrastructure, Cloud Governance, Reliability, Hybrid Cloud, HA/DR, and FinOps.
-5. NO FABRICATION: Do not exaggerate Kubernetes or deep Terraform engineering skills. Focus on Infrastructure & Operations Leadership.
-6. AVOID: "Managed", "Supported", "Assisted", "Helped".
-
-${customPrompt ? `CUSTOM INSTRUCTIONS: ${customPrompt}` : ''}
+${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
 
 CORPORATE DNA TAILORING:
@@ -628,9 +619,9 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         retryCount++;
         
         // Fallback to Flash if Pro fails with rate limit or JSON error
-        if (engineToUse === 'gemini' && (currentModel.includes('pro') || currentModel.includes('3.1-pro'))) {
-          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 3 Flash for retry ${retryCount}...`);
-          currentModel = 'gemini-3-flash-preview';
+        if (engineToUse === 'gemini' && currentModel.includes('pro')) {
+          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 1.5 Flash for retry ${retryCount}...`);
+          currentModel = 'gemini-3.1-flash-lite-preview';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
@@ -768,9 +759,9 @@ export async function analyzeBestAudiences(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.1-flash-lite';
+    modelToUse = 'gemini-3.1-pro-preview';
   } else if (!modelToUse) {
-    modelToUse = 'gemini-3-flash-preview';
+    modelToUse = 'gemini-3.1-pro-preview';
   }
   const prompt = `
     Analyze the following Job Description and Target Role.
@@ -798,36 +789,6 @@ export async function analyzeBestAudiences(
     TARGET ROLE: ${targetRole}
   `;
 
-  const getKeywordFallback = () => {
-    const jd = jobDescription.toLowerCase();
-    const role = targetRole.toLowerCase();
-    const selected: string[] = [];
-
-    if (jd.includes('leadership') || jd.includes('manager') || jd.includes('director') || role.includes('lead') || role.includes('manager')) {
-      selected.push('leadership');
-    }
-    if (jd.includes('microsoft') || jd.includes('azure')) {
-      selected.push('microsoft');
-    }
-    if (jd.includes('cloud') && (jd.includes('architect') || role.includes('architect'))) {
-      selected.push('cloud-architect');
-    }
-    if (jd.includes('consulting') || jd.includes('client')) {
-      selected.push('consulting');
-    }
-    if (role.includes('director')) {
-      selected.push('director-mid');
-    }
-    if (role.includes('cto') || role.includes('vp')) {
-      selected.push('cto-vp');
-    }
-    if (jd.includes('platform')) {
-      selected.push('platform-dir');
-    }
-    
-    return selected.length > 0 ? selected : [targetRole];
-  };
-
   try {
     const data = await callAI(prompt, modelToUse, 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
@@ -835,16 +796,12 @@ export async function analyzeBestAudiences(
     return Array.isArray(parsed) ? parsed : (parsed.audiences || [targetRole]);
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
-    
-    if (isQuotaError) {
-      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using keyword-based fallback.");
-      return getKeywordFallback();
+    if (errorMsg.includes("429") || errorMsg.includes("quota")) {
+      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using Target Role as default.");
     } else {
       console.error("Error analyzing best audiences:", errorMsg);
-      // Even for other errors, try keyword fallback to provide a better UX than just returning targetRole
-      return getKeywordFallback();
     }
+    return [targetRole];
   }
 }
 
@@ -853,30 +810,24 @@ export async function selectBestMasterResume(
   jobDescription: string,
   config: RouterConfig
 ): Promise<string> {
-  if (!resumes || resumes.length === 0) return 'default';
-  if (resumes.length === 1) return resumes[0].id;
-
   const routedConfig = routeTask('rewrite_resume', config);
-  const mastersSummary = resumes.map((m) => {
-    const content = typeof m.data === 'string' ? m.data : JSON.stringify(m.data);
-    return `ID: ${m.id}\nName: ${m.name}\nContext: ${content.substring(0, 1500)}...`;
-  }).join("\n\n---\n\n");
-
   const prompt = `
-    Analyze the following Job Description and the list of available "Master Resumes".
-    Pick the SINGLE Master Resume ID that is the most relevant and best starting point to optimize for this job.
+    ROLE: Expert Career Coach.
+    TASK: Select the best master resume for a specific job posting from the provided list.
     
     JOB DESCRIPTION:
     ${jobDescription}
     
-    MASTER RESUMES:
-    ${mastersSummary}
+    MASTER RESUMES AVAILABLE:
+    ${resumes.map(r => `ID: ${r.id}, Name: ${r.name}, Description: ${r.description}`).join('\n')}
     
-    Return ONLY a JSON object: { "selectedId": "the-id", "reason": "why this matches best" }
+    OUTPUT:
+    Return ONLY the ID of the best matching master resume as a JSON string.
+    Example: { "selectedId": "resume_id_here" }
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3.1-flash-lite', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, 'gemini-3.1-flash-lite-preview', 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.selectedId;
@@ -1117,7 +1068,7 @@ export async function autoSelectPlayerCoachRole(
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3-flash-preview', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, 'gemini-3.1-flash-lite-preview', 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.isPlayerCoach;
@@ -1126,6 +1077,7 @@ export async function autoSelectPlayerCoachRole(
     return false;
   }
 }
+
 
 export async function generateMasterResume(
   data: { company: string, role: string, startYear: string, endYear: string, description: string },
@@ -1157,48 +1109,6 @@ export async function generateMasterResume(
     return JSON.parse(resultText);
   } catch (error) {
     console.error("Error generating master resume bullets:", error);
-    throw error;
-  }
-}
-
-export async function getFAANGInsights(
-  companyId: string,
-  targetRole: string,
-  jobDescription: string,
-  config: RouterConfig
-): Promise<FAANGInsights> {
-  const routedConfig = routeTask('rewrite_resume', config);
-  const prompt = `
-    ROLE: FAANG Interview & Career Coach.
-    COMPANY: ${companyId.toUpperCase()}
-    TARGET ROLE: ${targetRole}
-    JOB CONTEXT: ${jobDescription.substring(0, 3000)}
-    
-    TASK: Provide specific keywords, skills, and cultural alignment tips for this specific FAANG company relative to the JD.
-    FAANG context to incorporate:
-    - Google: Googlyness, algorithmic complexity, system design at scale, "No ogres", internal tooling (Borg, Bazel).
-    - Amazon: 16 Leadership Principles, "Day 1" mentality, customer obsession, writing over talking (6-pagers).
-    - Meta: Move fast, impact, efficiency, open source, performance measurement, "Building social value".
-    - Apple: Privacy, design, perfectionism, closed ecosystem, craft, "Thinking different".
-    - Netflix: Context not control, high talent density, keeper test, transparency, "Dream Team".
-    
-    STRICT JSON OUTPUT:
-    {
-      "company": "${companyId}",
-      "keywords": ["5-7 specific technical or cultural keywords"],
-      "skills": ["5-7 specific technical skills"],
-      "leadership_principles": ["Relevant principles if Amazon, or values for others"],
-      "culture_alignment_tips": ["3-5 actionable tips"],
-      "summary": "Short 1-2 sentence overview of what this company values for this role"
-    }
-  `;
-
-  try {
-    const data = await callAI(prompt, 'gemini-3-flash-preview', 'gemini', routedConfig.apiKey);
-    const resultText = extractJson(data.result || "");
-    return JSON.parse(resultText);
-  } catch (error) {
-    console.error("Error getting FAANG insights:", error);
     throw error;
   }
 }

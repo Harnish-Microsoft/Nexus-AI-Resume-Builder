@@ -3,7 +3,6 @@ export const MODE_DESCRIPTIONS = {
   balanced: "The 'Sweet Spot'. Improves clarity, strengthens action verbs, and strategically aligns keywords. Recommended.",
   aggressive: "Maximum Impact. Rewrites bullets for peak ATS compatibility and high-stakes competitive roles.",
   automatic: "Optimize based on Job Description requirements.",
-  "Player-Coach": "FAANG Leadership. Strict STAR-method transformation for Senior Azure Infrastructure & Operations roles.",
 };
 
 export const AUDIENCES = [
@@ -26,13 +25,13 @@ export const AUDIENCES = [
 
 export const TARGET_COMPANIES = [
   { id: 'none', label: 'Generic Tech', icon: '💻', signal: 'standard technical excellence' },
-  { id: 'google', label: 'Google', icon: '🔍', signal: 'L3-L9 scale, Algorithmic Impact, Go/Python proficiency' },
-  { id: 'amazon', label: 'Amazon', icon: '📦', signal: '16 Leadership Principles, Ownership, Bias for Action' },
-  { id: 'meta', label: 'Meta', icon: '♾️', signal: 'Move Fast, Ship Impact, High performance culture' },
-  { id: 'apple', label: 'Apple', icon: '🍎', signal: 'Precision Engineering, UI/UX focus, Secrecy & Craft' },
-  { id: 'netflix', label: 'Netflix', icon: '🍿', signal: 'Freedom & Responsibility, Excellence, High-density talent' },
-  { id: 'microsoft', label: 'Microsoft', icon: '🪟', signal: 'Enterprise Scale, Azure/Cloud Transformation' },
+  { id: 'amazon', label: 'Amazon', icon: '📦', signal: 'Ownership, Bias for Action, Dive Deep' },
+  { id: 'microsoft', label: 'Microsoft', icon: '🪟', signal: 'Enterprise Scale, Cloud Transformation' },
+  { id: 'google', label: 'Google', icon: '🔍', signal: 'Systems Design, Scale, Algorithmic Impact' },
+  { id: 'meta', label: 'Meta', icon: '♾️', signal: 'Move Fast, Ship Impact, Performance' },
+  { id: 'apple', label: 'Apple', icon: '🍎', signal: 'Precision, User Experience, Discretion' },
   { id: 'accenture', label: 'Accenture', icon: '📈', signal: 'Client Value, Global Delivery' },
+  { id: 'infosys', label: 'Infosys', icon: '🌐', signal: 'Managed Services, Transformation' },
 ];
 
 export const MODEL_PRICING: Record<string, { input: number, output: number }> = {
@@ -47,8 +46,7 @@ export const MODEL_PRICING: Record<string, { input: number, output: number }> = 
   'gpt-4o-mini': { input: 0.15, output: 0.60 },
   // Gemini
   'gemini-3.1-pro-preview': { input: 1.25, output: 5.00 },
-  'gemini-3-flash-preview': { input: 0.10, output: 0.40 },
-  'gemini-3.1-flash-lite': { input: 0.05, output: 0.20 },
+  'gemini-3.1-flash-lite-preview': { input: 0.10, output: 0.40 },
 };
 
 export const BACKGROUND_THEMES = [
