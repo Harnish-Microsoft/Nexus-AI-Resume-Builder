@@ -745,13 +745,13 @@ async function startServer() {
 
     try {
       // 1. Fetch keys securely from Firestore
-      const keys = await getApiKeys(idToken);
+      const { keys: userKeys, uid: userId } = await getApiKeys(idToken);
       let geminiKey = process.env.GEMINI_API_KEY;
       let openaiKey = "";
       
-      if (keys) {
-        geminiKey = keys.gemini || geminiKey;
-        openaiKey = keys.openai || "";
+      if (userKeys) {
+        geminiKey = userKeys.gemini || geminiKey;
+        openaiKey = userKeys.openai || "";
       } else {
         console.warn("User has no API key configured. Using system key.");
       }
@@ -781,7 +781,7 @@ async function startServer() {
       if (cachedResult) {
         // Log cache hit
         logUsage({
-          userId: uid,
+          userId: userId,
           model: "cache",
           inputTokens: 0,
           outputTokens: 0,
@@ -937,7 +937,7 @@ async function startServer() {
           const genOutput = chatCompletion.usage?.completion_tokens || 0;
 
           logUsage({
-            userId: uid,
+            userId: userId,
             model: usedModel,
             inputTokens: genInput,
             outputTokens: genOutput,
@@ -950,7 +950,7 @@ async function startServer() {
 
           // Log Gemini Extraction
           logUsage({
-            userId: uid,
+            userId: userId,
             model: extractionModelUsed,
             inputTokens: geminiUsage.promptTokenCount,
             outputTokens: geminiUsage.candidatesTokenCount,
@@ -1106,7 +1106,7 @@ async function startServer() {
         const agentFeedback = await runAgents(finalResult, geminiKey);
 
         logUsage({
-          userId: uid,
+          userId: userId,
           model: usedModel,
           inputTokens: metaResponse.usageMetadata?.promptTokenCount || 0,
           outputTokens: metaResponse.usageMetadata?.candidatesTokenCount || 0,
@@ -1119,7 +1119,7 @@ async function startServer() {
         
         // Log Gemini Extraction
         logUsage({
-          userId: uid,
+          userId: userId,
           model: extractionModelUsed,
           inputTokens: geminiUsage.promptTokenCount,
           outputTokens: geminiUsage.candidatesTokenCount,
@@ -1192,10 +1192,10 @@ async function startServer() {
       // ===============================
       // 1. GET KEYS
       // ===============================
-      const keys = await getApiKeys(idToken);
+      const { keys: userKeys, uid: userId } = await getApiKeys(idToken);
       let geminiKey = process.env.GEMINI_API_KEY;
-      if (keys && keys.gemini) {
-        geminiKey = keys.gemini;
+      if (userKeys && userKeys.gemini) {
+        geminiKey = userKeys.gemini;
       } else {
         console.warn("User has no API key configured. Using system key.");
       }
@@ -1243,7 +1243,7 @@ async function startServer() {
       // ===============================
       // 6. SAVE MEMORY
       // ===============================
-      await saveResumeVersion(db, "anonymous", {
+      await saveResumeVersion(db, userId || "anonymous", {
         input: resumeData,
         output: cleaned,
         score: totalScore

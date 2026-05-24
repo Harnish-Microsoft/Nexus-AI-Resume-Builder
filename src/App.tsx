@@ -99,6 +99,7 @@ import { AuthModal } from './components/AuthModal';
 import { TermsModal } from './components/TermsModal';
 
 import defaultMasterResume from './services/master_resume.json';
+import { GeminiAmbientGlow } from './components/GeminiAmbientGlow';
 
 // Lazy load heavy components for better initial performance
 const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ default: m.CareerTools })));
@@ -113,7 +114,7 @@ const LoadingSpinner = () => (
   </div>
 );
 
-type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic';
+type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic' | 'Player-Coach';
 
 import { CommandPalette } from './components/CommandPalette';
 
@@ -1914,7 +1915,7 @@ export default function App() {
           finalResumeText, 
           jobDescription, 
           finalTargetRole, 
-          mode, 
+          mode === 'automatic' ? 'balanced' : mode, 
           audienceLabel, 
           routerConfig, 
           linkedInUrl, 
@@ -2855,14 +2856,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   if (!user) {
     return (
       <Suspense fallback={
-        <div 
-          className={`h-screen flex flex-col items-center justify-center ${isDarkMode ? 'text-white' : 'text-neutral-900'} relative`}
-          style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-        >
-          <div className="absolute inset-0 bg-black/20 pointer-events-none" />
-          <div className="liquid-container z-0 opacity-30">
-            <div className="liquid-blob w-[110vw] h-[110vh] bg-blue-500/20 -top-1/2 -left-1/4" />
-          </div>
+        <div className={`h-screen flex flex-col items-center justify-center ${isDarkMode ? 'text-white' : 'text-neutral-900'} relative`}>
+          <GeminiAmbientGlow status="loading" />
           <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
           <h2 className="text-xl font-bold tracking-tighter opacity-50 uppercase">Loading Welcome Suite...</h2>
         </div>
@@ -2881,18 +2876,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   }
 
   return (
-    <div 
-      className={`h-screen flex flex-col overflow-hidden transition-colors duration-300 ${isDarkMode ? 'text-white' : 'text-slate-900'} font-sans selection:bg-emerald-500/30 relative z-0`}
-      style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-    >
-      <div className="absolute inset-0 bg-black/10 dark:bg-black/30 pointer-events-none -z-10" />
-      <div className="liquid-container z-10 opacity-30">
-        <div className="liquid-blob w-[110vw] h-[110vh] -top-1/2 -left-1/4" style={{ animationDelay: '-2s' }} />
-        <div className="liquid-blob liquid-blob-secondary w-[80vw] h-[80vh] top-1/2 right-1/4" style={{ animationDelay: '-5s' }} />
-        <div className="liquid-blob w-[90vw] h-[90vh] top-1/2 -right-1/4" style={{ animationDelay: '-12s' }} />
-        <div className="liquid-blob liquid-blob-secondary w-[100vw] h-[100vh] -bottom-1/4 left-1/3" style={{ animationDelay: '-18s' }} />
-      </div>
-      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+    <>
+      <GeminiAmbientGlow status={isOptimizing ? 'optimizing' : 'idle'} intensity="medium" />
+      
+      <div 
+        className={`h-screen flex flex-col overflow-hidden transition-colors duration-300 ${isDarkMode ? 'text-white font-[400]' : 'text-slate-900'} font-sans selection:bg-emerald-500/30 relative z-10`}
+      >
+        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <DriveFolderPicker 
           isOpen={isSelectingFolder}
           onClose={() => setIsSelectingFolder(false)}
@@ -2915,14 +2905,32 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col relative w-full h-full min-w-0">
-          <header className={`shrink-0 border-b z-30 transition-colors w-full h-16 flex items-center justify-between px-4 md:px-8 ${isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/5'}`}>
+          <header className={`shrink-0 border-b z-30 transition-colors w-full h-16 flex items-center justify-between px-4 md:px-8 ${isDarkMode ? 'bg-slate-950/20 text-white border-white/10 shadow-lg shadow-black/20' : 'bg-white/80 text-black border-black/5 shadow-sm'}`}>
               <div className="flex items-center gap-2 sm:gap-6">
-                <div className="font-bold text-xl tracking-tight flex items-center gap-2 sm:gap-3">
-                    <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex shrink-0 items-center justify-center transition-colors shadow-sm ${isDarkMode ? 'bg-emerald-500/20 border border-emerald-500/50' : 'bg-neutral-900 border border-black'}`}>
-                        <Cpu className={`w-3 h-3 sm:w-4 sm:h-4 text-emerald-400`} />
+                <Link to="/" className="font-bold text-xl tracking-tight flex items-center gap-2 sm:gap-3 group">
+                    <div className={`w-7 h-7 sm:w-9 sm:h-9 rounded-xl flex shrink-0 items-center justify-center transition-all shadow-sm group-hover:scale-110 ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-neutral-900 text-emerald-300'}`}>
+                        <Sparkles className={`w-3 h-3 sm:w-5 sm:h-5`} />
                     </div>
-                    <span className={`tracking-tight text-[13px] sm:text-[15px] hidden md:inline-block ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>NEXUS AI</span>
-                </div>
+                    <span className={`tracking-tight text-[10px] sm:text-[12px] font-black uppercase tracking-widest hidden sm:inline-block gemini-glow-text`}>NEXUS AI</span>
+                </Link>
+
+                {/* Match Score Badge */}
+                {activeAudience && results[activeAudience]?.match_score !== undefined && (
+                  <motion.div 
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border shadow-sm transition-all hover:scale-105 group ${
+                      (results[activeAudience]?.match_score || 0) >= 80 
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                        : (results[activeAudience]?.match_score || 0) >= 50
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                        : 'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}
+                  >
+                    <Target className="w-3 h-3 transition-transform group-hover:rotate-12" />
+                    <span className="text-[10px] font-black tracking-tighter sm:tracking-normal">{(results[activeAudience]?.match_score || 0)}% MATCH</span>
+                  </motion.div>
+                )}
 
                 <nav className="flex items-center gap-0.5 sm:gap-1">
                   {(['build', 'tools', 'profile'] as const).map(tab => (
@@ -2936,13 +2944,43 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       }`}
                       title={tab}
                     >
-                      {tab === 'build' ? <Zap className="w-3.5 h-3.5 sm:hidden" /> : tab === 'tools' ? <LayoutGrid className="w-3.5 h-3.5 sm:hidden" /> : <UserCircle className="w-3.5 h-3.5 sm:hidden" />}
-                      <span className="hidden sm:inline">{tab === 'build' ? 'Optimizer' : tab}</span>
+                      {tab === 'build' ? <FileText className="w-3.5 h-3.5" /> : tab === 'tools' ? <LayoutGrid className="w-3.5 h-3.5" /> : <UserCircle className="w-3.5 h-3.5" />}
+                      <span className="hidden lg:inline">{tab === 'build' ? 'Optimizer' : tab}</span>
                     </Link>
                   ))}
                 </nav>
               </div>
-              <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
+
+              <div className="flex items-center gap-1 sm:gap-2 md:gap-3 shrink-0">
+                  {/* Active Resume Source Indicator */}
+                  {masterResumes.find(r => r.isActive) && (
+                    <div 
+                      className={`hidden xl:flex items-center gap-2 px-3 py-2 rounded-xl border ${isDarkMode ? 'border-white/5 bg-white/5' : 'border-black/5 bg-black/5'} opacity-60 hover:opacity-100 transition-opacity`}
+                      title={`Active Source: ${masterResumes.find(r => r.isActive)?.name}`}
+                    >
+                      <FileText className="w-3 h-3 text-emerald-400" />
+                      <span className="text-[9px] font-black uppercase tracking-tighter max-w-[80px] truncate">
+                        {masterResumes.find(r => r.isActive)?.name}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Dedicated Optimize Button */}
+                  <button
+                    onClick={() => handleOptimize()}
+                    disabled={isOptimizing || !jobDescription}
+                    title={`Optimize using: ${masterResumes.find(r => r.isActive)?.name || 'Default Resume'}`}
+                    className={`flex items-center gap-2 px-3 sm:px-5 py-2 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all active:scale-95 ${
+                      isOptimizing 
+                        ? 'bg-emerald-500/20 text-emerald-400 cursor-not-allowed opacity-50' 
+                        : (isDarkMode ? 'bg-white text-black hover:bg-white/90 shadow-lg shadow-white/5' : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/10')
+                    } disabled:opacity-30 disabled:grayscale`}
+                  >
+                    {isOptimizing ? <RefreshCw className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" /> : <Zap className="w-3 h-3 sm:w-4 sm:h-4" />}
+                    <span className="hidden sm:inline">{isOptimizing ? 'Optimizing' : 'Optimize'}</span>
+                  </button>
+
+                  <div className="h-6 w-[1px] bg-white/10 mx-1 hidden sm:block" />
                   <button onClick={() => setFastMode(!fastMode)} className={`hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full border transition-colors text-[10px] font-bold ${
                       fastMode 
                         ? (isDarkMode ? 'border-amber-500/50 bg-amber-500/20 text-amber-400' : 'border-amber-600/50 bg-amber-500/20 text-amber-800') 
@@ -4699,5 +4737,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       </footer>
       </div>
     </div>
+    </>
   );
 }

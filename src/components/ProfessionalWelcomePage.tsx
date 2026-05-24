@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowRight, BarChart3, CheckCircle2, FileText, Key, Lock, LogIn, Mail, Moon, ShieldCheck, Sparkles, Sun, Target, UserPlus } from 'lucide-react';
+import { GeminiAmbientGlow } from './GeminiAmbientGlow';
 
 interface ProfessionalWelcomePageProps {
   onLogin: () => void;
@@ -81,98 +82,90 @@ export function ProfessionalWelcomePage({
   return (
     <div 
       className={`min-h-screen font-sans selection:bg-emerald-500/20 ${surface} relative overflow-hidden z-0`}
-      style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
     >
-      <div className="absolute inset-0 pointer-events-none -z-10" />
-      <div className="liquid-container z-10 opacity-50">
-        <div className="liquid-blob w-[110vw] h-[110vh] bg-blue-500/10 -top-1/2 -left-1/4" style={{ animationDelay: '-2s' }} />
-        <div className="liquid-blob w-[90vw] h-[90vh] bg-pink-500/10 top-1/2 -right-1/4" style={{ animationDelay: '-5s' }} />
-        <div className="liquid-blob w-[100vw] h-[100vh] bg-amber-500/8 -bottom-1/4 left-1/3" style={{ animationDelay: '-8s' }} />
-      </div>
-      <main className="min-h-screen grid lg:grid-cols-[1.08fr_0.92fr] relative z-10">
-        <section className="flex flex-col justify-between px-6 py-6 sm:px-10 lg:px-14 lg:py-10">
+      <GeminiAmbientGlow status="idle" intensity="high" />
+      <main className="min-h-screen flex flex-col lg:grid lg:grid-cols-[1.08fr_0.92fr] relative z-10">
+        <section className="flex flex-col justify-between px-6 py-8 sm:px-10 lg:px-14 lg:py-10">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
-                <Sparkles className="w-4 h-4" />
+              <div className={`h-10 w-10 rounded-xl flex items-center justify-center shadow-lg ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
+                <Sparkles className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-sm font-bold tracking-tight">Nexus AI</p>
-                <p className={`text-xs ${muted}`}>Resume optimization workspace</p>
+                <p className="text-base font-black tracking-tight uppercase gemini-glow-text">Nexus AI</p>
+                <p className={`text-[10px] uppercase tracking-widest font-bold ${muted}`}>Professional Hub</p>
               </div>
             </div>
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`rounded-lg border p-2 transition-colors ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'}`}
+              className={`rounded-xl border p-2.5 transition-all active:scale-95 ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'}`}
               title="Toggle theme"
             >
-              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
           </div>
 
-          <div className="max-w-2xl py-10 sm:py-14 lg:py-20">
-            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Private resume data, role-specific outputs
-            </div>
-            <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              Tune every resume to the job before you apply.
+          <div className="max-w-2xl py-12 lg:py-20">
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-bold tracking-wide uppercase ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              FAANG-GRADE OPTIMIZATION ENGINE
+            </motion.div>
+            <h1 className="mt-8 text-4xl font-black tracking-tight sm:text-6xl lg:text-7xl leading-[1.1]">
+              Tune every resume <br className="hidden sm:block" />
+              <span className="gemini-glow-text italic">to the job.</span>
             </h1>
-            <p className={`mt-5 max-w-xl text-base leading-7 sm:text-lg ${muted}`}>
-              Paste a job description, compare fit signals, rewrite experience bullets, and export a clean ATS-ready resume from one focused workspace.
+            <p className={`mt-6 max-w-xl text-lg leading-relaxed sm:text-xl font-medium ${isDarkMode ? 'text-white/70' : 'text-slate-600'}`}>
+              Paste a job description, analyze target match scores, and generate high-impact STAR stories in one intelligent workspace.
             </p>
 
-            <div className="mt-8 hidden max-w-xl gap-3 sm:grid sm:grid-cols-3">
+            <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
-                { icon: Target, title: 'Target', body: 'Role, company, and job description.', color: 'text-emerald-500' },
-                { icon: BarChart3, title: 'Score', body: 'Keyword and match analysis.', color: 'text-blue-500' },
-                { icon: FileText, title: 'Export', body: 'PDF, DOCX, and JSON versions.', color: isDarkMode ? 'text-white/70' : 'text-slate-700' },
-              ].map((item) => (
-                <div key={item.title} className={`rounded-lg border p-4 ${panel}`}>
-                  <item.icon className={`w-5 h-5 ${item.color}`} />
-                  <p className="mt-3 text-sm font-semibold">{item.title}</p>
-                  <p className={`mt-1 text-xs leading-5 ${muted}`}>{item.body}</p>
-                </div>
+                { icon: Target, title: 'Target', body: 'Deep role analysis.', color: 'text-emerald-500' },
+                { icon: BarChart3, title: 'Score', body: 'ATS match tracking.', color: 'text-blue-500' },
+                { icon: FileText, title: 'Export', body: 'FAANG-ready PDFs.', color: isDarkMode ? 'text-purple-400' : 'text-purple-600' },
+              ].map((item, i) => (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 + (i * 0.1) }}
+                  key={item.title} 
+                  className={`rounded-2xl border p-5 transition-all hover:scale-[1.02] ${panel}`}
+                >
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-4 ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                    <item.icon className={`w-5 h-5 ${item.color}`} />
+                  </div>
+                  <p className="text-sm font-black uppercase tracking-widest">{item.title}</p>
+                  <p className={`mt-1 text-xs font-medium leading-5 ${muted}`}>{item.body}</p>
+                </motion.div>
               ))}
             </div>
           </div>
 
-          <p className={`hidden text-xs sm:block ${isDarkMode ? 'text-white/30' : 'text-slate-400'}`}>Built for repeated applications, not one-off resume decoration.</p>
+          <div className="flex items-center gap-4 py-4">
+            <div className="flex -space-x-2">
+              {[1,2,3].map(i => (
+                <div key={i} className="w-8 h-8 rounded-full border-2 border-black bg-slate-800 flex items-center justify-center text-[10px] font-bold">
+                  {String.fromCharCode(64 + i)}
+                </div>
+              ))}
+            </div>
+            <p className={`text-[11px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-white/40' : 'text-slate-400'}`}>
+              Trusted by professionals at top tech firms
+            </p>
+          </div>
         </section>
 
-        <section className={`flex items-start justify-center border-t px-4 py-6 sm:items-center sm:py-8 lg:border-l lg:border-t-0 lg:px-10 ${isDarkMode ? 'bg-black/10 border-white/10' : 'bg-white/10 border-slate-200'}`}>
+        <section className={`flex items-center justify-center border-t lg:border-t-0 lg:border-l px-6 py-12 sm:px-10 ${isDarkMode ? 'bg-slate-950/20 border-white/5' : 'bg-white/40 border-slate-200'} backdrop-blur-3xl`}>
           <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
             className="w-full max-w-md"
           >
-            <div className={`mb-4 hidden rounded-lg border p-3 sm:block ${softPanel}`}>
-              <div className={`flex items-center justify-between border-b pb-3 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
-                <div>
-                  <p className={`text-xs font-semibold uppercase ${isDarkMode ? 'text-white/45' : 'text-slate-500'}`}>Workspace Preview</p>
-                  <p className="text-sm font-bold">Senior Cloud Architect</p>
-                </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>Ready</span>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {previewRows.map((row) => (
-                  <div key={row.label} className={`rounded-md border p-2 ${getMetricTone(row.tone)}`}>
-                    <p className="text-lg font-bold">{row.value}</p>
-                    <p className="text-[10px] font-semibold uppercase leading-4 opacity-80">{row.label}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 space-y-2">
-                {['Leadership bullets aligned to Azure migration scope', 'Quantified cost and reliability outcomes added'].map((item) => (
-                  <div key={item} className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs ${isDarkMode ? 'bg-white/5 text-white/65' : 'bg-white text-slate-600'}`}>
-                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className={`rounded-lg border p-6 shadow-sm ${panel}`}>
+            <div className={`rounded-3xl border p-8 shadow-2xl ${isDarkMode ? 'bg-slate-950/20 border-white/10' : 'bg-white/80 border-slate-200'}`}>
               <AnimatePresence mode="wait">
                 {view === 'welcome' ? (
                   <motion.div
