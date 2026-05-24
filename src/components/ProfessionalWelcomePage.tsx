@@ -84,88 +84,97 @@ export function ProfessionalWelcomePage({
       className={`min-h-screen font-sans selection:bg-emerald-500/20 ${surface} relative overflow-hidden z-0`}
     >
       <GeminiAmbientGlow status="idle" intensity="high" />
-      <main className="min-h-screen flex flex-col lg:grid lg:grid-cols-[1.08fr_0.92fr] relative z-10">
-        <section className="flex flex-col justify-between px-6 py-8 sm:px-10 lg:px-14 lg:py-10">
+      <main className="min-h-screen flex flex-col lg:grid lg:grid-cols-[1fr_0.9fr] relative z-10">
+        <section className="flex flex-col justify-between px-6 py-12 sm:px-10 lg:px-16 lg:py-16">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className={`h-10 w-10 rounded-xl flex items-center justify-center shadow-lg ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
-                <Sparkles className="w-5 h-5" />
+              <div className={`h-11 w-11 rounded-2xl flex items-center justify-center shadow-2xl transition-transform hover:scale-110 ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
+                <Sparkles className="w-6 h-6" />
               </div>
-              <div>
-                <p className="text-base font-black tracking-tight uppercase gemini-glow-text">Nexus AI</p>
-                <p className={`text-[10px] uppercase tracking-widest font-bold ${muted}`}>Professional Hub</p>
+              <div className="flex flex-col">
+                <p className="text-xl font-black tracking-tight uppercase gemini-glow-text leading-none">Nexus AI</p>
+                <p className={`text-[10px] uppercase tracking-[0.3em] font-black mt-0.5 ${muted}`}>Optima Suite</p>
               </div>
             </div>
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`rounded-xl border p-2.5 transition-all active:scale-95 ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'}`}
+              className={`rounded-2xl border p-3 transition-all active:scale-90 ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'}`}
               title="Toggle theme"
             >
               {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
           </div>
 
-          <div className="max-w-2xl py-12 lg:py-20">
+          <div className="max-w-2xl py-16 lg:py-0">
             <motion.div 
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-bold tracking-wide uppercase ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className={`inline-flex items-center gap-3 rounded-full border px-5 py-2 text-[10px] sm:text-xs font-black tracking-[0.2em] uppercase ${isDarkMode ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-emerald-200 bg-emerald-50 text-emerald-700'} shadow-sm`}
             >
-              <ShieldCheck className="w-4 h-4" />
-              FAANG-GRADE OPTIMIZATION ENGINE
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 animate-pulse" />
+                <span>FAANG-GRADE ENGINE</span>
+              </div>
+              <div className="w-[1px] h-3 bg-current opacity-20" />
+              <span className="opacity-60 hidden sm:inline">v4.0.0 Stable</span>
             </motion.div>
-            <h1 className="mt-8 text-4xl font-black tracking-tight sm:text-6xl lg:text-7xl leading-[1.1]">
-              Tune every resume <br className="hidden sm:block" />
-              <span className="gemini-glow-text italic">to the job.</span>
+            <h1 className="mt-10 text-5xl font-black tracking-tighter sm:text-7xl lg:text-8xl leading-[0.95] lg:leading-[0.9]">
+              Precision <br className="hidden sm:block" />
+              <span className="gemini-glow-text italic">Optimization.</span>
             </h1>
-            <p className={`mt-6 max-w-xl text-lg leading-relaxed sm:text-xl font-medium ${isDarkMode ? 'text-white/70' : 'text-slate-600'}`}>
-              Paste a job description, analyze target match scores, and generate high-impact STAR stories in one intelligent workspace.
+            <p className={`mt-8 max-w-xl text-lg leading-relaxed sm:text-2xl font-medium tracking-tight ${isDarkMode ? 'text-white/70' : 'text-slate-600'}`}>
+              The professional standard for AI-driven resume tailoring. Paste a job description and generate high-impact, score-maximized documents in seconds.
             </p>
 
-            <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-6">
               {[
-                { icon: Target, title: 'Target', body: 'Deep role analysis.', color: 'text-emerald-500' },
-                { icon: BarChart3, title: 'Score', body: 'ATS match tracking.', color: 'text-blue-500' },
-                { icon: FileText, title: 'Export', body: 'FAANG-ready PDFs.', color: isDarkMode ? 'text-purple-400' : 'text-purple-600' },
+                { icon: Target, title: 'Precision', body: 'Targeted resume tailoring.', color: 'text-emerald-500' },
+                { icon: BarChart3, title: 'Analysis', body: 'ATS Keyword extraction.', color: 'text-blue-500' },
+                { icon: FileText, title: 'Export', body: 'Professional PDF outputs.', color: isDarkMode ? 'text-purple-400' : 'text-purple-600' },
               ].map((item, i) => (
                 <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 + (i * 0.1) }}
+                  transition={{ delay: 0.1 + (i * 0.1), type: 'spring', damping: 20 }}
                   key={item.title} 
-                  className={`rounded-2xl border p-5 transition-all hover:scale-[1.02] ${panel}`}
+                  className={`rounded-3xl border p-6 transition-all hover:translate-y-[-4px] shadow-sm hover:shadow-xl ${panel}`}
                 >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-4 ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
-                    <item.icon className={`w-5 h-5 ${item.color}`} />
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-5 ${isDarkMode ? 'bg-white/5 shadow-inner' : 'bg-black/5'}`}>
+                    <item.icon className={`w-6 h-6 ${item.color}`} />
                   </div>
-                  <p className="text-sm font-black uppercase tracking-widest">{item.title}</p>
-                  <p className={`mt-1 text-xs font-medium leading-5 ${muted}`}>{item.body}</p>
+                  <p className="text-sm font-black uppercase tracking-widest mb-2">{item.title}</p>
+                  <p className={`text-xs font-semibold leading-relaxed ${muted}`}>{item.body}</p>
                 </motion.div>
               ))}
             </div>
           </div>
 
-          <div className="flex items-center gap-4 py-4">
-            <div className="flex -space-x-2">
-              {[1,2,3].map(i => (
-                <div key={i} className="w-8 h-8 rounded-full border-2 border-black bg-slate-800 flex items-center justify-center text-[10px] font-bold">
+          <div className="flex flex-col sm:flex-row items-center gap-6 py-8 border-t border-white/5 mt-auto">
+            <div className="flex -space-x-3">
+              {[1,2,3,4].map(i => (
+                <div key={i} className={`w-10 h-10 rounded-full border-4 ${isDarkMode ? 'border-slate-900 bg-slate-800' : 'border-white bg-slate-100'} flex items-center justify-center text-xs font-black shadow-lg`}>
                   {String.fromCharCode(64 + i)}
                 </div>
               ))}
             </div>
-            <p className={`text-[11px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-white/40' : 'text-slate-400'}`}>
-              Trusted by professionals at top tech firms
-            </p>
+            <div className="text-center sm:text-left">
+              <p className={`text-xs font-black uppercase tracking-[0.2em] ${isDarkMode ? 'text-emerald-500/80' : 'text-emerald-600'}`}>
+                10k+ Optimized Resumes
+              </p>
+              <p className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/30' : 'text-slate-400'}`}>
+                Syncs across all your devices instantly
+              </p>
+            </div>
           </div>
         </section>
 
-        <section className={`flex items-center justify-center border-t lg:border-t-0 lg:border-l px-6 py-12 sm:px-10 ${isDarkMode ? 'bg-slate-950/20 border-white/5' : 'bg-white/40 border-slate-200'} backdrop-blur-3xl`}>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-md"
-          >
-            <div className={`rounded-3xl border p-8 shadow-2xl ${isDarkMode ? 'bg-slate-950/20 border-white/10' : 'bg-white/80 border-slate-200'}`}>
+        <section className={`flex items-center justify-center border-t lg:border-t-0 lg:border-l px-6 py-16 sm:px-10 lg:px-20 ${isDarkMode ? 'bg-slate-950/40 border-white/10' : 'bg-white/60 border-slate-200'} backdrop-blur-3xl overflow-y-auto`}>
+           <div className="w-full max-w-md py-8">
+              <motion.div
+                initial={{ opacity: 0, y: 40 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`rounded-[2.5rem] border p-8 sm:p-12 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.4)] ${isDarkMode ? 'bg-slate-950/40 border-white/10' : 'bg-white border-slate-200'}`}
+              >
               <AnimatePresence mode="wait">
                 {view === 'welcome' ? (
                   <motion.div
@@ -316,8 +325,8 @@ export function ProfessionalWelcomePage({
                   </motion.form>
                 )}
               </AnimatePresence>
-            </div>
-          </motion.div>
+            </motion.div>
+          </div>
         </section>
       </main>
     </div>

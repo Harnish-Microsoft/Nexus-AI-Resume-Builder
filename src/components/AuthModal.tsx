@@ -104,33 +104,33 @@ export function AuthModal({ isOpen, onClose, isDarkMode, onSuccess }: AuthModalP
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className={`w-full max-w-md rounded-3xl shadow-2xl border overflow-hidden ${
-          isDarkMode ? 'glass-thick border-white/10 text-white' : 'glass-panel-light border-black/5 text-black'
+        className={`w-full sm:max-w-md rounded-[2rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] border overflow-hidden ${
+          isDarkMode ? 'glass-thick border-white/10 text-white' : 'glass-panel-light border-black/5 text-black bg-white'
         }`}
       >
-        <div className="p-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50'}`}>
-              <UserIcon className="w-5 h-5 text-emerald-500" />
+        <div className="p-8 sm:p-10 border-b border-black/5 dark:border-white/5 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className={`p-3 rounded-2xl shadow-inner ${isDarkMode ? 'bg-emerald-500/20' : 'bg-emerald-50'}`}>
+              <UserIcon className="w-6 h-6 text-emerald-500" />
             </div>
             <div>
-              <h3 className="font-bold">
-                {mode === 'login' ? 'Welcome Back' : mode === 'signup' ? 'Create Account' : 'Reset Password'}
+              <h3 className="text-xl font-black tracking-tight leading-none uppercase">
+                {mode === 'login' ? 'Sync Access' : mode === 'signup' ? 'Create Hub' : 'Reset Axis'}
               </h3>
-              <p className="text-xs opacity-60">
-                {mode === 'login' ? 'Sign in to sync your resume versions' : mode === 'signup' ? 'Join us for free' : 'We will send you a reset link'}
+              <p className="text-[10px] mt-1 font-bold uppercase tracking-widest opacity-40">
+                {mode === 'login' ? 'Professional Sync' : mode === 'signup' ? 'Workspace Entry' : 'Secure Recovery'}
               </p>
             </div>
           </div>
           <button 
             onClick={onClose}
-            className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors"
+            className="p-3 hover:bg-black/5 dark:hover:bg-white/10 rounded-full transition-all active:scale-90"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleAuth} className="p-6 space-y-4">
+        <form onSubmit={handleAuth} className="p-8 sm:p-10 space-y-6">
           {error && (
             <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />

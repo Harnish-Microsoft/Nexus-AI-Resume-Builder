@@ -260,6 +260,67 @@ export default function App() {
     if (user) setHasUnsavedChanges(true);
   }, [resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user]);
   const [jobDescription, setJobDescription] = useState('');
+  const [isAutoSelecting, setIsAutoSelecting] = useState(false);
+  const [autoSelectProgress, setAutoSelectProgress] = useState(0);
+
+  const autoSelectBestResume = async (jd: string) => {
+    if (masterResumes.length <= 1 || !jd || jd.length < 50) return;
+    
+    setIsAutoSelecting(true);
+    setAutoSelectProgress(10);
+    setOptimizationStatus("Analyzing which resume source is best for this role...");
+    
+    try {
+      const routerConfig = getRouterConfig();
+      // Use a fast model for selection
+      const fastConfig = { ...routerConfig };
+      
+      const scores = await Promise.all(masterResumes.map(async (resume, index) => {
+        try {
+          const result = await evaluateSuitability(JSON.stringify(resume.data), jd, fastConfig, true);
+          setAutoSelectProgress(prev => Math.min(95, prev + (90 / masterResumes.length)));
+          return { id: resume.id, score: result.matchScore, name: resume.name };
+        } catch (e) {
+          console.error(`Failed to evaluate resume ${resume.name}:`, e);
+          return { id: resume.id, score: -1, name: resume.name };
+        }
+      }));
+
+      const availableScores = scores.filter(s => s.score !== -1);
+      if (availableScores.length === 0) return;
+
+      const best = availableScores.reduce((prev, current) => (prev.score > current.score) ? prev : current);
+      
+      const currentActive = masterResumes.find(r => r.isActive);
+      if (best.score !== -1 && currentActive?.id !== best.id) {
+        showToast(`Intelligent Swap: Using "${best.name}" source for better (${best.score}%) match`, "info");
+        setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === best.id })));
+        setSelectedResumeId(best.id);
+        
+        const activeResume = masterResumes.find(r => r.id === best.id);
+        if (activeResume) {
+          setResumeText(JSON.stringify(activeResume.data, null, 2));
+        }
+      } else if (currentActive?.id === best.id) {
+         setOptimizationStatus(`Confirmed: "${best.name}" is the optimal source.`);
+         setTimeout(() => setOptimizationStatus(""), 2000);
+      }
+    } catch (error) {
+      console.error("Auto-selection failed:", error);
+    } finally {
+      setIsAutoSelecting(false);
+      setAutoSelectProgress(0);
+    }
+  };
+
+  const handleJDChange = (text: string) => {
+    setJobDescription(text);
+    // Only trigger auto-select if it looks like a meaningful job description (length > 200)
+    // and it's not already selecting.
+    if (text.length > 200 && masterResumes.length > 1 && !isAutoSelecting) {
+      autoSelectBestResume(text);
+    }
+  };
   const location = useLocation();
   const navigate = useNavigate();
   const activeTabOrigin = location.pathname.substring(1).split('/')[0] || 'build';
@@ -1880,19 +1941,21 @@ export default function App() {
       'hybrid-openai': 'Hybrid Premium (OpenAI + Gemini Flash)'
     };
     const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
-    setOptimizationStatus(`Initializing ${engineName}...`);
+    const activeSource = masterResumes.find(r => r.isActive) || { name: 'Default', data: defaultMasterResume };
+    setOptimizationStatus(`Source: ${activeSource.name} | Initializing ${engineName}...`);
 
     const controller = new AbortController();
     setAbortController(controller);
 
     try {
-      const finalResumeText = resumeText || "";
+      const activeSource = masterResumes.find(r => r.isActive) || { name: 'Default', data: defaultMasterResume };
+      const finalResumeText = JSON.stringify(activeSource.data) || resumeText || "";
+      setOptimizationStatus(`Source: ${activeSource.name} | Initializing ${engineName}...`);
+      
       const finalTargetRole = targetRole || "Professional Candidate";
       
-      const routerConfig = getRouterConfig();
+      const routerConfigForOptimize = getRouterConfig();
       let completedAudiences = 0;
-      const totalAudiences = currentAudiences.length;
-      const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
 
       // Run all audience optimizations in parallel
       const optimizationPromises = currentAudiences.map(async (audienceId) => {
@@ -1917,7 +1980,7 @@ export default function App() {
           finalTargetRole, 
           mode === 'automatic' ? 'balanced' : mode, 
           audienceLabel, 
-          routerConfig, 
+          routerConfigForOptimize, 
           linkedInUrl, 
           linkedInPdfText, 
           jobUrl, 
@@ -2877,7 +2940,69 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
   return (
     <>
-      <GeminiAmbientGlow status={isOptimizing ? 'optimizing' : 'idle'} intensity="medium" />
+      {/* Global Progress Bar for Optimization & Auto-selection */}
+      {(isOptimizing || isAutoSelecting) && (
+        <div className="fixed top-0 left-0 right-0 h-1 z-[100] bg-white/5 overflow-hidden">
+          <motion.div 
+            initial={{ width: 0 }}
+            animate={{ width: `${isAutoSelecting ? autoSelectProgress : optimizationProgress}%` }}
+            className={`h-full ${isAutoSelecting ? 'bg-blue-500' : 'bg-emerald-500'} shadow-[0_0_10px_rgba(16,185,129,0.5)]`}
+          />
+        </div>
+      )}
+
+      {/* Global Optimization Overlay */}
+      <AnimatePresence>
+        {isOptimizing && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 backdrop-blur-md pointer-events-none"
+          >
+            <div className="text-center p-8 max-w-lg w-full">
+              <div className="relative inline-block mb-8">
+                <div className="w-24 h-24 rounded-full border-t-2 border-emerald-500 animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                   <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                      <Sparkles className="w-8 h-8 text-emerald-400 animate-pulse" />
+                   </div>
+                </div>
+              </div>
+              
+              <h2 className="text-2xl font-black tracking-tighter text-white mb-2 uppercase italic">Nexus AI Optimizing</h2>
+              <p className="text-emerald-400/80 font-mono text-xs uppercase tracking-widest mb-6 h-4">{optimizationStatus}</p>
+              
+              <div className="w-full bg-white/5 rounded-full h-1.5 mb-2 overflow-hidden">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${optimizationProgress}%` }}
+                  className="h-full bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]"
+                />
+              </div>
+              <div className="flex justify-between items-center text-[10px] font-bold text-white/40 uppercase tracking-tighter">
+                <span>Phase: {optimizationProgress < 30 ? 'Analyzing' : optimizationProgress < 70 ? 'Strategizing' : 'Synthesizing'}</span>
+                <span>{optimizationProgress}% Complete</span>
+              </div>
+              
+              <div className="mt-8 flex flex-col items-center gap-3">
+                <div className="flex -space-x-2">
+                   {masterResumes.map((r, i) => (
+                     <div key={r.id} className={`w-8 h-8 rounded-full border-2 border-[#050510] flex items-center justify-center text-[10px] font-bold ${r.isActive ? 'bg-emerald-500 text-black z-10' : 'bg-white/10 text-white/30'}`}>
+                       {r.name.charAt(0)}
+                     </div>
+                   ))}
+                </div>
+                <span className="text-[10px] text-emerald-400/60 font-medium italic">
+                  Using base source: <strong className="text-emerald-400">{masterResumes.find(r => r.isActive)?.name}</strong>
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <GeminiAmbientGlow status={isOptimizing ? 'optimizing' : isAutoSelecting ? 'analyzing' : 'idle'} intensity="medium" />
       
       <div 
         className={`h-screen flex flex-col overflow-hidden transition-colors duration-300 ${isDarkMode ? 'text-white font-[400]' : 'text-slate-900'} font-sans selection:bg-emerald-500/30 relative z-10`}
@@ -2952,33 +3077,45 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               </div>
 
               <div className="flex items-center gap-1 sm:gap-2 md:gap-3 shrink-0">
-                  {/* Active Resume Source Indicator */}
-                  {masterResumes.find(r => r.isActive) && (
-                    <div 
-                      className={`hidden xl:flex items-center gap-2 px-3 py-2 rounded-xl border ${isDarkMode ? 'border-white/5 bg-white/5' : 'border-black/5 bg-black/5'} opacity-60 hover:opacity-100 transition-opacity`}
-                      title={`Active Source: ${masterResumes.find(r => r.isActive)?.name}`}
-                    >
+                {/* Active Resume Source Indicator */}
+                {masterResumes.find(r => r.isActive) && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    key={masterResumes.find(r => r.isActive)?.id}
+                    className={`hidden xl:flex items-center gap-2 px-3 py-2 rounded-xl border ${isDarkMode ? 'border-white/5 bg-white/5' : 'border-black/5 bg-black/5'} group cursor-default shadow-sm transition-all hover:bg-emerald-500/5`}
+                    title={`Active Source: ${masterResumes.find(r => r.isActive)?.name}`}
+                  >
+                    <div className="w-5 h-5 rounded-lg bg-emerald-500/10 flex items-center justify-center">
                       <FileText className="w-3 h-3 text-emerald-400" />
-                      <span className="text-[9px] font-black uppercase tracking-tighter max-w-[80px] truncate">
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[7px] font-black uppercase tracking-[0.2em] text-emerald-500/60 leading-none mb-0.5">Active Source</span>
+                      <span className="text-[10px] font-bold tracking-tight max-w-[100px] truncate leading-none">
                         {masterResumes.find(r => r.isActive)?.name}
                       </span>
                     </div>
-                  )}
+                  </motion.div>
+                )}
 
-                  {/* Dedicated Optimize Button */}
-                  <button
-                    onClick={() => handleOptimize()}
-                    disabled={isOptimizing || !jobDescription}
-                    title={`Optimize using: ${masterResumes.find(r => r.isActive)?.name || 'Default Resume'}`}
-                    className={`flex items-center gap-2 px-3 sm:px-5 py-2 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all active:scale-95 ${
-                      isOptimizing 
-                        ? 'bg-emerald-500/20 text-emerald-400 cursor-not-allowed opacity-50' 
-                        : (isDarkMode ? 'bg-white text-black hover:bg-white/90 shadow-lg shadow-white/5' : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/10')
-                    } disabled:opacity-30 disabled:grayscale`}
-                  >
-                    {isOptimizing ? <RefreshCw className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" /> : <Zap className="w-3 h-3 sm:w-4 sm:h-4" />}
-                    <span className="hidden sm:inline">{isOptimizing ? 'Optimizing' : 'Optimize'}</span>
-                  </button>
+                {/* Dedicated Optimize Button */}
+                <button
+                  onClick={() => handleOptimize()}
+                  disabled={isOptimizing || isAutoSelecting || !resumeText || (!jobDescription && !jobUrl)}
+                  title={`Optimize using: ${masterResumes.find(r => r.isActive)?.name || 'Default Resume'}`}
+                  className={`flex items-center gap-2.5 px-4 sm:px-6 py-2.5 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-[0.1em] transition-all active:scale-95 group ${
+                    isOptimizing 
+                      ? 'bg-emerald-500/10 text-emerald-400 cursor-not-allowed opacity-50' 
+                      : 'bg-emerald-500 text-black shadow-[0_8px_24px_-8px_rgba(16,185,129,0.5)] hover:shadow-[0_12px_28px_-6px_rgba(16,185,129,0.7)] hover:scale-[1.03] hover:-translate-y-0.5'
+                  }`}
+                >
+                  {isOptimizing ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 transition-transform group-hover:rotate-12 group-hover:scale-110" />
+                  )}
+                  <span>{isOptimizing ? 'Synthesizing...' : 'Optimize Resume'}</span>
+                </button>
 
                   <div className="h-6 w-[1px] bg-white/10 mx-1 hidden sm:block" />
                   <button onClick={() => setFastMode(!fastMode)} className={`hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full border transition-colors text-[10px] font-bold ${
@@ -3302,8 +3439,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     isDarkMode ? 'bg-white/10 border-white/20 text-white placeholder:text-white/40' : 'bg-[#F9F9F9] border-black/10 text-black'
                                   }`}
                                   value={jobDescription}
-                                  onChange={(e) => setJobDescription(e.target.value)}
+                                  onChange={(e) => handleJDChange(e.target.value)}
                                 />
+                                
+                                {isAutoSelecting && (
+                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm rounded-xl border border-white/10">
+                                    <div className="w-8 h-8 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-2" />
+                                    <span className="text-[10px] font-black tracking-tighter uppercase text-white animate-pulse">Analyzing Best Source...</span>
+                                    <div className="w-24 bg-white/10 h-0.5 rounded-full mt-2 overflow-hidden">
+                                       <motion.div 
+                                         animate={{ width: `${autoSelectProgress}%` }}
+                                         className="h-full bg-emerald-500"
+                                       />
+                                    </div>
+                                  </div>
+                                )}
                                 
                               <button
                                 onClick={handleCheckSuitability}
