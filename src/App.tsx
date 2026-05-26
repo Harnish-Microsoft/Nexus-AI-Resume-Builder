@@ -332,8 +332,11 @@ export default function App() {
             } else {
               setShowTermsModal(false);
             }
-            if (data.masterResume) {
-              setResumeText(data.masterResume);
+            if (data.masterResumes) {
+              setMasterResumes(data.masterResumes);
+            } else if (data.masterResume) {
+              // Backward compatibility
+                setResumeText(data.masterResume);
             }
             if (data.customPrompt) {
               setCustomPrompt(data.customPrompt);
@@ -412,12 +415,14 @@ export default function App() {
   };
 
   const fetchDriveFiles = async () => {
-    if (!driveAccessToken && !process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return;
+    if (!driveAccessToken) {
+      console.warn("Attempted to fetch drive files without access token.");
+      showToast("Please connect your Google Drive account first.", "info");
+      return;
+    }
     setIsFetchingDriveFiles(true);
     try {
-      const url = driveAccessToken 
-        ? `/api/list-drive-files?accessToken=${driveAccessToken}` 
-        : '/api/list-drive-files';
+      const url = `/api/list-drive-files?accessToken=${driveAccessToken}`;
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Drive list error: ${response.status}`);
@@ -632,7 +637,7 @@ export default function App() {
       const docRef = doc(db, 'users', user.uid);
       const dataToSync: any = {
         userId: user.uid,
-        masterResume: resumeText || "",
+        masterResumes: masterResumes, // Sync array of resumes
         customPrompt: customPrompt || "",
         settings: {
           versioningEnabled,
@@ -733,7 +738,7 @@ export default function App() {
       await setDoc(doc(db, 'users', user.uid), {
         userId: user.uid,
         encryptedApiKey: finalEncryptedKey,
-        masterResume: resumeText,
+        masterResumes: masterResumes,
         customPrompt: customPrompt,
         settings: {
           versioningEnabled,
@@ -1884,7 +1889,7 @@ export default function App() {
 
     // SMART MASTER SELECTION STRATEGY
     // If there are multiple resumes in Nexus Master, help the user pick the right base
-    if (masterResumes.length > 1) {
+    if (masterResumes.length > 0) {
       setOptimizationStatus("Selecting Best Master Resume profile...");
       try {
         const bestId = await selectBestMasterResume(
@@ -1893,10 +1898,12 @@ export default function App() {
           getRouterConfig()
         );
         
+        let selectedMasterName = masterResumes.length > 0 ? masterResumes[0].name : "Default Profile";
+        
         if (bestId) {
           const selectedMaster = masterResumes.find(r => r.id === bestId);
           if (selectedMaster) {
-            console.log("[Nexus AI] Auto-selected master resume:", selectedMaster.name);
+            selectedMasterName = selectedMaster.name;
             setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === bestId })));
             
             const masterData = typeof selectedMaster.data === 'string' 
@@ -1905,9 +1912,9 @@ export default function App() {
               
             finalResumeText = masterData;
             setResumeText(masterData);
-            showToast(`Auto-selected Profile: ${selectedMaster.name}`, 'success', 5000);
           }
         }
+        showToast(`Using Profile: ${selectedMasterName}`, 'success', 5000);
       } catch (err) {
         console.error("[Nexus AI] Master selection failed, proceeding with default base:", err);
       }
@@ -1915,6 +1922,16 @@ export default function App() {
 
     try {
       const finalTargetRole = targetRole || "Professional Candidate";
+      let finalMode = mode;
+      try {
+        const isPC = await autoSelectPlayerCoachRole(jobDescription, getRouterConfig());                
+        if (isPC) {
+          console.log("[Nexus AI] Auto-detected Player-Coach role based on JD.");
+          finalMode = 'Player-Coach';
+        }
+      } catch (err) {
+        console.warn("[Nexus AI] Auto-detection of Player-Coach failed, using user selection:", err);
+      }
       
       const routerConfig = getRouterConfig();
       let completedAudiences = 0;
@@ -1942,7 +1959,7 @@ export default function App() {
           finalResumeText, 
           jobDescription, 
           finalTargetRole, 
-          mode, 
+          finalMode, 
           audienceLabel, 
           routerConfig, 
           linkedInUrl, 
@@ -2971,13 +2988,16 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                 </nav>
               </div>
               <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
-                  <button onClick={() => setFastMode(!fastMode)} className={`hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full border transition-colors text-[10px] font-bold ${
-                      fastMode 
-                        ? (isDarkMode ? 'border-amber-500/50 bg-amber-500/20 text-amber-400' : 'border-amber-600/50 bg-amber-500/20 text-amber-800') 
-                        : (isDarkMode ? 'border-white/30 bg-white/5 text-white/80' : 'border-black/20 bg-black/5 text-black/70')
-                  }`}>
-                      <Zap className={`w-3 h-3 ${fastMode ? (isDarkMode ? 'text-amber-400' : 'text-amber-800') : (isDarkMode ? 'text-white/80' : 'text-black/70')}`} />
-                      <span>{fastMode ? 'FLASH UI ON' : 'FLASH UI'}</span>
+                  <button
+                    onClick={() => handleOptimize()}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all ${
+                        isDarkMode 
+                            ? 'bg-emerald-500 hover:bg-emerald-400 text-black' 
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                  >
+                    <Zap className="w-3 h-3" />
+                    <span className="hidden sm:inline">Optimize</span>
                   </button>
                   {user && (
                     <button onClick={() => syncAllData(false)} className={`p-1.5 sm:p-2 rounded-full transition-colors relative ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${hasUnsavedChanges ? 'bg-amber-500/10' : ''}`} title="Sync to Cloud">
@@ -3434,13 +3454,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       <li><span className="font-semibold">Conservative:</span> {MODE_DESCRIPTIONS.conservative}</li>
                                       <li><span className="font-semibold">Balanced:</span> {MODE_DESCRIPTIONS.balanced}</li>
                                       <li><span className="font-semibold">Aggressive:</span> {MODE_DESCRIPTIONS.aggressive}</li>
-                                      <li><span className="font-semibold">Player-Coach:</span> {MODE_DESCRIPTIONS["Player-Coach"]}</li>
                                     </ul>
                                   </motion.div>
                                 )}
                               </AnimatePresence>
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                {(['conservative', 'balanced', 'aggressive', 'Player-Coach'] as const).map((m) => (
+                              <div className="grid grid-cols-3 gap-2">
+                                {(['conservative', 'balanced', 'aggressive'] as const).map((m) => (
                                   <button
                                     key={m}
                                     onClick={() => setMode(m)}

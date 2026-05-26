@@ -1087,12 +1087,10 @@ export async function selectBestMasterResume(
   config: RouterConfig
 ): Promise<string | null> {
   if (!masters || masters.length === 0) return null;
-  if (masters.length === 1) return masters[0].id;
 
   const routedConfig = routeTask('rewrite_resume', config);
   const apiKey = await getDecryptedKey(routedConfig.apiKey || '');
   const ai = new GoogleGenAI({ apiKey });
-  const model = ai.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
 
   const mastersSummary = masters.map((m) => {
     const content = typeof m.data === 'string' ? m.data : JSON.stringify(m.data);
@@ -1113,12 +1111,13 @@ export async function selectBestMasterResume(
   `;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: "application/json" }
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-lite",
+      contents: prompt,
+      config: { responseMimeType: "application/json" }
     });
     
-    const text = result.response.text();
+    const text = response.text || "";
     const parsed = JSON.parse(text);
     return parsed.selectedId;
   } catch (error) {
