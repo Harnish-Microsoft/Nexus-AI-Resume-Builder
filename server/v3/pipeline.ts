@@ -63,7 +63,7 @@ export async function optimizePipeline(input: {
         console.error("[FALLBACK] OpenAI retry failed, switching to Gemini.");
         fallbackUsed = true;
         engine = "gemini";
-        modelUsed = "gemini-3.1-flash-lite-preview";
+        modelUsed = "gemini-3-flash-preview";
         // [Placeholder for actual Gemini fallback]
         responseData = { optimizedResume: "Sample optimized resume (Gemini fallback)" };
     }

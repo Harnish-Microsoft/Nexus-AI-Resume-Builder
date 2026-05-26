@@ -18,7 +18,8 @@ export function calculateCost(model: string, inputTokens: number, outputTokens: 
   if (model.includes('gpt-4o-mini')) priceKey = 'gpt-4o-mini';
   else if (model.includes('gpt-4o')) priceKey = 'gpt-4o';
   else if (model.includes('gemini-3.1-pro')) priceKey = 'gemini-3.1-pro-preview';
-  else if (model.includes('gemini')) priceKey = 'gemini-3.1-flash-lite-preview';
+  else if (model.includes('gemini-3') || model.includes('gemini-3.1-flash')) priceKey = 'gemini-3-flash-preview';
+  else if (model.includes('gemini')) priceKey = 'gemini-3-flash-preview';
 
   const pricing = MODEL_PRICING[priceKey] || { input: 0, output: 0 };
   

@@ -157,10 +157,8 @@ export const Sidebar = () => {
   ];
 
   const engines = [
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', desc: 'Next Gen Fast', icon: Zap },
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', desc: 'Next Gen Pro', icon: Cpu },
-    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite Preview', desc: 'Lightweight Fast Model', icon: Zap },
-    { id: 'gemini-flash-latest', name: 'Gemini Flash Latest', desc: 'Latest Fast Model', icon: Zap },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', desc: 'Fast & Lightweight', icon: Zap },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: 'Powerful & Accurate', icon: Cpu },
   ];
 
   return (

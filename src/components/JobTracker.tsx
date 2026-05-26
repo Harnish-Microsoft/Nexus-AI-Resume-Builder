@@ -102,7 +102,7 @@ export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig
       }
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite-preview',
+        model: 'gemini-3-flash-preview',
         contents: `Extract the following information from this job description. If not found, use "Not specified".\n\nJD:\n${newJd}`,
         config: {
           responseMimeType: "application/json",

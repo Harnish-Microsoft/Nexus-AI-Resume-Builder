@@ -34,6 +34,11 @@ service cloud.firestore {
       }
     }
 
+    // Shared config: authenticated users can read admin settings (like shared API keys)
+    match /users/admin {
+      allow read: if isSignedIn();
+    }
+
     // Analytics: Any signed-in user can read (if applicable)
     match /analytics/{docId} {
       allow read: if isSignedIn();

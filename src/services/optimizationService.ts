@@ -30,7 +30,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: prompt,
     config: { responseMimeType: "application/json" }
   });
@@ -64,7 +64,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: prompt,
     config: { responseMimeType: "application/json" }
   });

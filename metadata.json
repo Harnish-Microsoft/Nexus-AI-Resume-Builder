@@ -2,5 +2,5 @@
   "name": "Nexus AI Resume App",
   "description": "Premium AI-powered resume builder with iOS-style liquid glass aesthetics, featuring multi-agent optimization, real-time career tool integration, and high-performance ATS alignment.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

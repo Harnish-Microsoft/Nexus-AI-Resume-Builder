@@ -154,7 +154,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   }
 
   // Fallback Logic definitions
-  const FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite-preview";
+  const FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite";
   
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
@@ -167,10 +167,10 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
       const ai = new GoogleGenAI({ apiKey });
       
-      // Attempt primary model, fallback to gemini-3.1-flash-lite-preview on error
+      // Attempt primary model, fallback to gemini-3.1-flash-lite on error
       const executeWithFallback = async (modelToTry: string): Promise<any> => {
         const isThinkingModel = modelToTry.includes('thinking') || modelToTry.includes(':thinking');
-        const cleanModel = modelToTry.replace(':thinking', '');
+        const cleanModel = modelToTry.replace(':thinking', '').replace('gemini-1.5-pro', 'gemini-3.1-pro-preview').replace('gemini-1.5-flash', 'gemini-3-flash-preview');
               
         const config = {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
@@ -284,9 +284,9 @@ export async function evaluateSuitability(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.1-flash-lite-preview';
+    modelToUse = 'gemini-3.1-flash-lite';
   } else if (!modelToUse) {
-    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite-preview';
+    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
   }
 
   const prompt = `
@@ -365,10 +365,10 @@ export async function optimizeResume(
     if (config.mode === 'production') {
       // In Hybrid mode, fastMode forces Gemini to save costs
       engineToUse = 'gemini';
-      modelToUse = 'gemini-3.1-flash-lite-preview';
+      modelToUse = 'gemini-3.1-flash-lite';
     } else {
       // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite-preview';
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
     }
   }
 
@@ -619,9 +619,9 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         retryCount++;
         
         // Fallback to Flash if Pro fails with rate limit or JSON error
-        if (engineToUse === 'gemini' && currentModel.includes('pro')) {
-          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 1.5 Flash for retry ${retryCount}...`);
-          currentModel = 'gemini-3.1-flash-lite-preview';
+        if (engineToUse === 'gemini' && (currentModel.includes('pro') || currentModel.includes('3.1-pro'))) {
+          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 3 Flash for retry ${retryCount}...`);
+          currentModel = 'gemini-3-flash-preview';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
@@ -759,9 +759,9 @@ export async function analyzeBestAudiences(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.1-pro-preview';
+    modelToUse = 'gemini-3.1-flash-lite';
   } else if (!modelToUse) {
-    modelToUse = 'gemini-3.1-pro-preview';
+    modelToUse = 'gemini-3-flash-preview';
   }
   const prompt = `
     Analyze the following Job Description and Target Role.
@@ -789,6 +789,36 @@ export async function analyzeBestAudiences(
     TARGET ROLE: ${targetRole}
   `;
 
+  const getKeywordFallback = () => {
+    const jd = jobDescription.toLowerCase();
+    const role = targetRole.toLowerCase();
+    const selected: string[] = [];
+
+    if (jd.includes('leadership') || jd.includes('manager') || jd.includes('director') || role.includes('lead') || role.includes('manager')) {
+      selected.push('leadership');
+    }
+    if (jd.includes('microsoft') || jd.includes('azure')) {
+      selected.push('microsoft');
+    }
+    if (jd.includes('cloud') && (jd.includes('architect') || role.includes('architect'))) {
+      selected.push('cloud-architect');
+    }
+    if (jd.includes('consulting') || jd.includes('client')) {
+      selected.push('consulting');
+    }
+    if (role.includes('director')) {
+      selected.push('director-mid');
+    }
+    if (role.includes('cto') || role.includes('vp')) {
+      selected.push('cto-vp');
+    }
+    if (jd.includes('platform')) {
+      selected.push('platform-dir');
+    }
+    
+    return selected.length > 0 ? selected : [targetRole];
+  };
+
   try {
     const data = await callAI(prompt, modelToUse, 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
@@ -796,46 +826,19 @@ export async function analyzeBestAudiences(
     return Array.isArray(parsed) ? parsed : (parsed.audiences || [targetRole]);
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    if (errorMsg.includes("429") || errorMsg.includes("quota")) {
-      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using Target Role as default.");
+    const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
+    
+    if (isQuotaError) {
+      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using keyword-based fallback.");
+      return getKeywordFallback();
     } else {
       console.error("Error analyzing best audiences:", errorMsg);
+      // Even for other errors, try keyword fallback to provide a better UX than just returning targetRole
+      return getKeywordFallback();
     }
-    return [targetRole];
   }
 }
 
-export async function selectBestMasterResume(
-  resumes: MasterResume[],
-  jobDescription: string,
-  config: RouterConfig
-): Promise<string> {
-  const routedConfig = routeTask('rewrite_resume', config);
-  const prompt = `
-    ROLE: Expert Career Coach.
-    TASK: Select the best master resume for a specific job posting from the provided list.
-    
-    JOB DESCRIPTION:
-    ${jobDescription}
-    
-    MASTER RESUMES AVAILABLE:
-    ${resumes.map(r => `ID: ${r.id}, Name: ${r.name}, Description: ${r.description}`).join('\n')}
-    
-    OUTPUT:
-    Return ONLY the ID of the best matching master resume as a JSON string.
-    Example: { "selectedId": "resume_id_here" }
-  `;
-
-  try {
-    const data = await callAI(prompt, 'gemini-3.1-flash-lite-preview', 'gemini', routedConfig.apiKey);
-    const resultText = extractJson(data.result || "");
-    const parsed = JSON.parse(resultText);
-    return parsed.selectedId;
-  } catch (error) {
-    console.error("Error selecting best master resume:", error);
-    return resumes[0]?.id || 'default';
-  }
-}
 
 
 
@@ -1068,13 +1071,59 @@ export async function autoSelectPlayerCoachRole(
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3.1-flash-lite-preview', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, 'gemini-3-flash-preview', 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.isPlayerCoach;
   } catch (error) {
     console.error("Error auto-selecting player-coach role:", error);
     return false;
+  }
+}
+
+export async function selectBestMasterResume(
+  jd: string,
+  masters: MasterResume[],
+  config: RouterConfig
+): Promise<string | null> {
+  if (!masters || masters.length === 0) return null;
+  if (masters.length === 1) return masters[0].id;
+
+  const routedConfig = routeTask('rewrite_resume', config);
+  const apiKey = await getDecryptedKey(routedConfig.apiKey || '');
+  const ai = new GoogleGenAI({ apiKey });
+  const model = ai.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+
+  const mastersSummary = masters.map((m) => {
+    const content = typeof m.data === 'string' ? m.data : JSON.stringify(m.data);
+    return `ID: ${m.id}\nName: ${m.name}\nContext: ${content.substring(0, 1500)}...`;
+  }).join("\n\n---\n\n");
+
+  const prompt = `
+    Analyze the following Job Description and the list of available "Master Resumes".
+    Pick the SINGLE Master Resume ID that is the most relevant and best starting point to optimize for this job.
+    
+    JOB DESCRIPTION:
+    ${jd}
+    
+    MASTER RESUMES:
+    ${mastersSummary}
+    
+    Return ONLY a JSON object: { "selectedId": "the-id", "reason": "why this matches best" }
+  `;
+
+  try {
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json" }
+    });
+    
+    const text = result.response.text();
+    const parsed = JSON.parse(text);
+    return parsed.selectedId;
+  } catch (error) {
+    console.error("Error selecting best master resume:", error);
+    return masters[0].id; // Fallback to first one
   }
 }
 

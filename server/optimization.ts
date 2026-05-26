@@ -107,7 +107,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
 
   // Stage 1: Extraction
   let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3.1-flash-lite-preview";
+  let fallbackModel = "gemini-3-flash-preview";
 
   try {
     try {
@@ -199,7 +199,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
 
   // Stage 1: JD Analysis
   let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3.1-flash-lite-preview";
+  let fallbackModel = "gemini-3-flash-preview";
 
   try {
     try {

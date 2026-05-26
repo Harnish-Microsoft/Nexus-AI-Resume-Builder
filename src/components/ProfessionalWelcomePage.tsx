@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowRight, BarChart3, CheckCircle2, FileText, Key, Lock, LogIn, Mail, Moon, ShieldCheck, Sparkles, Sun, Target, UserPlus } from 'lucide-react';
-import { GeminiAmbientGlow } from './GeminiAmbientGlow';
 
 interface ProfessionalWelcomePageProps {
   onLogin: () => void;
@@ -82,99 +81,98 @@ export function ProfessionalWelcomePage({
   return (
     <div 
       className={`min-h-screen font-sans selection:bg-emerald-500/20 ${surface} relative overflow-hidden z-0`}
+      style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
     >
-      <GeminiAmbientGlow status="idle" intensity="high" />
-      <main className="min-h-screen flex flex-col lg:grid lg:grid-cols-[1fr_0.9fr] relative z-10">
-        <section className="flex flex-col justify-between px-6 py-12 sm:px-10 lg:px-16 lg:py-16">
+      <div className="absolute inset-0 pointer-events-none -z-10" />
+      <div className="liquid-container z-10 opacity-50">
+        <div className="liquid-blob w-[110vw] h-[110vh] bg-blue-500/10 -top-1/2 -left-1/4" style={{ animationDelay: '-2s' }} />
+        <div className="liquid-blob w-[90vw] h-[90vh] bg-pink-500/10 top-1/2 -right-1/4" style={{ animationDelay: '-5s' }} />
+        <div className="liquid-blob w-[100vw] h-[100vh] bg-amber-500/8 -bottom-1/4 left-1/3" style={{ animationDelay: '-8s' }} />
+      </div>
+      <main className="min-h-screen grid lg:grid-cols-[1.08fr_0.92fr] relative z-10">
+        <section className="flex flex-col justify-between px-6 py-6 sm:px-10 lg:px-14 lg:py-10">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className={`h-11 w-11 rounded-2xl flex items-center justify-center shadow-2xl transition-transform hover:scale-110 ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
-                <Sparkles className="w-6 h-6" />
+              <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
+                <Sparkles className="w-4 h-4" />
               </div>
-              <div className="flex flex-col">
-                <p className="text-xl font-black tracking-tight uppercase gemini-glow-text leading-none">Nexus AI</p>
-                <p className={`text-[10px] uppercase tracking-[0.3em] font-black mt-0.5 ${muted}`}>Optima Suite</p>
+              <div>
+                <p className="text-sm font-bold tracking-tight">Nexus AI</p>
+                <p className={`text-xs ${muted}`}>Resume optimization workspace</p>
               </div>
             </div>
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`rounded-2xl border p-3 transition-all active:scale-90 ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'}`}
+              className={`rounded-lg border p-2 transition-colors ${isDarkMode ? 'border-white/10 bg-white/5 text-amber-300 hover:bg-white/10' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'}`}
               title="Toggle theme"
             >
-              {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
 
-          <div className="max-w-2xl py-16 lg:py-0">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className={`inline-flex items-center gap-3 rounded-full border px-5 py-2 text-[10px] sm:text-xs font-black tracking-[0.2em] uppercase ${isDarkMode ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-emerald-200 bg-emerald-50 text-emerald-700'} shadow-sm`}
-            >
-              <div className="flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 animate-pulse" />
-                <span>FAANG-GRADE ENGINE</span>
-              </div>
-              <div className="w-[1px] h-3 bg-current opacity-20" />
-              <span className="opacity-60 hidden sm:inline">v4.0.0 Stable</span>
-            </motion.div>
-            <h1 className="mt-10 text-5xl font-black tracking-tighter sm:text-7xl lg:text-8xl leading-[0.95] lg:leading-[0.9]">
-              Precision <br className="hidden sm:block" />
-              <span className="gemini-glow-text italic">Optimization.</span>
+          <div className="max-w-2xl py-10 sm:py-14 lg:py-20">
+            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Private resume data, role-specific outputs
+            </div>
+            <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+              Tune every resume to the job before you apply.
             </h1>
-            <p className={`mt-8 max-w-xl text-lg leading-relaxed sm:text-2xl font-medium tracking-tight ${isDarkMode ? 'text-white/70' : 'text-slate-600'}`}>
-              The professional standard for AI-driven resume tailoring. Paste a job description and generate high-impact, score-maximized documents in seconds.
+            <p className={`mt-5 max-w-xl text-base leading-7 sm:text-lg ${muted}`}>
+              Paste a job description, compare fit signals, rewrite experience bullets, and export a clean ATS-ready resume from one focused workspace.
             </p>
 
-            <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-6">
+            <div className="mt-8 hidden max-w-xl gap-3 sm:grid sm:grid-cols-3">
               {[
-                { icon: Target, title: 'Precision', body: 'Targeted resume tailoring.', color: 'text-emerald-500' },
-                { icon: BarChart3, title: 'Analysis', body: 'ATS Keyword extraction.', color: 'text-blue-500' },
-                { icon: FileText, title: 'Export', body: 'Professional PDF outputs.', color: isDarkMode ? 'text-purple-400' : 'text-purple-600' },
-              ].map((item, i) => (
-                <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 + (i * 0.1), type: 'spring', damping: 20 }}
-                  key={item.title} 
-                  className={`rounded-3xl border p-6 transition-all hover:translate-y-[-4px] shadow-sm hover:shadow-xl ${panel}`}
-                >
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-5 ${isDarkMode ? 'bg-white/5 shadow-inner' : 'bg-black/5'}`}>
-                    <item.icon className={`w-6 h-6 ${item.color}`} />
-                  </div>
-                  <p className="text-sm font-black uppercase tracking-widest mb-2">{item.title}</p>
-                  <p className={`text-xs font-semibold leading-relaxed ${muted}`}>{item.body}</p>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center gap-6 py-8 border-t border-white/5 mt-auto">
-            <div className="flex -space-x-3">
-              {[1,2,3,4].map(i => (
-                <div key={i} className={`w-10 h-10 rounded-full border-4 ${isDarkMode ? 'border-slate-900 bg-slate-800' : 'border-white bg-slate-100'} flex items-center justify-center text-xs font-black shadow-lg`}>
-                  {String.fromCharCode(64 + i)}
+                { icon: Target, title: 'Target', body: 'Role, company, and job description.', color: 'text-emerald-500' },
+                { icon: BarChart3, title: 'Score', body: 'Keyword and match analysis.', color: 'text-blue-500' },
+                { icon: FileText, title: 'Export', body: 'PDF, DOCX, and JSON versions.', color: isDarkMode ? 'text-white/70' : 'text-slate-700' },
+              ].map((item) => (
+                <div key={item.title} className={`rounded-lg border p-4 ${panel}`}>
+                  <item.icon className={`w-5 h-5 ${item.color}`} />
+                  <p className="mt-3 text-sm font-semibold">{item.title}</p>
+                  <p className={`mt-1 text-xs leading-5 ${muted}`}>{item.body}</p>
                 </div>
               ))}
             </div>
-            <div className="text-center sm:text-left">
-              <p className={`text-xs font-black uppercase tracking-[0.2em] ${isDarkMode ? 'text-emerald-500/80' : 'text-emerald-600'}`}>
-                10k+ Optimized Resumes
-              </p>
-              <p className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/30' : 'text-slate-400'}`}>
-                Syncs across all your devices instantly
-              </p>
-            </div>
           </div>
+
+          <p className={`hidden text-xs sm:block ${isDarkMode ? 'text-white/30' : 'text-slate-400'}`}>Built for repeated applications, not one-off resume decoration.</p>
         </section>
 
-        <section className={`flex items-center justify-center border-t lg:border-t-0 lg:border-l px-6 py-16 sm:px-10 lg:px-20 ${isDarkMode ? 'bg-slate-950/40 border-white/10' : 'bg-white/60 border-slate-200'} backdrop-blur-3xl overflow-y-auto`}>
-           <div className="w-full max-w-md py-8">
-              <motion.div
-                initial={{ opacity: 0, y: 40 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`rounded-[2.5rem] border p-8 sm:p-12 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.4)] ${isDarkMode ? 'bg-slate-950/40 border-white/10' : 'bg-white border-slate-200'}`}
-              >
+        <section className={`flex items-start justify-center border-t px-4 py-6 sm:items-center sm:py-8 lg:border-l lg:border-t-0 lg:px-10 ${isDarkMode ? 'bg-black/10 border-white/10' : 'bg-white/10 border-slate-200'}`}>
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-md"
+          >
+            <div className={`mb-4 hidden rounded-lg border p-3 sm:block ${softPanel}`}>
+              <div className={`flex items-center justify-between border-b pb-3 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
+                <div>
+                  <p className={`text-xs font-semibold uppercase ${isDarkMode ? 'text-white/45' : 'text-slate-500'}`}>Workspace Preview</p>
+                  <p className="text-sm font-bold">Senior Cloud Architect</p>
+                </div>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>Ready</span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {previewRows.map((row) => (
+                  <div key={row.label} className={`rounded-md border p-2 ${getMetricTone(row.tone)}`}>
+                    <p className="text-lg font-bold">{row.value}</p>
+                    <p className="text-[10px] font-semibold uppercase leading-4 opacity-80">{row.label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 space-y-2">
+                {['Leadership bullets aligned to Azure migration scope', 'Quantified cost and reliability outcomes added'].map((item) => (
+                  <div key={item} className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs ${isDarkMode ? 'bg-white/5 text-white/65' : 'bg-white text-slate-600'}`}>
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={`rounded-lg border p-6 shadow-sm ${panel}`}>
               <AnimatePresence mode="wait">
                 {view === 'welcome' ? (
                   <motion.div
@@ -325,8 +323,8 @@ export function ProfessionalWelcomePage({
                   </motion.form>
                 )}
               </AnimatePresence>
-            </motion.div>
-          </div>
+            </div>
+          </motion.div>
         </section>
       </main>
     </div>

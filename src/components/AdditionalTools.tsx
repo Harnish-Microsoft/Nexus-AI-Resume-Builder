@@ -88,7 +88,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     if (!jobDescription) return;
     setIsLoading(true);
     try {
-      const bestId = await selectBestMasterResume(masterResumes, jobDescription, {
+      const bestId = await selectBestMasterResume(jobDescription, masterResumes, {
           mode: 'gemini', geminiConfig: { engine: 'gemini', model: engineConfig.gemini.model, apiKey: engineConfig.gemini.apiKey },
           openaiConfig: { engine: 'openai', model: engineConfig.openai.model, apiKey: engineConfig.openai.apiKey }
       });

@@ -61,7 +61,7 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
 
       const ai = new GoogleGenAI({ apiKey });
       const chat = ai.chats.create({
-        model: 'gemini-3.1-flash-lite-preview',
+        model: 'gemini-3-flash-preview',
         config: {
           systemInstruction: getSystemPrompt(),
           temperature: 0.7,
@@ -135,7 +135,7 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
           <div>
             <h2 className="text-xl font-bold">{title}</h2>
             <div className="flex items-center gap-2">
-              <p className="text-xs opacity-70">Powered by Gemini 3.1 Pro</p>
+              <p className="text-xs opacity-70">Powered by Gemini 1.5 Pro</p>
               <div className={`w-1.5 h-1.5 rounded-full ${
                 status === 'active' ? 'bg-emerald-500 animate-pulse' : 
                 status === 'paused' ? 'bg-amber-500' : 

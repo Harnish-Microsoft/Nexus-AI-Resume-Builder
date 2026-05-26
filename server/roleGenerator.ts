@@ -30,9 +30,9 @@ GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
 2. TENURE & TIMELINE AWARENESS: 
    - For short tenures (under 6 months): Focus on "Rapid Delivery," "Auditing," or "Assessment." CRITICAL: Do NOT alter the job title or append the word "(Contract)" to short roles. Leave the title exactly as provided.
 3. BREVITY & DENSITY: Recruiters skim. Bullet points should be concise and impactful. Prioritize hard skills, tools, and metrics.
-4. COMPREHENSIVE DETAIL: You MUST generate UP TO 5 high-impact bullet points for this role. For modern roles (last 5-8 years), aim for exactly 5 bullets by synthesizing the provided data. For older roles, fewer is acceptable, but do not exceed 5 bullet points total.
+4. COMPREHENSIVE DETAIL: Include all significant achievements provided in the source ROLE DATA. Do not arbitrarily cap the number of bullet points unless necessary for layout (aim for high impact).
 5. CLOUD & INFRASTRUCTURE: Use professional terminology naturally.
-6. NO ARBITRARY COMPRESSION: While limiting to 5 bullets, ensure they represent the core impact and complexity of the role.
+6. NO ARBITRARY COMPRESSION: Older roles should still be accurately represented with multiple bullet points if the source data contains them.
 7. ACCURATE TERMINOLOGY: Include all relevant technical skills and tools (e.g., CI/CD, DevOps, Cloud Platforms) as they appear in the source data.
 8. PLAYER-COACH MODE: ONLY IF mode is 'Player-Coach':
    - BALANCE: 60% Execution (Azure infra), 40% Leadership (Mentoring, Architecture reviews).
@@ -45,12 +45,12 @@ GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
 
 
 OUTPUT SCHEMA:
-Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role (maximum 5). Do not include keys, objects, or markdown formatting outside the array. Example: ["Bullet 1", "Bullet 2", "Bullet 3", "Bullet 4", "Bullet 5"]
+Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role. Do not include keys, objects, or markdown formatting outside the array. Example: ["Bullet 1", "Bullet 2"]
 `;
 
     try {
       const res = await genAI.models.generateContent({
-        model: "gemini-3.1-flash-lite-preview",
+        model: "gemini-3-flash-preview",
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: { responseMimeType: "application/json" }
       });

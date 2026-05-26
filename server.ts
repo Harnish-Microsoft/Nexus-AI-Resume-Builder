@@ -32,18 +32,29 @@ const app = admin.apps.length
   : admin.initializeApp({
       projectId: firebaseConfig.projectId,
     });
-const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Robust Firestore initialization: fallback to default database if specific ID fails or is not provided
+let db: admin.firestore.Firestore;
+try {
+  const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "") 
+    ? firebaseConfig.firestoreDatabaseId 
+    : undefined;
+  db = getFirestore(app, dbId);
+} catch (e) {
+  console.warn("[Server] Failed to initialize Firestore with specified database ID, falling back to default.");
+  db = getFirestore(app);
+}
 
 // Helper to get API keys from Firestore securely
 async function getApiKeys(idToken: string) {
-    if (idToken === "SYSTEM_PIPELINE") return { keys: null, uid: "SYSTEM" };
+    if (idToken === "SYSTEM_PIPELINE") return null;
     try {
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
       const doc = await db.collection("users").doc(uid).get();
       
       if (!doc.exists) {
-        return { keys: null, uid }; // Return null instead of throwing
+        return null; // Return null instead of throwing
       }
       
       let data = doc.data();
@@ -59,22 +70,22 @@ async function getApiKeys(idToken: string) {
       }
 
       if (!data || !data.encryptedApiKey) {
-        return { keys: null, uid }; // Return null instead of throwing
+        return null; // Return null instead of throwing
       }
 
       // Decrypt the keys before returning
       try {
         const decrypted = decrypt(data.encryptedApiKey);
         try {
-          return { keys: JSON.parse(decrypted), uid };
+          return JSON.parse(decrypted);
         } catch (e) {
           // Fallback for older single-key format
-          return { keys: { gemini: decrypted }, uid };
+          return { gemini: decrypted };
         }
       } catch (error: any) {
         if (error.message.includes("DECRYPTION_FAILED")) {
           console.warn(`[Server] Decryption failed for user ${uid}. Treating as no key found.`);
-          return { keys: null, uid };
+          return null;
         }
         throw error;
       }
@@ -87,29 +98,10 @@ async function getApiKeys(idToken: string) {
 // Function to log usage to Firestore
 async function logUsage(log: UsageLog) {
   try {
-    // 1. Add to general analytics
     await db.collection("analytics").add({
       ...log,
       timestamp: FieldValue.serverTimestamp()
     });
-
-    // 2. Add to user-specific collection
-    if (log.userId && log.userId !== "anonymous" && log.userId !== "SYSTEM") {
-       const month = new Date(log.timestamp || Date.now()).toISOString().substring(0, 7);
-       const usageRef = db.collection(`users/${log.userId}/tokenUsage`).doc(month);
-       
-       const modelField = log.model.toLowerCase().includes('gemini') ? 'gemini' : 'openai';
-       
-       await usageRef.set({
-           userId: log.userId,
-           month,
-           [modelField]: {
-               input: FieldValue.increment(log.inputTokens),
-               output: FieldValue.increment(log.outputTokens)
-           },
-           updatedAt: FieldValue.serverTimestamp()
-       }, { merge: true });
-    }
   } catch (error) {
     console.error("Error logging usage to Firestore:", error);
   }
@@ -245,7 +237,8 @@ async function startServer() {
     const folderId = process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID;
 
     if (!serviceAccountKey) {
-      throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY is not set. Please add it to your environment variables.");
+      console.warn("GOOGLE_SERVICE_ACCOUNT_KEY is not set. Drive fallback to Service Account will be unavailable.");
+      return null;
     }
 
     if (folderId && (folderId.startsWith('{') || folderId.includes('service_account'))) {
@@ -383,7 +376,9 @@ async function startServer() {
     const accessToken = req.query.accessToken as string | undefined;
     try {
       const drive = getDriveClient(accessToken);
-      
+      if (!drive) {
+        return res.status(401).json({ error: "Google Drive is not connected. Please connect via OAuth in settings." });
+      }
       const response = await drive.files.list({
         // List folders that are not trashed
         q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
@@ -417,6 +412,9 @@ async function startServer() {
     const accessToken = req.query.accessToken as string | undefined;
     try {
       const drive = getDriveClient(accessToken);
+      if (!drive) {
+        return res.status(401).json({ error: "Google Drive is not connected. Please connect via OAuth in settings." });
+      }
       const folderId = process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID;
       
       const query = folderId 
@@ -608,30 +606,6 @@ async function startServer() {
     res.json({ success: true, message: "Cache cleared successfully" });
   });
 
-  app.get("/api/user/token-usage", async (req, res) => {
-    const authHeader = req.header('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    const idToken = authHeader.split('Bearer ')[1];
-    
-    try {
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        const uid = decodedToken.uid;
-        
-        const snapshot = await db.collection(`users/${uid}/tokenUsage`).get();
-        const usage = snapshot.docs.map(doc => ({
-            month: doc.id,
-            ...doc.data()
-        }));
-        
-        res.json(usage);
-    } catch (error) {
-        console.error("Error fetching user token usage:", error);
-        res.status(500).json({ error: "Failed to fetch user token usage" });
-    }
-  });
-
   // Admin Analytics Endpoints
   app.get("/api/admin/stats", async (req, res) => {
     try {
@@ -745,13 +719,13 @@ async function startServer() {
 
     try {
       // 1. Fetch keys securely from Firestore
-      const { keys: userKeys, uid: userId } = await getApiKeys(idToken);
+      const keys = await getApiKeys(idToken);
       let geminiKey = process.env.GEMINI_API_KEY;
       let openaiKey = "";
       
-      if (userKeys) {
-        geminiKey = userKeys.gemini || geminiKey;
-        openaiKey = userKeys.openai || "";
+      if (keys) {
+        geminiKey = keys.gemini || geminiKey;
+        openaiKey = keys.openai || "";
       } else {
         console.warn("User has no API key configured. Using system key.");
       }
@@ -781,7 +755,7 @@ async function startServer() {
       if (cachedResult) {
         // Log cache hit
         logUsage({
-          userId: userId,
+          userId: "anonymous",
           model: "cache",
           inputTokens: 0,
           outputTokens: 0,
@@ -807,7 +781,7 @@ async function startServer() {
 
       const resumeData = resumeExtraction?.data;
       const jdKeywords = jdExtraction?.data || [];
-      const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3.1-flash-lite-preview";
+      const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3-flash-preview";
       
       const geminiUsage = {
         promptTokenCount: (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0),
@@ -860,7 +834,7 @@ async function startServer() {
         
         5. BREVITY & DENSITY: Bullet points MUST be dense and achievement-oriented (recommended length: 15-20 words). Prioritize hard skills, tools, and scale metrics over verbose filler jargon.
         
-        6. RECENT ROLE EXPANSION (Post-2018) - ABSOLUTE REQUIREMENT: You MUST output EXACTLY 5 to 6 bullet points for EVERY single role that occurred after 2018. DO NOT merge, combine, or consolidate the original bullets, even if the role was only a few months long. If the input has 5 bullets for a recent role, you must rewrite and output exactly 4 or 5 bullets. No exceptions.
+        6. RECENT ROLE EXPANSION (Post-2018) - ABSOLUTE REQUIREMENT: You MUST output EXACTLY 4 to 5 bullet points for EVERY single role that occurred after 2018. DO NOT merge, combine, or consolidate the original bullets, even if the role was only a few months long. If the input has 5 bullets for a recent role, you must rewrite and output exactly 4 or 5 bullets. No exceptions.
         
         7. OLDER ROLE COMPRESSION (Pre-2018): Provide EXACTLY one (1) bullet point maximum for roles and projects that occurred before 2018. Focus on foundational infrastructure experience.
         
@@ -937,7 +911,7 @@ async function startServer() {
           const genOutput = chatCompletion.usage?.completion_tokens || 0;
 
           logUsage({
-            userId: userId,
+            userId: "anonymous",
             model: usedModel,
             inputTokens: genInput,
             outputTokens: genOutput,
@@ -950,7 +924,7 @@ async function startServer() {
 
           // Log Gemini Extraction
           logUsage({
-            userId: userId,
+            userId: "anonymous",
             model: extractionModelUsed,
             inputTokens: geminiUsage.promptTokenCount,
             outputTokens: geminiUsage.candidatesTokenCount,
@@ -976,7 +950,7 @@ async function startServer() {
         } catch (openaiError: any) {
           console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash...", openaiError.message);
           // CRITICAL FALLBACK: If OpenAI (Premium) fails, use the cheap Gemini we have
-          const fallbackModelName = "gemini-3.1-flash-lite-preview";
+          const fallbackModelName = "gemini-3-flash-preview";
           const genAI = new GoogleGenAI({ apiKey: geminiKey });
           
           const fallbackResult = await genAI.models.generateContent({
@@ -1105,31 +1079,6 @@ async function startServer() {
         console.log("[Pipeline] Step 4: Multi-Agent Review...");
         const agentFeedback = await runAgents(finalResult, geminiKey);
 
-        logUsage({
-          userId: userId,
-          model: usedModel,
-          inputTokens: metaResponse.usageMetadata?.promptTokenCount || 0,
-          outputTokens: metaResponse.usageMetadata?.candidatesTokenCount || 0,
-          totalTokens: metaResponse.usageMetadata?.totalTokenCount || 0,
-          cacheHit: false,
-          endpoint: "/api/v2/optimize",
-          timestamp: Date.now(),
-          cost: calculateCost(usedModel, metaResponse.usageMetadata?.promptTokenCount || 0, metaResponse.usageMetadata?.candidatesTokenCount || 0)
-        });
-        
-        // Log Gemini Extraction
-        logUsage({
-          userId: userId,
-          model: extractionModelUsed,
-          inputTokens: geminiUsage.promptTokenCount,
-          outputTokens: geminiUsage.candidatesTokenCount,
-          totalTokens: geminiUsage.totalTokenCount,
-          cacheHit: false,
-          endpoint: "/api/v2/optimize",
-          timestamp: Date.now(),
-          cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
-        });
-
         result = {
           result: JSON.stringify(finalResult),
           agentFeedback,
@@ -1192,10 +1141,10 @@ async function startServer() {
       // ===============================
       // 1. GET KEYS
       // ===============================
-      const { keys: userKeys, uid: userId } = await getApiKeys(idToken);
+      const keys = await getApiKeys(idToken);
       let geminiKey = process.env.GEMINI_API_KEY;
-      if (userKeys && userKeys.gemini) {
-        geminiKey = userKeys.gemini;
+      if (keys && keys.gemini) {
+        geminiKey = keys.gemini;
       } else {
         console.warn("User has no API key configured. Using system key.");
       }
@@ -1243,7 +1192,7 @@ async function startServer() {
       // ===============================
       // 6. SAVE MEMORY
       // ===============================
-      await saveResumeVersion(db, userId || "anonymous", {
+      await saveResumeVersion(db, "anonymous", {
         input: resumeData,
         output: cleaned,
         score: totalScore
