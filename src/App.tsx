@@ -327,11 +327,7 @@ export default function App() {
           });
           if (docSnap && docSnap.exists()) {
             const data = docSnap.data();
-            if (!data.hasAcceptedTerms) {
-              setShowTermsModal(true);
-            } else {
-              setShowTermsModal(false);
-            }
+            setShowTermsModal(false);
             if (data.masterResumes) {
               setMasterResumes(data.masterResumes);
             } else if (data.masterResume) {
@@ -366,7 +362,7 @@ export default function App() {
               setIsDriveConnected(true);
             }
           } else {
-            setShowTermsModal(true);
+            setShowTermsModal(false);
           }
         } catch (err) {
           console.error("Error fetching profile:", err);

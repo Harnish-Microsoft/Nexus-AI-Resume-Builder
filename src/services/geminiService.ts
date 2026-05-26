@@ -470,7 +470,8 @@ ${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Ship
 ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery" and "Managed Services".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
 
 STRICT PROFESSIONAL GUIDELINES:
-- SCANNABILITY: Optimize for quick reading. Use clear bullet points.
+- SCANNABILITY: Optimize for quick reading. Each bullet point MUST be a single, concise line.
+- BULLET POINT CONSTRAINTS: For the first two professional roles, use a maximum of 5 bullet points each. For the third professional role, use exactly 4 bullet points.
 - ACHIEVEMENT FOCUS: Every bullet point should highlight an achievement or leadership impact (mentoring, team scaling, cross-functional driving). 
 - METRICS & OUTCOMES: Achievement bullets should include metrics (%, $, time, scale) where possible. If metrics are unavailable, include clear leadership impact.
 - ACTION VERBS: Start every bullet with high-impact verbs: Led, Developed, Managed, Optimized, Scaled, Spearheaded.
