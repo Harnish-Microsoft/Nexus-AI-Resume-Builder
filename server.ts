@@ -47,7 +47,7 @@ try {
 
 // Helper to get API keys from Firestore securely
 async function getApiKeys(idToken: string) {
-    if (idToken === "SYSTEM_PIPELINE") return null;
+    if (idToken === "SYSTEM_PIPELINE" || !idToken || idToken === "undefined" || idToken === "null") return null;
     try {
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
@@ -87,11 +87,11 @@ async function getApiKeys(idToken: string) {
           console.warn(`[Server] Decryption failed for user ${uid}. Treating as no key found.`);
           return null;
         }
-        throw error;
+        return null; // Fallback to null on decryption error
       }
     } catch (error) {
-      console.error("Error fetching API keys:", error);
-      throw new Error("UNAUTHORIZED_OR_MISSING_KEYS");
+      console.warn("[Server] Token verification or key fetch failed, falling back to system keys:", error instanceof Error ? error.message : String(error));
+      return null;
     }
 }
 
@@ -832,7 +832,7 @@ async function startServer() {
         
         4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA. Do not "suggest" certifications if the user doesn't have them.
         
-        5. BREVITY & DENSITY: Bullet points MUST be dense and achievement-oriented (recommended length: 15-20 words). Prioritize hard skills, tools, and scale metrics over verbose filler jargon.
+        5. BREVITY & DENSITY (FAANG STANDARD): Bullet points MUST be strictly one-liners. Prioritize hard skills, tools, and scale metrics over verbose filler jargon. Any bullet exceeding one line will be penalized.
         
         6. RECENT ROLE EXPANSION (Post-2018) - ABSOLUTE REQUIREMENT: You MUST output EXACTLY 4 to 5 bullet points for EVERY single role that occurred after 2018. DO NOT merge, combine, or consolidate the original bullets, even if the role was only a few months long. If the input has 5 bullets for a recent role, you must rewrite and output exactly 4 or 5 bullets. No exceptions.
         
@@ -948,9 +948,9 @@ async function startServer() {
             _model: usedModel
           };
         } catch (openaiError: any) {
-          console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash...", openaiError.message);
+          console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash Lite...", openaiError.message);
           // CRITICAL FALLBACK: If OpenAI (Premium) fails, use the cheap Gemini we have
-          const fallbackModelName = "gemini-3-flash-preview";
+          const fallbackModelName = "gemini-3.1-flash-lite";
           const genAI = new GoogleGenAI({ apiKey: geminiKey });
           
           const fallbackResult = await genAI.models.generateContent({
@@ -1063,7 +1063,10 @@ async function startServer() {
           )
         ]);
 
-        const metaText = metaResponse.text || "{}";
+        const metaText = metaResponse.text || "";
+        if (!metaText || metaText.length < 50) {
+          throw new Error("Meta generation returned empty or invalid response.");
+        }
         const metaData = JSON.parse(metaText);
         
         // 3. Deduplicate and Score
@@ -1286,34 +1289,32 @@ async function startServer() {
             <meta charset="UTF-8">
             <title>${title}</title>
             <style>
-              /* Reset and Base Styles */
               * { box-sizing: border-box; }
+              
               @page { 
                 size: A4; 
-                margin: 0; /* No margins to allow fixed-height pages to fit */
+                margin: 12mm 0; /* Allows native, perfect page breaks */
               }
+              
               html, body {
                 margin: 0;
                 padding: 0;
                 width: 210mm;
+                height: auto !important;
                 background: white;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
               }
-              /* Ensure the resume container takes full width */
+              
               #resume-container, .resume-page {
                 width: 100% !important;
                 margin: 0 !important;
                 box-shadow: none !important;
                 border: none !important;
               }
-              /* Inject User Styles */
+              
               ${css || ''}
               ${fonts || ''}
-                h1, h2, h3, h4 { margin-top: 6px !important; margin-bottom: 2px !important; }
-                ul { margin-top: 2px !important; margin-bottom: 6px !important; padding-left: 20px !important; }
-                li { margin-bottom: 2px !important; }
-                .experience-item { margin-bottom: 8px !important; page-break-inside: avoid; }
             </style>
           </head>
           <body>

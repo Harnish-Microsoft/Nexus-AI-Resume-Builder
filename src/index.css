@@ -347,8 +347,10 @@
     gap: 10px;
     align-items: flex-start;
     margin-bottom: 4px;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
-
+ 
   .resume-bullet-dot {
     width: 4px;
     height: 4px;
@@ -356,11 +358,12 @@
     background-color: #000000;
     border-radius: 50%;
     flex-shrink: 0;
-    margin-top: 6px; /* Align with first line of text */
+    margin-top: 7px; /* Aligns dot perfectly with multi-line text */
   }
-
+ 
   .resume-bullet-text {
     flex: 1;
+    min-width: 0; /* Prevents flex container blowout */
   }
 
   .resume-list {
@@ -390,17 +393,23 @@
     color: #000000;
   }
 
+  /* Fix the print engine rendering */
   @media print {
     .resume-page {
       overflow: visible !important;
       height: auto !important;
-      min-height: 297mm !important;
-      display: block !important; /* Flex can sometimes mess up print pagination */
+      min-height: auto !important;
+      display: block !important; /* Kills flexbox bugs in print */
     }
+    
+    /* Allow the overall section to break naturally to fill Page 1 */
     .resume-section {
-      /* Allow sections to break across pages */
+      page-break-inside: auto;
+      break-inside: auto;
     }
-    .resume-item {
+
+    /* Protect individual job roles from splitting across pages */
+    .experience-item {
       page-break-inside: avoid;
       break-inside: avoid;
     }

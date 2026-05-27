@@ -23,46 +23,53 @@ export interface RouterConfig {
 }
 
 export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
-  if (config.mode !== 'production') {
-    // If not in production mode, use the explicitly selected engine
-    return config.mode === 'gemini' ? config.geminiConfig : config.openaiConfig;
-  }
-
-  // Production Mode Routing Logic
   let selectedEngine: EngineType;
 
-  switch (task) {
-    // Tasks routed to Gemini (Cost-effective & High Performance)
-    case 'parse_resume':
-    case 'extract_job_description':
-    case 'extract_skills':
-    case 'ats_scoring':
-    case 'evaluate_suitability':
-    case 'multi_audience':
-    case 'interview_questions':
-    case 'recruiter_message':
-    case 'optimize_headline':
-    case 'optimize_about':
-    case 'rewrite_resume':
-    case 'cover_letter':
-      selectedEngine = 'gemini';
-      break;
+  if (config.mode === 'gemini' || config.mode === 'openai') {
+    selectedEngine = config.mode;
+  } else {
+    // Production Mode Routing Logic
+    switch (task) {
+      // Tasks routed to Gemini (Cost-effective & High Performance)
+      case 'parse_resume':
+      case 'extract_job_description':
+      case 'extract_skills':
+      case 'ats_scoring':
+      case 'evaluate_suitability':
+      case 'multi_audience':
+      case 'interview_questions':
+      case 'recruiter_message':
+      case 'optimize_headline':
+      case 'optimize_about':
+      case 'rewrite_resume':
+      case 'cover_letter':
+        selectedEngine = 'gemini';
+        break;
 
-    // Tasks routed to OpenAI (Premium Quality & Complex Reasoning)
-    case 'recruiter_simulation':
-    case 'linkedin_analysis':
-      selectedEngine = 'openai';
-      break;
-      
-    default:
-      // Fallback to Gemini if task is unknown
-      selectedEngine = 'gemini';
+      // Tasks routed to OpenAI (Premium Quality & Complex Reasoning)
+      case 'recruiter_simulation':
+      case 'linkedin_analysis':
+        selectedEngine = 'openai';
+        break;
+        
+      default:
+        // Fallback to Gemini if task is unknown
+        selectedEngine = 'gemini';
+    }
   }
 
   const engineConfig = selectedEngine === 'gemini' ? config.geminiConfig : config.openaiConfig;
   
+  // USER REQUIREMENT: Use Gemini 3.1 Flash Lite for all tasks EXCEPT resume optimization (rewrite_resume)
+  if (selectedEngine === 'gemini' && task !== 'rewrite_resume') {
+    return {
+      ...engineConfig,
+      model: 'gemini-3.1-flash-lite'
+    };
+  }
+
   // Log the routing decision
-  console.log(`[Production Mode] Task: ${task} → ${selectedEngine === 'gemini' ? 'Gemini' : 'OpenAI'} (${engineConfig.model})`);
+  console.log(`[Router] Task: ${task} → Engine: ${selectedEngine} (${engineConfig.model})`);
   
   return engineConfig;
 }

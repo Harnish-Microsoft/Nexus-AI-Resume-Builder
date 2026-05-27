@@ -18,6 +18,7 @@ import {
   LayoutGrid,
   Cpu,
   BarChart3,
+  Loader2,
   Info,
   Moon,
   Sun,
@@ -113,7 +114,7 @@ const LoadingSpinner = () => (
   </div>
 );
 
-type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic';
+type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic' | 'Player-Coach';
 
 import { CommandPalette } from './components/CommandPalette';
 
@@ -1317,6 +1318,37 @@ export default function App() {
   const resumePreviewRef = useRef<HTMLDivElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
+  const [printScale, setPrintScale] = useState(1);
+
+  // Add this effect to calculate the 2-page fit
+  useEffect(() => {
+    const calculateFit = () => {
+      const resumeEl = document.getElementById('resume-container');
+      if (!resumeEl) return;
+
+      // Temporarily remove any scale to measure true physical height
+      resumeEl.style.transform = 'none';
+      resumeEl.style.width = '100%';
+
+      // A4 height at 96 DPI is ~1123px. Two pages = 2246px.
+      // Subtract 12mm margins top/bottom per page (~180px total).
+      // Safe max height for exactly 2 pages is roughly 2050px.
+      const MAX_SAFE_HEIGHT = 2050;
+      const actualHeight = resumeEl.scrollHeight;
+
+      if (actualHeight > MAX_SAFE_HEIGHT) {
+        // Calculate how much we need to shrink it to fit
+        const newScale = MAX_SAFE_HEIGHT / actualHeight;
+        setPrintScale(newScale);
+      } else {
+        setPrintScale(1);
+      }
+    };
+
+    // Run calculation after DOM updates
+    const timeoutId = setTimeout(calculateFit, 1000); // 1s to be safer
+    return () => clearTimeout(timeoutId);
+  }, [resumeText, results, activeAudience, previewMode, zoom]);
   const [contentHeight, setContentHeight] = useState(1123);
   const [isPiiMasked, setIsPiiMasked] = useState(false);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
@@ -1349,6 +1381,15 @@ export default function App() {
         })
         .join('\n');
 
+      const scaleCSS = `
+        #resume-container {
+          transform: scale(${printScale});
+          transform-origin: top left;
+          /* Increase width to compensate for the scale down, ensuring it fills the page */
+          width: calc(100% / ${printScale}) !important;
+        }
+      `;
+
       const role = targetRole || 'Resume';
       const company = companyName ? `-${companyName}` : '';
       const pdfTitle = `${role}${company}_Harnish Jariwala`;
@@ -1358,7 +1399,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           html: element.outerHTML,
-          css: allStyles,
+          css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
           fonts: customFonts.map(font => `
             @font-face {
@@ -1910,7 +1951,7 @@ export default function App() {
             setResumeText(masterData);
           }
         }
-        showToast(`Using Profile: ${selectedMasterName}`, 'success', 5000);
+        showToast(`Using Profile: ${selectedMasterName}`, 'success');
       } catch (err) {
         console.error("[Nexus AI] Master selection failed, proceeding with default base:", err);
       }
@@ -2362,6 +2403,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         })
         .join('\n');
 
+      const scaleCSS = `
+        #resume-container {
+          transform: scale(${printScale});
+          transform-origin: top left;
+          /* Increase width to compensate for the scale down, ensuring it fills the page */
+          width: calc(100% / ${printScale}) !important;
+        }
+      `;
+
       const role = targetRole || 'Resume';
       const company = companyName ? `-${companyName}` : '';
       const pdfTitle = `${role}${company}_Harnish Jariwala`;
@@ -2373,7 +2423,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         },
         body: JSON.stringify({
           html: element.outerHTML,
-          css: allStyles,
+          css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
           fonts: customFonts.map(font => `
             @font-face {
@@ -2780,20 +2830,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               </h2>
             )}
             {allExp.map((exp: any, i: number) => (
-              <div key={i} className="mb-3 last:mb-0">
+              <div key={i} className="experience-item mb-3 last:mb-0">
                 <div className="flex justify-between font-bold items-baseline mb-0.5">
                   <span style={{ fontSize: '13px' }}>{exp.role}</span>
                   <span className="opacity-70 font-medium italic" style={{ fontSize: '11px' }}>{exp.duration}</span>
                 </div>
                 <div className="font-semibold mb-2 text-emerald-700" style={{ fontSize: '12px' }}>{exp.company}</div>
-                <div className="space-y-1">
+                <ul className="space-y-1 list-none p-0 m-0">
                   {Array.isArray(exp.bullets) && exp.bullets.map((b: string, bi: number) => (
-                    <div key={bi} className="resume-bullet-item">
+                    <li key={bi} className="resume-bullet-item flex">
                       <div className="resume-bullet-dot" />
                       <span className="resume-bullet-text opacity-90 leading-relaxed">{b}</span>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               </div>
             ))}
           </div>
@@ -4652,23 +4702,16 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                             >
                           {previewMode === 'standard' ? (
-                            <>
-                              {/* Page 1 */}
-                              <div className={`resume-page ${isDownloading ? 'page-break-after-always' : 'mb-8'}`}>
-                                {renderSection('header')}
-                                {renderSection('summary')}
-                                {renderSection('skills')}
-                                {renderSection('certifications')}
-                                {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(0, 3))}
-                              </div>
-
-                              {/* Page 2 */}
-                              <div className="resume-page">
-                                {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(3), true)}
-                                {renderSection('projects')}
-                                {renderSection('education')}
-                              </div>
-                            </>
+                            <div className="resume-page" style={{ paddingBottom: isDownloading ? '0' : '2rem' }}>
+                              {renderSection('header')}
+                              {renderSection('summary')}
+                              {renderSection('skills')}
+                              {renderSection('certifications')}
+                              {/* Pass the FULL array, do not slice. Let the print engine handle pagination */}
+                              {renderSection('experience', results[activeAudience!]?.experience || data.experience)}
+                              {renderSection('projects')}
+                              {renderSection('education')}
+                            </div>
                           ) : (
                             renderSimplifiedResume()
                           )}

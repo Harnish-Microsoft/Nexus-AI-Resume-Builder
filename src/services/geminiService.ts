@@ -193,13 +193,25 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
             }
           };
         } catch (innerError: any) {
-          const errorMsg = innerError?.message?.toLowerCase() || "";
-          const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
+          const errorMsg = String(innerError?.message || innerError).toLowerCase();
+          const isQuotaError = errorMsg.includes("quota") || 
+                               errorMsg.includes("429") || 
+                               errorMsg.includes("limit") || 
+                               errorMsg.includes("exhausted") ||
+                               errorMsg.includes("resource_exhausted") ||
+                               errorMsg.includes("rate_limit");
           
           if (isQuotaError && modelToTry !== FALLBACK_GEMINI_MODEL) {
             console.warn(`[Gemini Service] Quota reached for ${cleanModel}. Falling back to ${FALLBACK_GEMINI_MODEL}...`);
             return await executeWithFallback(FALLBACK_GEMINI_MODEL);
           }
+          
+          // Broad fallback for ANY error on a Pro model to avoid "blank resume"
+          if (modelToTry !== FALLBACK_GEMINI_MODEL && (modelToTry.includes('pro') || modelToTry.includes('thinking'))) {
+            console.warn(`[Gemini Service] Error hit on Pro model: ${errorMsg}. Attempting one-time fallback to ${FALLBACK_GEMINI_MODEL}...`);
+            return await executeWithFallback(FALLBACK_GEMINI_MODEL);
+          }
+          
           throw innerError;
         }
       };
@@ -286,7 +298,7 @@ export async function evaluateSuitability(
   if (fastMode && routedConfig.engine === 'gemini') {
     modelToUse = 'gemini-3.1-flash-lite';
   } else if (!modelToUse) {
-    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
+    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite';
   }
 
   const prompt = `
@@ -342,7 +354,7 @@ export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
   targetRole: string,
-  mode: "conservative" | "balanced" | "aggressive" | "Player-Coach",
+  mode: "conservative" | "balanced" | "aggressive" | "Player-Coach" | "automatic",
   audience: string,
   config: RouterConfig,
   linkedInUrl?: string,
@@ -368,7 +380,7 @@ export async function optimizeResume(
       modelToUse = 'gemini-3.1-flash-lite';
     } else {
       // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite';
     }
   }
 
@@ -539,10 +551,11 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
       // Use the potentially overridden engine and model
       const currentApiKey = engineToUse === 'openai' ? config.openaiConfig.apiKey : config.geminiConfig.apiKey;
       const data = await callAI(prompt, currentModel, engineToUse, currentApiKey);
-      const resultText = extractJson(data.result || "");
+      const rawResult = data.result || "";
+      const resultText = extractJson(rawResult);
 
-      if (!resultText) {
-        throw new Error(`No response from ${engineToUse}`);
+      if (!resultText || resultText.length < 100) {
+        throw new Error(`Empty or malformed response from ${engineToUse}. (Length: ${resultText.length})`);
       }
 
       try {
@@ -608,12 +621,16 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         throw new Error(`JSON_PARSING_ERROR: The ${engineToUse} engine returned an invalid response format.`);
       }
     } catch (error: any) {
-      const errorString = error?.message || String(error);
+      const errorString = String(error?.message || error).toLowerCase();
       const isRateLimit = errorString.includes("429") || 
-                         errorString.includes("RESOURCE_EXHAUSTED") ||
+                         errorString.includes("resource_exhausted") ||
                          errorString.includes("quota") ||
+                         errorString.includes("exhausted") ||
+                         errorString.includes("limit") ||
                          errorString.includes("rate limit");
-      const isJsonError = errorString.includes("JSON_PARSING_ERROR") || 
+      const isJsonError = errorString.includes("json_parsing_error") || 
+                          errorString.includes("empty or malformed") ||
+                          errorString.includes("no response") ||
                           errorString.includes("invalid response format");
       
       if ((isRateLimit || isJsonError) && retryCount < maxRetries) {
@@ -621,8 +638,8 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         
         // Fallback to Flash if Pro fails with rate limit or JSON error
         if (engineToUse === 'gemini' && (currentModel.includes('pro') || currentModel.includes('3.1-pro'))) {
-          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 3 Flash for retry ${retryCount}...`);
-          currentModel = 'gemini-3-flash-preview';
+          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 3.1 Flash Lite for retry ${retryCount}...`);
+          currentModel = 'gemini-3.1-flash-lite';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
@@ -762,7 +779,7 @@ export async function analyzeBestAudiences(
   if (fastMode && routedConfig.engine === 'gemini') {
     modelToUse = 'gemini-3.1-flash-lite';
   } else if (!modelToUse) {
-    modelToUse = 'gemini-3-flash-preview';
+    modelToUse = 'gemini-3.1-flash-lite';
   }
   const prompt = `
     Analyze the following Job Description and Target Role.
@@ -1072,7 +1089,7 @@ export async function autoSelectPlayerCoachRole(
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3-flash-preview', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, 'gemini-3.1-flash-lite', 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.isPlayerCoach;

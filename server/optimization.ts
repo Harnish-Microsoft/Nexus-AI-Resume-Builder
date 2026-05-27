@@ -106,8 +106,8 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   `;
 
   // Stage 1: Extraction
-  let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3-flash-preview";
+  let primaryModel = "gemini-3.1-flash-lite"; // Use Lite for extraction to save Pro quota
+  let fallbackModel = "gemini-3.1-flash-lite";
 
   try {
     try {
@@ -198,8 +198,8 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   `;
 
   // Stage 1: JD Analysis
-  let primaryModel = "gemini-3.1-pro-preview";
-  let fallbackModel = "gemini-3-flash-preview";
+  let primaryModel = "gemini-3.1-flash-lite"; // Use Lite for JD analysis to save Pro quota
+  let fallbackModel = "gemini-3.1-flash-lite";
 
   try {
     try {

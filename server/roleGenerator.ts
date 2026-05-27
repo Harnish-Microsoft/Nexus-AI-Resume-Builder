@@ -48,39 +48,58 @@ OUTPUT SCHEMA:
 Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role. Do not include keys, objects, or markdown formatting outside the array. Example: ["Bullet 1", "Bullet 2"]
 `;
 
-    try {
-      const res = await genAI.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json" }
-      });
-
-      const text = res.text || "[]";
-      let bullets = [];
+    const maxRetries = 3;
+    let retryCount = 0;
+    
+    while (retryCount < maxRetries) {
       try {
-        const parsed = JSON.parse(text);
-        bullets = Array.isArray(parsed) ? parsed : (parsed.bullets || []);
-      } catch (e) {
-        console.error(`[RoleGen] JSON Parse error for ${role.id || index}:`, e);
-      }
+        const res = await genAI.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { responseMimeType: "application/json" }
+        });
 
-      return {
-        id: role.id || `role_${index + 1}`,
-        role: role.role,
-        company: role.company,
-        duration: role.duration,
-        bullets: bullets
-      };
-    } catch (err) {
-      console.error(`[RoleGen] Failed for ${role.id || index}:`, err);
-      return {
-        id: role.id || `role_${index + 1}`,
-        role: role.role,
-        company: role.company,
-        duration: role.duration,
-        bullets: role.original_bullets || []
-      };
+        const text = res.text || "[]";
+        let bullets = [];
+        try {
+          const parsed = JSON.parse(text);
+          bullets = Array.isArray(parsed) ? parsed : (parsed.bullets || []);
+        } catch (e) {
+          console.error(`[RoleGen] JSON Parse error for ${role.id || index}:`, e);
+          throw e; // Trigger retry
+        }
+
+        return {
+          id: role.id || `role_${index + 1}`,
+          role: role.role,
+          company: role.company,
+          duration: role.duration,
+          bullets: bullets
+        };
+      } catch (err) {
+        retryCount++;
+        console.warn(`[RoleGen] Failed for ${role.id || index}. Retry ${retryCount}/${maxRetries}...`, err);
+        if (retryCount >= maxRetries) {
+          return {
+            id: role.id || `role_${index + 1}`,
+            role: role.role,
+            company: role.company,
+            duration: role.duration,
+            bullets: role.original_bullets || []
+          };
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+      }
     }
+    
+    // Fallback if loop ends (should not happen due to return in loop)
+    return {
+      id: role.id || `role_${index + 1}`,
+      role: role.role,
+      company: role.company,
+      duration: role.duration,
+      bullets: role.original_bullets || []
+    };
   });
 
   return Promise.all(promises);
