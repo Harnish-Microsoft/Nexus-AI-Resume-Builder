@@ -75,38 +75,47 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   const trimmedResume = trimInput(resumeText, 15000);
 
   const prompt = `
-    Extract essential professional data from this resume. 
-    Focus on high-impact achievements and core skills.
-    Return ONLY a JSON object:
+    Extract ALL professional data from this resume with absolute fidelity. 
+    Return ONLY a JSON object ensuring NO content is skipped or summarized in this stage.
+    
+    REQUIRED SCHEMA:
     {
       "personal_info": { "name": "", "location": "", "email": "", "phone": "", "linkedin": "" },
-      "summary": "Brief professional overview",
-      "skills": ["Skill 1", "Skill 2"],
+      "summary": "Full summary text",
+      "skills": ["Skill 1", "Skill 2", ...],
       "experience": [
         {
           "role": "Job Title",
           "company": "Company Name",
           "duration": "Dates",
-          "achievements": ["Achievement 1", "Achievement 2"]
+          "achievements": ["Bullet 1", "Bullet 2", ...]
         }
       ],
       "projects": [
-        { "title": "Project Name", "description": "Description" }
+        { "title": "Project Name", "description": "Full Description" }
       ],
-      "education": ["Degree, School"],
+      "education": [
+        { "degree": "e.g. B.Tech in Computer Science", "institution": "e.g. Stanford University", "expected_completion": "e.g. 2018" },
+        "Or just string representing school and degree"
+      ],
       "certifications": [
         { "name": "Cert Name", "issuer": "Issuing Body", "date": "Date" }
       ]
     }
-    STRICT RULE: Extract EVERY SINGLE role present in the resume. Do not skip any jobs, even very old ones.
-    Extract all bullets per role EXACTLY AS WRITTEN in the original resume. DO NOT summarize, rewrite, or attempt to refine the language of bullet points in this stage. Maintain absolute fidelity to original experience text.
+
+    STRICT RULES:
+    1. EXTRACT EVERY SINGLE ROLE: You MUST extract every job entry listed, from most recent to oldest. Do not skip or merge any roles.
+    2. EXTRACT EVERY SINGLE PROJECT: If the resume lists multiple projects, extract ALL of them individually.
+    3. EDUCATION: Extract ALL educational background. Use the object format if details are clear, otherwise a string.
+    4. NO SUMMARIZATION: Extract bullets and descriptions EXACTLY as they appear in the source text. do not rewrite or shorten them yet.
+    5. ACCURACY: Ensure company names, roles, and dates are captured perfectly.
     
-    RESUME:
+    RESUME TEXT:
     ${trimmedResume}
   `;
 
   // Stage 1: Extraction
-  let primaryModel = "gemini-3.1-flash-lite"; // Use Lite for extraction to save Pro quota
+  let primaryModel = "gemini-3.1-flash"; // Upgrade to Flash (non-lite) for better extraction reasoning
   let fallbackModel = "gemini-3.1-flash-lite";
 
   try {
@@ -122,6 +131,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
       const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
       
       if (parsed) {
+        console.log(`[Extraction] Success. Found ${parsed.experience?.length || 0} roles and ${parsed.projects?.length || 0} projects.`);
         return { data: parsed, usage: (response as any).usageMetadata, _model: primaryModel };
       }
     } catch (quotaError: any) {

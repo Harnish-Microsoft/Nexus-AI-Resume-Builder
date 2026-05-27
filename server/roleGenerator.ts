@@ -33,15 +33,17 @@ GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
 4. COMPREHENSIVE DETAIL: Include all significant achievements provided in the source ROLE DATA. Do not arbitrarily cap the number of bullet points unless necessary for layout (aim for high impact).
 5. CLOUD & INFRASTRUCTURE: Use professional terminology naturally.
 6. NO ARBITRARY COMPRESSION: Older roles should still be accurately represented with multiple bullet points if the source data contains them.
-7. ACCURATE TERMINOLOGY: Include all relevant technical skills and tools (e.g., CI/CD, DevOps, Cloud Platforms) as they appear in the source data.
-8. PLAYER-COACH MODE: ONLY IF mode is 'Player-Coach':
+7. RECENT ROLE EXPANSION (Post-2018): If the role occurred after 2018, you MUST group and expand the source data into EXACTLY 4 to 5 high-impact, FAANG-grade bullet points. Each bullet should be a dense one-liner.
+8. ACCURATE TERMINOLOGY: Include all relevant technical skills and tools (e.g., CI/CD, DevOps, Cloud Platforms) as they appear in the source data.
+9. PLAYER-COACH MODE: ONLY IF mode is 'Player-Coach':
    - BALANCE: 60% Execution (Azure infra), 40% Leadership (Mentoring, Architecture reviews).
    - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized."
-9. GOOGLE XYZ FORMULA: ALL high-impact bullets MUST conform to the formula: "Accomplished [X] as measured by [Y], by doing [Z]."
-   - [X] = The impact or accomplishment. What did you achieve?
-   - [Y] = The metrics, data, or scale. (Example: "Improving performance by 20%", "Generating $50k revenue", "Supporting 1M+ active users").
-   - [Z] = The mechanism, action, or skill used. (Example: "By implementing Terraform modules", "By re-architecting Azure SQL database").
-   - IF A BULLET HAS NO METRICS: You MUST pivot the phrasing to highlight the result of the action (e.g., "Led migration of [App] to [Cloud], reducing latency and improving deployment frequency" - implicit metrics).
+10. GOOGLE XYZ FORMULA: ALL high-impact bullets MUST conform to the formula: "Accomplished [X] as measured by [Y], by doing [Z]."
+    - [X] = The impact or accomplishment. What did you achieve?
+    - [Y] = The metrics, data, or scale. (Example: "Improving performance by 20%", "Generating $50k revenue", "Supporting 1M+ active users").
+    - [Z] = The mechanism, action, or skill used. (Example: "By implementing Terraform modules", "By re-architecting Azure SQL database").
+    - IF A BULLET HAS NO METRICS: You MUST pivot the phrasing to highlight the result of the action.
+11. BREVITY: Each bullet point MUST be a strictly a one-liner. Any bullet exceeding one line will be penalized.
 
 
 OUTPUT SCHEMA:

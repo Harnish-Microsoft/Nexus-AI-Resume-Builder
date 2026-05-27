@@ -970,7 +970,7 @@ export default function App() {
   
   const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
     gemini: { 
-      model: 'gemini-3.1-pro-preview', 
+      model: 'gemini-3.5-flash', 
       apiKey: (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : '') || '' 
     },
     openai: { 
@@ -2873,7 +2873,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             </h2>
             <div className="space-y-3">
               {allProjects.map((proj: any, i: number) => (
-                <div key={i} className="mb-3 last:mb-0">
+                <div key={i} className="project-item mb-3 last:mb-0">
                   <div className="font-bold mb-1" style={{ fontSize: '13px' }}>
                     {typeof proj === 'string' ? proj : (proj as any).title}
                   </div>
@@ -2918,7 +2918,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                 <div className="resume-bullet-item">
                   <div className="resume-bullet-dot" />
                   <span className="resume-bullet-text opacity-90 font-medium">
-                    {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`}
+                    {typeof edu === 'string' 
+                      ? edu 
+                      : (edu.degree || edu.institution)
+                        ? `${edu.degree || 'Degree'} - ${edu.institution || 'Institution'}${edu.expected_completion ? ` (${edu.expected_completion})` : ''}`
+                        : JSON.stringify(edu)
+                    }
                   </span>
                 </div>
               </div>
@@ -3132,7 +3137,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0</span>
                   <div className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-500 animate-pulse`}>
                       <Cpu className="w-3 h-3" />
-                      <span>GEMINI 3.1 PRO (NATIVE)</span>
+                      <span>{engineConfig.gemini.model === 'gemini-3.1-pro-preview' ? 'GEMINI 3.1 PRO (MULTI-FALLBACK)' : 'GEMINI 3.5 FLASH (MULTI-FALLBACK)'}</span>
                   </div>
                   <Link to="/profile" className={`flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full border transition-colors ${isDarkMode ? 'border-white/20 hover:border-emerald-500/50 bg-neutral-900' : 'border-black/10 hover:border-emerald-500/50 bg-white'}`}>
                     {user ? (
@@ -3589,9 +3594,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       {selectedEngine === 'gemini' && (
                                         <>
                                           <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
-                                          <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+                                          <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
                                           <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
-                                          <option value="gemini-2.0-flash-thinking-exp-01-21">Gemini Thinking</option>
                                         </>
                                       )}
                                       {selectedEngine === 'openai' && (
@@ -3815,8 +3819,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 </div>
                               </div>
                               <div className="flex justify-end mb-2">
-                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">
-                                  {selectedEngine.includes('hybrid') ? 'Hybrid Mode' : selectedEngine}
+                                <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest text-right">
+                                  {selectedEngine.includes('hybrid') ? 'Hybrid Mode' : `Active Engine: ${engineConfig.gemini.model}`}
+                                  <br />
+                                  <span className="opacity-40 text-[7px]">
+                                    {engineConfig.gemini.model === 'gemini-3.1-pro-preview' && 'Fallback Chain: 3.5 Flash → 3.1 Flash Lite'}
+                                    {engineConfig.gemini.model === 'gemini-3.5-flash' && 'Fallback Chain: 3.1 Flash Lite'}
+                                    {engineConfig.gemini.model === 'gemini-3.1-flash-lite' && 'Fallback Chain: 3.5 Flash'}
+                                  </span>
                                 </span>
                               </div>
                               

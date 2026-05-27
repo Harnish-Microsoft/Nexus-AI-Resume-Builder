@@ -408,8 +408,8 @@
       break-inside: auto;
     }
 
-    /* Protect individual job roles from splitting across pages */
-    .experience-item {
+    /* Protect individual job roles and projects from splitting across pages */
+    .experience-item, .project-item {
       page-break-inside: avoid;
       break-inside: avoid;
     }

@@ -154,7 +154,8 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   }
 
   // Fallback Logic definitions
-  const FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite";
+  const FALLBACK_GEMINI_MODEL = "gemini-3.5-flash"; // Global fallback now 3.5 flash
+  const LITE_GEMINI_MODEL = "gemini-3.5-flash-lite"; // Feature fallback
   
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
@@ -167,10 +168,37 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
       const ai = new GoogleGenAI({ apiKey });
       
-      // Attempt primary model, fallback to gemini-3.1-flash-lite on error
-      const executeWithFallback = async (modelToTry: string): Promise<any> => {
+      // USER REQUIREMENT: Specific Fallback Chains
+      const getFallbackChain = (primaryModel: string): string[] => {
+        if (primaryModel === 'gemini-3.1-pro-preview') {
+          return ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+        }
+        if (primaryModel === 'gemini-3.1-flash-lite') {
+          return ['gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+        }
+        if (primaryModel === 'gemini-3.5-flash') {
+          return ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+        }
+        if (primaryModel === 'gemini-3.5-flash-lite') {
+          return ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
+        }
+        
+        // Default catch-all fallback
+        return [primaryModel, 'gemini-3.1-flash-lite'];
+      };
+
+      const chain = getFallbackChain(model);
+
+      const executeWithFallback = async (modelChain: string[]): Promise<any> => {
+        const modelToTry = modelChain[0];
         const isThinkingModel = modelToTry.includes('thinking') || modelToTry.includes(':thinking');
-        const cleanModel = modelToTry.replace(':thinking', '').replace('gemini-1.5-pro', 'gemini-3.1-pro-preview').replace('gemini-1.5-flash', 'gemini-3-flash-preview');
+        
+        // Clean model and handle legacy mappings
+        const cleanModel = modelToTry
+          .replace(':thinking', '')
+          .replace('gemini-1.5-pro', 'gemini-3.1-pro-preview')
+          .replace('gemini-1.5-flash', 'gemini-3.5-flash') // Redirect old flash to 3.5 flash
+          .replace('gemini-3-flash-preview', 'gemini-3.5-flash'); // Clean up renamed models
               
         const config = {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
@@ -201,22 +229,21 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
                                errorMsg.includes("resource_exhausted") ||
                                errorMsg.includes("rate_limit");
           
-          if (isQuotaError && modelToTry !== FALLBACK_GEMINI_MODEL) {
-            console.warn(`[Gemini Service] Quota reached for ${cleanModel}. Falling back to ${FALLBACK_GEMINI_MODEL}...`);
-            return await executeWithFallback(FALLBACK_GEMINI_MODEL);
-          }
-          
-          // Broad fallback for ANY error on a Pro model to avoid "blank resume"
-          if (modelToTry !== FALLBACK_GEMINI_MODEL && (modelToTry.includes('pro') || modelToTry.includes('thinking'))) {
-            console.warn(`[Gemini Service] Error hit on Pro model: ${errorMsg}. Attempting one-time fallback to ${FALLBACK_GEMINI_MODEL}...`);
-            return await executeWithFallback(FALLBACK_GEMINI_MODEL);
+          if (modelChain.length > 1) {
+            const isProModel = modelToTry.includes('pro') || modelToTry.includes('thinking');
+            const shouldFallback = isQuotaError || isProModel || errorMsg.includes("not found") || errorMsg.includes("model");
+
+            if (shouldFallback) {
+              console.warn(`[Gemini Service] Error on ${cleanModel}: ${errorMsg}. Falling back to ${modelChain[1]}...`);
+              return await executeWithFallback(modelChain.slice(1));
+            }
           }
           
           throw innerError;
         }
       };
 
-      return await executeWithFallback(model);
+      return await executeWithFallback(chain);
       
     } catch (error: any) {
       let errorMessage = error?.message || String(error);
@@ -296,9 +323,9 @@ export async function evaluateSuitability(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.1-flash-lite';
+    modelToUse = 'gemini-3.5-flash-lite';
   } else if (!modelToUse) {
-    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite';
+    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash-lite';
   }
 
   const prompt = `
@@ -377,10 +404,10 @@ export async function optimizeResume(
     if (config.mode === 'production') {
       // In Hybrid mode, fastMode forces Gemini to save costs
       engineToUse = 'gemini';
-      modelToUse = 'gemini-3.1-flash-lite';
+      modelToUse = 'gemini-3.5-flash-lite';
     } else {
       // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-flash-lite';
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash-lite';
     }
   }
 
@@ -490,9 +517,11 @@ STRICT PROFESSIONAL GUIDELINES:
 - IMPACT OVER TASKS: Focus solely on accomplishments and business outcomes.
 - HALLUCINATION PREVENTION: DO NOT invent, fabricate, suggest, or add any certifications, projects, experience, employers, or skills that are not explicitly present in the original resume text.
 - PRESERVE TITLES: Do not change job titles. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
+- PROJECT FIDELITY: You MUST include EVERY project from the input. If the user has 2 strategic projects, both MUST be included in the output.
 - DIFFERENTIATION: You MUST tailor the output specifically to the provided Job Description. Do not rely on generic templates from previous optimizations; if the JD differs, the optimized resume MUST reflect those specific needs.
 - TEAM SIZE: The user manages a 20-member team in their current role. Do not infer or hallucinate team sizes like "4".
 - INCLUDE ALL ROLES: You MUST include EVERY single role present in the input resume.
+- EDUCATION FIDELITY: You MUST include ALL educational entries. Do not skip education.
 - MAX 2 PAGES: Content must fit A4 layout.
 
 ADVANCED FEATURES:
@@ -512,8 +541,8 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
   "summary": "string",
   "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
   "experience": [ { "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
-  "projects": [ { "title": "string", "description": "string" } ],
-  "education": ["string"],
+  "projects": [ { "title": "string", "description": "string" }, { "title": "string", "description": "string" } ],
+  "education": [ { "degree": "string", "institution": "string", "expected_completion": "string" } ],
   "certifications": [
     { "name": "string", "issuer": "string", "date": "string" }
   ],
@@ -638,8 +667,8 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         
         // Fallback to Flash if Pro fails with rate limit or JSON error
         if (engineToUse === 'gemini' && (currentModel.includes('pro') || currentModel.includes('3.1-pro'))) {
-          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 3.1 Flash Lite for retry ${retryCount}...`);
-          currentModel = 'gemini-3.1-flash-lite';
+          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 3.5 Flash for retry ${retryCount}...`);
+          currentModel = 'gemini-3.5-flash';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
@@ -777,9 +806,9 @@ export async function analyzeBestAudiences(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.1-flash-lite';
+    modelToUse = 'gemini-3.5-flash-lite';
   } else if (!modelToUse) {
-    modelToUse = 'gemini-3.1-flash-lite';
+    modelToUse = 'gemini-3.5-flash-lite';
   }
   const prompt = `
     Analyze the following Job Description and Target Role.
@@ -1089,7 +1118,7 @@ export async function autoSelectPlayerCoachRole(
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3.1-flash-lite', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, 'gemini-3.5-flash-lite', 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.isPlayerCoach;
@@ -1130,7 +1159,7 @@ export async function selectBestMasterResume(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-3.5-flash-lite",
       contents: prompt,
       config: { responseMimeType: "application/json" }
     });

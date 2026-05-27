@@ -832,7 +832,7 @@ async function startServer() {
         
         4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA. Do not "suggest" certifications if the user doesn't have them.
         
-        5. BREVITY & DENSITY (FAANG STANDARD): Bullet points MUST be strictly one-liners. Prioritize hard skills, tools, and scale metrics over verbose filler jargon. Any bullet exceeding one line will be penalized.
+        5. BREVITY & DENSITY (FAANG STANDARD): Experience bullet points MUST be strictly one-liners. Prioritize hard skills, tools, and scale metrics over verbose filler jargon. Any bullet exceeding one line will be penalized.
         
         6. RECENT ROLE EXPANSION (Post-2018) - ABSOLUTE REQUIREMENT: You MUST output EXACTLY 4 to 5 bullet points for EVERY single role that occurred after 2018. DO NOT merge, combine, or consolidate the original bullets, even if the role was only a few months long. If the input has 5 bullets for a recent role, you must rewrite and output exactly 4 or 5 bullets. No exceptions.
         
@@ -848,6 +848,8 @@ async function startServer() {
         
         12. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative entirely on Azure Infrastructure, HA/DR, and Governance.
         
+        13. PROJECT FIDELITY: You MUST output EVERY project provided in the INPUT DATA. Do not skip, merge, or omit ANY projects. If the user has 2 strategic projects, all 2 MUST appear in the final output. Project descriptions should be concise but can be multi-line if needed to explain complex technical impact, as long as the 2-page PDF limit is maintained via the auto-scaler.
+        
         
         OUTPUT SCHEMA (MUST MATCH EXACTLY):
         {
@@ -855,7 +857,7 @@ async function startServer() {
           "summary": "string",
           "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
           "experience": [ { "id": "string", "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
-          "projects": [ { "title": "string", "description": "string" } ],
+          "projects": [ { "title": "string", "description": "string" }, { "title": "string", "description": "string" } ],
           "education": ["string"],
           "certifications": [
             { "name": "string", "issuer": "string", "date": "string" }
@@ -985,7 +987,7 @@ async function startServer() {
         // 1. Generate Meta Data (Summary, Skills, Why This Job, etc.)
         const metaPrompt = `
           You are a senior executive resume strategist.
-          Optimize the meta-sections of this resume for: ${targetRole}.
+          Optimize the meta-sections of this resume for the target role: ${targetRole}.
           Audience: ${audience}. Mode: ${mode}.
           Keywords: ${optimizedInput.jd_keywords.join(', ')}.
           ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}` : ''}
@@ -1002,14 +1004,13 @@ async function startServer() {
           }, null, 2)}
           
           RULES:
-          - Summary: Approx 100 words.
-          - Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
-          - Why This Job: 100-150 words compelling response.
-          - DO NOT invent certifications.
-          - Brevity & Density: Bullet points MUST be concise and dense (max 15 words). Prioritize hard skills, tools, and metrics over verbose jargon.
-          - Balanced IaC: Terraform/IaC permitted, limited to 2 bullet points TOTAL across entire resume. Forbidden verbs: "Architected", "Engineered", "Spearheaded". Allowed: "Deployed", "Maintained", "Utilized", "Provisioned".
-          - Pre-2018 Compression: Before 2018, provide EXACTLY one (1) bullet point maximum for projects.
-          - GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". These terms MUST NOT appear anywhere in the output, including project summaries, skill categories, or bullet points. Focus project summaries entirely on Azure Migration, FinOps, HA/DR, and Governance.
+          1. Summary: Approx 100 words, high impact.
+          2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
+          3. Why This Job: 100-150 words compelling response.
+          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. If there are 2 projects, output 2. Do not merge them. Descriptions should be descriptive and highlight technical complexity and business value. Long descriptions are encouraged if needed to explain technical depth, but keep them professional.
+          5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it. Ensure school names and degrees are preserved with absolute fidelity.
+          6. DO NOT invent certifications.
+          7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". These terms MUST NOT appear anywhere in the output.
           
           OUTPUT JSON SCHEMA:
           {
@@ -1017,8 +1018,8 @@ async function startServer() {
             "summary": "...",
             "skills": { "Category 1": ["skill1", ...], ... },
             "why_this_job": "...",
-            "projects": [...],
-            "education": [...],
+            "projects": [ { "title": "...", "description": "..." } ],
+            "education": [ { "degree": "...", "institution": "...", "expected_completion": "..." } ],
             "certifications": [...],
             "ats_keywords_from_jd": [...],
             "ats_keywords_added_to_resume": [...],
@@ -1026,20 +1027,8 @@ async function startServer() {
             "match_score": 85,
             "improvement_notes": [...],
             "audience_alignment_notes": "...",
-            "star_stories": [
-              { "bullet": "The highly optimized bullet", "situation": "...", "task": "...", "action": "...", "result": "..." }
-            ],
-            "audit_report": {
-              "score": 85,
-              "flags": [
-                { "id": "f1", "type": "...", "message": "...", "fix": "...", "severity": "high" }
-              ],
-              "trajectory": {
-                "stage": "acceleration",
-                "description": "...",
-                "recommendation": "..."
-              }
-            }
+            "star_stories": [...],
+            "audit_report": { ... }
           }
         `;
 
