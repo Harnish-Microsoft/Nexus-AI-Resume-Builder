@@ -800,7 +800,10 @@ async function startServer() {
 
       // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
       const finalPrompt = `
-        You are a senior executive resume strategist. 
+        ACT AS:
+        You are a Principal Resume Intelligence Architect, FAANG Technical Recruiter, and Enterprise ATS Strategist.
+        Your objective is to transform resumes into recruiter-safe, ATS-optimized, technically mature documents that reflect factual realism and believable operational ownership.
+
         Optimize this structured resume data for the target role: ${targetRole}.
         Audience: ${audience}. Mode: ${mode}.
         ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
@@ -816,75 +819,62 @@ async function startServer() {
         PLAYER-COACH MODE:
         ${mode === 'Player-Coach' ? `
           - 60/40 BALANCE: 60% Execution (Azure infra, Site Recovery, Entra ID), 40% Leadership (Mentoring, Agile pods, Architecture reviews).
-          - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized," "Spearheaded."
+          - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized," "Governance Support".
           - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". Focus entirely on Azure Infrastructure.
         ` : ''}
 
+        STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
+        1. TRUTHFULNESS IS MANDATORY: NEVER fabricate metrics, technologies (Kubernetes/Terraform), leadership ownership, direct reports, hiring authority, certifications, or strategic transformation initiatives not explicitly present in the source.
+        2. AI-GENERATED LANGUAGE PREVENTION: DO NOT use "Spearheaded", "Orchestrated", "Pioneered". Use grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated", "Improved", "Maintained", "Resolved", "Led", "Streamlined".
+        3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages or fake MTTR/Uptime numbers. If metrics are missing, prioritize operational ownership and technical depth.
+        4. STAR METHODOLOGY: Every bullet should reflect a challenge, action, technologies used, and realistic outcome. Do NOT force metrics into every bullet; strong qualitative outcomes are acceptable.
+        5. LEADERSHIP POSITIONING: Leadership wording must match designation and tenure. For engineering roles, avoid director-level strategy wording. If tenure is short (<6 months), focus on onboarding, shadowing, and support coordination rather than transformations.
+        6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Prefer concise operational wording.
+        7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
+        
         INPUT DATA (Optimized):
         ${JSON.stringify(optimizedInput, null, 2)}
         
         STRICT RULES:
         1. TONE & FOCUS: Maintain a professional, concise, executive-level tone suitable for FAANG, Senior Cloud Architect, or Director-level infrastructure roles. Focus heavily on these JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
         
-        2. PRESERVE TITLES: Do NOT modify job titles under any circumstances. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
+        2. PRESERVE TITLES: Do NOT modify job titles under any circumstances. Specifically, NEVER change "Officer IT cum Logistics" to "Officer IT cum Logistics". (Fix any "Office" typos found in the source).
         
         3. INCLUDE ALL ROLES: You MUST include every single role provided in the INPUT DATA. Do not skip any jobs, even very old ones.
         
-        4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA. Do not "suggest" certifications if the user doesn't have them.
+        4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA.
         
-        5. BREVITY & DENSITY (FAANG STANDARD): Experience bullet points MUST be strictly one-liners. Prioritize hard skills, tools, and scale metrics over verbose filler jargon. Any bullet exceeding one line will be penalized.
+        5. BREVITY & DENSITY (FAANG STANDARD): Experience bullet points MUST be strictly one-liners. Prioritize hard skills, tools, and scale metrics over verbose filler jargon.
         
-        6. RECENT ROLE EXPANSION (Post-2018) - ABSOLUTE REQUIREMENT: You MUST output EXACTLY 4 to 5 bullet points for EVERY single role that occurred after 2018. DO NOT merge, combine, or consolidate the original bullets, even if the role was only a few months long. If the input has 5 bullets for a recent role, you must rewrite and output exactly 4 or 5 bullets. No exceptions.
+        6. RECENT ROLE EXPANSION (Post-2018): You MUST output EXACTLY 4 to 5 bullet points for EVERY single role that occurred after 2018. DO NOT merge bullets.
         
-        7. OLDER ROLE COMPRESSION (Pre-2018): Provide EXACTLY one (1) bullet point maximum for roles and projects that occurred before 2018. Focus on foundational infrastructure experience.
+        7. OLDER ROLE COMPRESSION (Pre-2018): Provide EXACTLY one (1) bullet point maximum for roles before 2018.
         
-        8. SOURCE ANCHORING (CRITICAL): Each experience entry contains ORIGINAL BULLETS. You MUST derive new bullets ONLY from that specific role’s original content. Do NOT borrow, reuse, or "hallucinate" content from other roles to fill gaps.
+        8. SOURCE ANCHORING: Derive new bullets ONLY from that specific role’s original content.
         
         9. BALANCED IaC: Terraform/IaC references are permitted but limited to 2 bullet points TOTAL across the entire resume.
         
-        10. VERB CONTROL: Avoid forbidden buzzwords like "Spearheaded", "Visionary", "Dynamic", or "Guru". For execution bullets, use allowed verbs: "Deployed", "Maintained", "Utilized", "Provisioned".
+        10. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative on Azure Infrastructure, HA/DR, and Governance.
         
-        11. ANTI-DUPLICATION: Avoid semantic repetition across roles. Each role should demonstrate distinct business or technical impact. Do not repeat identical achievement phrasing.
+        11. PROJECT FIDELITY: You MUST output EVERY project provided in the INPUT DATA.
         
-        12. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative entirely on Azure Infrastructure, HA/DR, and Governance.
-        
-        13. PROJECT FIDELITY: You MUST output EVERY project provided in the INPUT DATA. Do not skip, merge, or omit ANY projects. If the user has 2 strategic projects, all 2 MUST appear in the final output. Project descriptions should be concise but can be multi-line if needed to explain complex technical impact, as long as the 2-page PDF limit is maintained via the auto-scaler.
-        
-        
-        OUTPUT SCHEMA (MUST MATCH EXACTLY):
+        OUTPUT JSON SCHEMA:
         {
           "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
           "summary": "string",
           "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
           "experience": [ { "id": "string", "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
-          "projects": [ { "title": "string", "description": "string" }, { "title": "string", "description": "string" } ],
-          "education": ["string"],
-          "certifications": [
-            { "name": "string", "issuer": "string", "date": "string" }
-          ],
+          "projects": [ { "title": "string", "description": "string" } ],
+          "education": [ { "degree": "string", "institution": "string", "expected_completion": "string" } ],
+          "certifications": [ { "name": "string", "issuer": "string", "date": "string" } ],
           "ats_keywords_from_jd": ["string"],
-          "ats_keywords_added_to_resume": ["string"],
           "keyword_gap": ["string"],
           "match_score": 85,
           "baseline_score": 60,
           "improvement_notes": ["string"],
           "audience_alignment_notes": "string",
-          "why_this_job": "string",
-          "rejection_reasons": ["string"],
-          "star_stories": [
-            { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" }
-          ],
-          "audit_report": {
-            "score": 85,
-            "flags": [
-              { "id": "string", "type": "string", "message": "string", "fix": "string", "severity": "high" }
-            ],
-            "trajectory": {
-              "stage": "acceleration",
-              "description": "string",
-              "recommendation": "string"
-            }
-          }
+          "star_stories": [ { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
+          "audit_report": { "score": 85, "flags": [], "trajectory": { "stage": "acceleration", "description": "string", "recommendation": "string" } }
         }
       `;
 
@@ -951,15 +941,26 @@ async function startServer() {
           };
         } catch (openaiError: any) {
           console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash Lite...", openaiError.message);
-          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use the cheap Gemini we have
-          const fallbackModelName = "gemini-3.1-flash-lite";
+          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use Gemini 3.5 Flash then 3.1 Flash Lite
+          let fallbackModelName = "gemini-3.5-flash";
           const genAI = new GoogleGenAI({ apiKey: geminiKey });
           
-          const fallbackResult = await genAI.models.generateContent({
-            model: fallbackModelName,
-            contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-            config: { responseMimeType: "application/json" }
-          });
+          let fallbackResult;
+          try {
+            fallbackResult = await genAI.models.generateContent({
+              model: fallbackModelName,
+              contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+              config: { responseMimeType: "application/json" }
+            });
+          } catch (e) {
+            console.warn(`[Pipeline] Fallback to ${fallbackModelName} failed, trying 3.1-flash-lite...`);
+            fallbackModelName = "gemini-3.1-flash-lite";
+            fallbackResult = await genAI.models.generateContent({
+              model: fallbackModelName,
+              contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+              config: { responseMimeType: "application/json" }
+            });
+          }
           
           const text = fallbackResult.text || "";
           const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -986,8 +987,11 @@ async function startServer() {
         
         // 1. Generate Meta Data (Summary, Skills, Why This Job, etc.)
         const metaPrompt = `
-          You are a senior executive resume strategist.
-          Optimize the meta-sections of this resume for the target role: ${targetRole}.
+          ACT AS:
+          You are a Principal Resume Intelligence Architect and FAANG Recruiter.
+          Optimize the meta-sections of this resume for factual realism and believable operational ownership.
+
+          Target Role: ${targetRole}.
           Audience: ${audience}. Mode: ${mode}.
           Keywords: ${optimizedInput.jd_keywords.join(', ')}.
           ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}` : ''}
@@ -1003,14 +1007,14 @@ async function startServer() {
             jd_keywords: optimizedInput.jd_keywords
           }, null, 2)}
           
-          RULES:
-          1. Summary: Approx 100 words, high impact.
+          STRICT RULES:
+          1. Summary: Approx 100 words, high impact, NO AI-slop words like "Spearheaded" or "Pioneered". Use "Managed", "Led", "Optimized".
           2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
-          3. Why This Job: 100-150 words compelling response.
-          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. If there are 2 projects, output 2. Do not merge them. Descriptions should be descriptive and highlight technical complexity and business value. Long descriptions are encouraged if needed to explain technical depth, but keep them professional.
-          5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it. Ensure school names and degrees are preserved with absolute fidelity.
-          6. DO NOT invent certifications.
-          7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". These terms MUST NOT appear anywhere in the output.
+          3. Why This Job: 100-150 words compelling response based on factual alignment.
+          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them.
+          5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it.
+          6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
+          7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
           
           OUTPUT JSON SCHEMA:
           {

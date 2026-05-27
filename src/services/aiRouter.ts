@@ -64,7 +64,7 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
   if (selectedEngine === 'gemini' && task !== 'rewrite_resume') {
     return {
       ...engineConfig,
-      model: 'gemini-3.5-flash-lite'
+      model: 'gemini-3.5-flash'
     };
   }
 

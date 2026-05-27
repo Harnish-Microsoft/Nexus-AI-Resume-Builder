@@ -155,7 +155,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
   // Fallback Logic definitions
   const FALLBACK_GEMINI_MODEL = "gemini-3.5-flash"; // Global fallback now 3.5 flash
-  const LITE_GEMINI_MODEL = "gemini-3.5-flash-lite"; // Feature fallback
+  const LITE_GEMINI_MODEL = "gemini-3.1-flash-lite"; // Feature fallback
   
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
@@ -178,9 +178,6 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
         }
         if (primaryModel === 'gemini-3.5-flash') {
           return ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
-        }
-        if (primaryModel === 'gemini-3.5-flash-lite') {
-          return ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
         }
         
         // Default catch-all fallback
@@ -323,9 +320,9 @@ export async function evaluateSuitability(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.5-flash-lite';
+    modelToUse = 'gemini-3.5-flash';
   } else if (!modelToUse) {
-    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash-lite';
+    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash';
   }
 
   const prompt = `
@@ -404,10 +401,10 @@ export async function optimizeResume(
     if (config.mode === 'production') {
       // In Hybrid mode, fastMode forces Gemini to save costs
       engineToUse = 'gemini';
-      modelToUse = 'gemini-3.5-flash-lite';
+      modelToUse = 'gemini-3.5-flash';
     } else {
       // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash-lite';
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash';
     }
   }
 
@@ -494,9 +491,12 @@ export async function optimizeResume(
   }
 
   const prompt = `
-ROLE: Professional Resume Strategist.
+ACT AS:
+You are a Principal Resume Intelligence Architect, FAANG Technical Recruiter, and Enterprise ATS Strategist.
+Your objective is to transform resumes into recruiter-safe, ATS-optimized, technically mature, and human-written documents that reflect factual realism and believable operational ownership.
+
 THE CURRENT DATE: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons based on lack of impact/metrics.' : 'TASK: Rewrite resume into a top-tier professional document.'}
+${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons based on lack of impact/metrics.' : 'TASK: Rewrite resume into a top-tier professional document adhering to operational realism.'}
 
 ${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
@@ -508,25 +508,18 @@ ${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design" an
 ${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Shipping Engineering Impact".' : ''}
 ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery" and "Managed Services".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
 
-STRICT PROFESSIONAL GUIDELINES:
-- SCANNABILITY: Optimize for quick reading. Each bullet point MUST be a single, concise line.
-- BULLET POINT CONSTRAINTS: For the first two professional roles, use a maximum of 5 bullet points each. For the third professional role, use exactly 4 bullet points.
-- ACHIEVEMENT FOCUS: Every bullet point should highlight an achievement or leadership impact (mentoring, team scaling, cross-functional driving). 
-- METRICS & OUTCOMES: Achievement bullets should include metrics (%, $, time, scale) where possible. If metrics are unavailable, include clear leadership impact.
-- ACTION VERBS: Start every bullet with high-impact verbs: Led, Developed, Managed, Optimized, Scaled, Spearheaded.
-- IMPACT OVER TASKS: Focus solely on accomplishments and business outcomes.
-- HALLUCINATION PREVENTION: DO NOT invent, fabricate, suggest, or add any certifications, projects, experience, employers, or skills that are not explicitly present in the original resume text.
-- PRESERVE TITLES: Do not change job titles. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
-- PROJECT FIDELITY: You MUST include EVERY project from the input. If the user has 2 strategic projects, both MUST be included in the output.
-- DIFFERENTIATION: You MUST tailor the output specifically to the provided Job Description. Do not rely on generic templates from previous optimizations; if the JD differs, the optimized resume MUST reflect those specific needs.
-- TEAM SIZE: The user manages a 20-member team in their current role. Do not infer or hallucinate team sizes like "4".
-- INCLUDE ALL ROLES: You MUST include EVERY single role present in the input resume.
-- EDUCATION FIDELITY: You MUST include ALL educational entries. Do not skip education.
-- MAX 2 PAGES: Content must fit A4 layout.
-
-ADVANCED FEATURES:
-1. STAR METHOD: For high-impact experiences, generate a companion STAR story (Situation, Task, Action, Result).
-2. AUDIT: Identify any weak areas in the resume.
+STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
+1. TRUTHFULNESS IS MANDATORY: NEVER fabricate metrics, technologies (Kubernetes/Terraform), leadership ownership, direct reports, hiring authority, certifications, or strategic transformation initiatives not explicitly present in the source.
+2. AI-GENERATED LANGUAGE PREVENTION: DO NOT use "Spearheaded", "Orchestrated", "Pioneered". Use grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated", "Improved", "Maintained", "Resolved", "Led", "Streamlined".
+3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages or fake MTTR/Uptime numbers. If metrics are missing, prioritize operational ownership and technical depth.
+4. STAR METHODOLOGY: Every bullet should reflect a challenge, action, technologies used, and realistic outcome. Do NOT force metrics into every bullet; strong qualitative outcomes are acceptable.
+5. LEADERSHIP POSITIONING: Leadership wording must match designation and tenure. For engineering roles, avoid director-level strategy wording. If tenure is short (<6 months), focus on onboarding, shadowing, and support coordination rather than transformations.
+6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Prefer concise operational wording.
+7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
+8. BULLET CONSTRAINTS: Each bullet MUST be a single, concise line. For the first two roles, use max 5 bullets each. For the third, use exactly 4 bullets.
+9. PRESERVE TITLES: NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics".
+10. EDUCATION FIDELITY: Include ALL educational entries. 
+11. MAX 2 PAGES: Content must fit A4 layout.
 
 INPUT:
 RESUME: ${resumeText}
@@ -555,18 +548,14 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
   "audience_alignment_notes": "string",
   "rejection_reasons": ["string"],
   "star_stories": [
-    { "bullet": "The original bullet", "situation": "...", "task": "...", "action": "...", "result": "..." }
+    { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" }
   ],
   "audit_report": {
     "score": number,
     "flags": [
-      { "id": "f1", "type": "Metric Missing", "message": "...", "fix": "...", "severity": "high" }
+      { "id": "string", "type": "string", "message": "string", "fix": "string", "severity": "high" }
     ],
-    "trajectory": {
-      "stage": "acceleration",
-      "description": "...",
-      "recommendation": "..."
-    }
+    "trajectory": { "stage": "acceleration", "description": "string", "recommendation": "string" }
   }
 }
 `;
@@ -806,9 +795,9 @@ export async function analyzeBestAudiences(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.5-flash-lite';
+    modelToUse = 'gemini-3.5-flash';
   } else if (!modelToUse) {
-    modelToUse = 'gemini-3.5-flash-lite';
+    modelToUse = 'gemini-3.5-flash';
   }
   const prompt = `
     Analyze the following Job Description and Target Role.
@@ -1118,7 +1107,7 @@ export async function autoSelectPlayerCoachRole(
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3.5-flash-lite', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, 'gemini-3.5-flash', 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.isPlayerCoach;
@@ -1159,7 +1148,7 @@ export async function selectBestMasterResume(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash-lite",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: { responseMimeType: "application/json" }
     });

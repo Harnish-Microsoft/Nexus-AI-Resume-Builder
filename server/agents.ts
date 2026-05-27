@@ -24,11 +24,23 @@ Return structured JSON.
 `;
 
     try {
-      const res = await genAI.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json" }
-      });
+      let currentModel = "gemini-3.5-flash";
+      let res;
+      try {
+        res = await genAI.models.generateContent({
+          model: currentModel,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { responseMimeType: "application/json" }
+        });
+      } catch (e) {
+        console.warn(`[Agent] ${currentModel} failed, falling back to 3.1-flash-lite...`);
+        currentModel = "gemini-3.1-flash-lite";
+        res = await genAI.models.generateContent({
+          model: currentModel,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { responseMimeType: "application/json" }
+        });
+      }
 
       results[key] = JSON.parse(res.text || "{}");
     } catch (err) {

@@ -14,7 +14,11 @@ export async function generatePerRole(
 
   const promises = experience.map(async (role, index) => {
     const prompt = `
-Optimize this structured resume data for the target role: ${targetRole || 'Professional'}.
+ACT AS:
+You are a Principal Resume Intelligence Architect and FAANG Recruiter.
+Your objective is to rewrite this specific role into a recruiter-safe, technically mature, and human-written document that reflects factual realism.
+
+Target Role: ${targetRole || 'Professional'}.
 Audience: ${audience || 'Recruiters'}. Mode: ${mode || 'Standard'}.
 ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
 ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data to extract hidden achievements.` : ''}
@@ -25,29 +29,20 @@ ${JSON.stringify(role)}
 CORPORATE DNA TAILORING (DEMONSTRATE, DO NOT DECLARE):
 ${targetCompany ? `Tailor appropriately for ${targetCompany}. Focus on specific impacts and technologies relevant to their industry.` : ''}
 
-GLOBAL SYSTEM RULES (STRICT ENFORCEMENT):
-1. ZERO-SHOT ANTI-HALLUCINATION: Use ONLY the provided role data. Do NOT invent numbers, percentages, budgets, or metrics.
-2. TENURE & TIMELINE AWARENESS: 
-   - For short tenures (under 6 months): Focus on "Rapid Delivery," "Auditing," or "Assessment." CRITICAL: Do NOT alter the job title or append the word "(Contract)" to short roles. Leave the title exactly as provided.
-3. BREVITY & DENSITY: Recruiters skim. Bullet points should be concise and impactful. Prioritize hard skills, tools, and metrics.
-4. COMPREHENSIVE DETAIL: Include all significant achievements provided in the source ROLE DATA. Do not arbitrarily cap the number of bullet points unless necessary for layout (aim for high impact).
-5. CLOUD & INFRASTRUCTURE: Use professional terminology naturally.
-6. NO ARBITRARY COMPRESSION: Older roles should still be accurately represented with multiple bullet points if the source data contains them.
-7. RECENT ROLE EXPANSION (Post-2018): If the role occurred after 2018, you MUST group and expand the source data into EXACTLY 4 to 5 high-impact, FAANG-grade bullet points. Each bullet should be a dense one-liner.
-8. ACCURATE TERMINOLOGY: Include all relevant technical skills and tools (e.g., CI/CD, DevOps, Cloud Platforms) as they appear in the source data.
-9. PLAYER-COACH MODE: ONLY IF mode is 'Player-Coach':
-   - BALANCE: 60% Execution (Azure infra), 40% Leadership (Mentoring, Architecture reviews).
-   - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized."
-10. GOOGLE XYZ FORMULA: ALL high-impact bullets MUST conform to the formula: "Accomplished [X] as measured by [Y], by doing [Z]."
-    - [X] = The impact or accomplishment. What did you achieve?
-    - [Y] = The metrics, data, or scale. (Example: "Improving performance by 20%", "Generating $50k revenue", "Supporting 1M+ active users").
-    - [Z] = The mechanism, action, or skill used. (Example: "By implementing Terraform modules", "By re-architecting Azure SQL database").
-    - IF A BULLET HAS NO METRICS: You MUST pivot the phrasing to highlight the result of the action.
-11. BREVITY: Each bullet point MUST be a strictly a one-liner. Any bullet exceeding one line will be penalized.
-
+STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
+1. TRUTHFULNESS IS MANDATORY: NEVER fabricate metrics, budget numbers, or leadership ownership. (Use ONLY provided role data).
+2. AI-GENERATED LANGUAGE PREVENTION: DO NOT use "Spearheaded", "Orchestrated", "Pioneered". Use "Managed", "Implemented", "Coordinated", "Optimized", "Configured", "Automated".
+3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages. If metrics are missing, prioritize technical depth.
+4. STAR METHODOLOGY: Reflect challenge, action, technologies, and realistic outcome. Do NOT force metrics.
+5. LEADERSHIP POSITIONING: Leadership wording must match designation/tenure. If tenure is short (<6 months), focus on onboarding/shadowing.
+6. HUMANIZATION: Avoid buzzword stacking and AI phrasing.
+7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
+8. BREVITY: Each bullet MUST be a strictly a one-liner. 
+9. RECENT ROLE EXPANSION (Post-2018): If the role occurred after 2018, you MUST output EXACTLY 4 to 5 bullets.
+10. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN.
 
 OUTPUT SCHEMA:
-Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role. Do not include keys, objects, or markdown formatting outside the array. Example: ["Bullet 1", "Bullet 2"]
+Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role. Example: ["Bullet 1", "Bullet 2"]
 `;
 
     const maxRetries = 3;
@@ -55,11 +50,23 @@ Return ONLY a valid JSON array of strings containing the high-impact bullet poin
     
     while (retryCount < maxRetries) {
       try {
-        const res = await genAI.models.generateContent({
-          model: "gemini-3.1-flash-lite",
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          config: { responseMimeType: "application/json" }
-        });
+        let currentModel = "gemini-3.5-flash";
+        let res;
+        try {
+          res = await genAI.models.generateContent({
+            model: currentModel,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: { responseMimeType: "application/json" }
+          });
+        } catch (e) {
+          console.warn(`[RoleGen] ${currentModel} failed, falling back to 3.1-flash-lite...`);
+          currentModel = "gemini-3.1-flash-lite";
+          res = await genAI.models.generateContent({
+            model: currentModel,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: { responseMimeType: "application/json" }
+          });
+        }
 
         const text = res.text || "[]";
         let bullets = [];
