@@ -1394,7 +1394,8 @@ export default function App() {
 
       const role = targetRole || 'Resume';
       const company = companyName ? `-${companyName}` : '';
-      const pdfTitle = `${role}${company}_Harnish Jariwala`;
+      const driveFileName = `${role}${company}-Harnish Jariwala.pdf`;
+      const pdfTitle = driveFileName.replace('.pdf', '');
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -1433,7 +1434,7 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             pdfData: base64data,
-            fileName: `${pdfTitle}.pdf`,
+            fileName: driveFileName,
             versioningEnabled: versioningEnabled,
             accessToken: driveAccessToken,
             parentFolderId: selectedDriveFolder?.id
@@ -2417,8 +2418,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       `;
 
       const role = targetRole || 'Resume';
-      const company = companyName ? `-${companyName}` : '';
-      const pdfTitle = `${role}${company}_Harnish Jariwala`;
+      const companyStr = companyName ? `-${companyName}` : '';
+      const driveFileName = `${role}${companyStr}-Harnish Jariwala.pdf`;
+      const downloadFileName = `${role}-Harnish Jariwala.pdf`;
+      const pdfTitle = driveFileName.replace('.pdf', '');
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -2478,7 +2481,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               pdfData: base64data,
-              fileName: `${pdfTitle}.pdf`,
+              fileName: driveFileName,
               versioningEnabled: versioningEnabled,
               accessToken: driveAccessToken,
               parentFolderId: selectedDriveFolder?.id
@@ -2506,7 +2509,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       };
 
       // Trigger download
-      saveAs(blob, `${pdfTitle}.pdf`);
+      saveAs(blob, downloadFileName);
       showToast('PDF Downloaded successfully!', 'success');
 
     } catch (err: any) {
