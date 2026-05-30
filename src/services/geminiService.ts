@@ -514,9 +514,9 @@ STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
 3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages or fake MTTR/Uptime numbers. If metrics are missing, prioritize operational ownership and technical depth.
 4. STAR METHODOLOGY: Every bullet should reflect a challenge, action, technologies used, and realistic outcome. Do NOT force metrics into every bullet; strong qualitative outcomes are acceptable.
 5. LEADERSHIP POSITIONING: Leadership wording must match designation and tenure. For engineering roles, avoid director-level strategy wording. If tenure is short (<6 months), focus on onboarding, shadowing, and support coordination rather than transformations.
-6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Prefer concise operational wording.
+6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Provide detailed and descriptive operational wording.
 7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
-8. BULLET CONSTRAINTS: Each bullet MUST be a single, concise line. For the first two roles, use max 5 bullets each. For the third, use exactly 4 bullets.
+8. BULLET CONSTRAINTS: Each bullet should be impactful and detailed, potentially spanning up to 2 lines to convey complexity, technical stack, and specific outcomes or metrics. Avoid overly brief one-liners that lack technical context. For the first two roles, use 5-8 bullets each. For the third, use 4-6 bullets.
 9. PRESERVE TITLES: NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics".
 10. EDUCATION FIDELITY: Include ALL educational entries. 
 11. MAX 2 PAGES: Content must fit A4 layout.
@@ -801,25 +801,28 @@ export async function analyzeBestAudiences(
   }
   const prompt = `
     Analyze the following Job Description and Target Role.
-    Select the most appropriate audiences from the following list:
-    - microsoft
-    - leadership
-    - cloud-architect
-    - solution-architect
-    - consulting
-    - cloud-eng-mgr
-    - infra-mgr
-    - assoc-director
-    - director-mid
-    - director-large
-    - principal-architect
-    - cto-vp
-    - digital-transform
-    - platform-dir
+    Select the MOST SPECIFIC and appropriate audiences from the following list that match the actual seniority and technical focus of the role:
+    - microsoft (If Azure/Microsoft stack is primary)
+    - leadership (If people management is mentioned)
+    - cloud-architect (For strategy/design roles)
+    - solution-architect (For client-facing/solution roles)
+    - consulting (For agency/consultancy roles)
+    - cloud-eng-mgr (Engineering management)
+    - infra-mgr (Infrastructure management)
+    - assoc-director (Junior leadership)
+    - director-mid (Middle management / Head of Cloud for mid-size)
+    - director-large (Head of Cloud for large enterprise)
+    - principal-architect (Highest level individual contributor)
+    - cto-vp (Executive leadership)
+    - digital-transform (Strategic transformation)
+    - platform-dir (Platform engineering leadership)
     
-    If NONE of the above audiences are a perfect fit for the Target Role and JD, you MUST suggest a custom audience name that best describes the target persona (e.g., "Product Management", "Data Science", "Frontend Engineering").
+    CRITICAL: 
+    - Do NOT default to "Director" or "Head" roles if the JD is for an Engineer, Senior Engineer, or Architect.
+    - If the role is an Individual Contributor (IC), prefer "cloud-architect", "solution-architect", or "principal-architect".
+    - Only suggest a CUSTOM audience name if NONE of the above IDs fit at all.
     
-    Return ONLY a JSON array of the IDs or custom names. Example: ["cloud-architect", "leadership"] or ["Product Management"]
+    Return ONLY a JSON array of the IDs. Example: ["microsoft", "cloud-architect"]
     
     JOB DESCRIPTION: ${jobDescription}
     TARGET ROLE: ${targetRole}
@@ -1130,35 +1133,63 @@ export async function selectBestMasterResume(
 
   const mastersSummary = masters.map((m) => {
     const content = typeof m.data === 'string' ? m.data : JSON.stringify(m.data);
-    return `ID: ${m.id}\nName: ${m.name}\nContext: ${content.substring(0, 1500)}...`;
+    // Increase context to 3000 chars for better differentiation
+    return `ID: ${m.id}\nName: ${m.name}\nDescription: ${m.description || 'N/A'}\nContext Extract: ${content.substring(0, 3000)}...`;
   }).join("\n\n---\n\n");
 
   const prompt = `
-    Analyze the following Job Description and the list of available "Master Resumes".
-    Pick the SINGLE Master Resume ID that is the most relevant and best starting point to optimize for this job.
+    You are an expert recruitment strategist specializing in profile selection.
+    
+    TASK:
+    Analyze the provided Job Description (JD) and the list of available "Master Resumes".
+    Your goal is to pick the SINGLE most appropriate Master Resume to use as the foundation for optimization.
+    
+    SELECTION CRITERIA:
+    1. Technical Stack Alignment: Which resume highlights technologies most relevant to the JD?
+    2. Seniority Alignment: Does the JD look for a Lead, Manager, or Individual Contributor? Pick the resume that matches this level.
+    3. Industry/Domain Alignment: If the JD is for Fintech, Cloud Infra, or E-commerce, pick the corresponding profile.
     
     JOB DESCRIPTION:
     ${jd}
     
-    MASTER RESUMES:
+    AVAILABLE MASTER RESUMES:
     ${mastersSummary}
     
-    Return ONLY a JSON object: { "selectedId": "the-id", "reason": "why this matches best" }
+    STRICT OUTPUT RULE:
+    Return ONLY a JSON object with the following structure:
+    { 
+      "selectedId": "the-exact-id-string", 
+      "reason": "short explanation of why this profile is the best starting point" 
+    }
+    
+    Ensure the "selectedId" matches one of the IDs provided in the MASTER RESUMES list exactly.
   `;
 
   try {
+    const apiKey = await getDecryptedKey(routedConfig.apiKey || '');
+    const ai = new GoogleGenAI({ apiKey });
+    
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
-      contents: prompt,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: { responseMimeType: "application/json" }
     });
     
     const text = response.text || "";
     const parsed = JSON.parse(text);
-    return parsed.selectedId;
+    
+    // Validate that the returned ID actually exists in the masters list
+    const found = masters.find(m => m.id === parsed.selectedId);
+    if (found) {
+      console.log(`[Nexus selection] AI picked: ${found.name} (${parsed.selectedId}). Reason: ${parsed.reason}`);
+      return found.id;
+    }
+    
+    console.warn(`[Nexus selection] AI returned unknown ID: ${parsed.selectedId}. Falling back to first.`);
+    return masters[0].id;
   } catch (error) {
     console.error("Error selecting best master resume:", error);
-    return masters[0].id; // Fallback to first one
+    return masters[0].id; 
   }
 }
 
@@ -1170,7 +1201,7 @@ export async function generateMasterResume(
   const routedConfig = routeTask('rewrite_resume', config);
   const prompt = `
     ROLE: Expert Career Coach & Resume Writer.
-    TASK: Generate 3-5 high-impact, ATS-friendly bullet points for a user's experience entry.
+    TASK: Generate 5-8 high-impact, detailed, and ATS-friendly bullet points for a user's experience entry. Each bullet should be substantial (spanning 1-2 lines) and provide specific technical context and outcomes.
     
     INPUT DATA:
     Company: ${data.company}

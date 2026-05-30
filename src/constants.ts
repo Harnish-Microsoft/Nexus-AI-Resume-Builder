@@ -20,7 +20,8 @@ export const AUDIENCES = [
   { id: 'principal-architect', label: 'Principal Cloud Architect', icon: '💎' },
   { id: 'cto-vp', label: 'CTO / VP of Engineering', icon: '👑' },
   { id: 'digital-transform', label: 'Digital Transformation Lead', icon: '⚡' },
-  { id: 'platform-dir', label: 'Platform Engineering Director', icon: '🏗️' }
+  { id: 'platform-dir', label: 'Platform Engineering Director', icon: '🏗️' },
+  { id: 'custom', label: 'Custom Persona...', icon: '✍️' }
 ];
 
 export const TARGET_COMPANIES = [

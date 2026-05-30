@@ -23,6 +23,7 @@ import {
   Moon,
   Sun,
   Trash2,
+  Square,
   Upload,
   Users,
   UserCircle,
@@ -274,6 +275,7 @@ export default function App() {
   const [fastMode, setFastMode] = useState(false);
   const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
+  const [customAudience, setCustomAudience] = useState('');
   const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement>(null);
@@ -1977,7 +1979,9 @@ export default function App() {
 
       // Run all audience optimizations in parallel
       const optimizationPromises = currentAudiences.map(async (audienceId) => {
-        const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
+        const audienceLabel = audienceId === 'custom' 
+          ? (customAudience || 'Custom Persona') 
+          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId);
         
         // Progress reporting for hybrid mode
         if (selectedEngine.includes('hybrid')) {
@@ -3040,15 +3044,37 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               </div>
               <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
                   <button
-                    onClick={() => handleOptimize()}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all ${
-                        isDarkMode 
-                            ? 'bg-emerald-500 hover:bg-emerald-400 text-black' 
-                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    onClick={() => isOptimizing ? handleStop() : handleOptimize()}
+                    className={`relative overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all ${
+                        isOptimizing 
+                            ? 'bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500/20' 
+                            : (isDarkMode 
+                                ? 'bg-emerald-500 hover:bg-emerald-400 text-black' 
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white')
                     }`}
                   >
-                    <Zap className="w-3 h-3" />
-                    <span className="hidden sm:inline">Optimize</span>
+                    {isOptimizing && (
+                      <motion.div 
+                        className="absolute inset-0 bg-emerald-500/20 pointer-events-none"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${optimizationProgress}%` }}
+                        transition={{ ease: "linear", duration: 0.5 }}
+                      />
+                    )}
+                    <div className="relative z-10 flex items-center gap-1.5">
+                      {isOptimizing ? (
+                        <>
+                          <Square className="w-3 h-3 fill-current animate-pulse" />
+                          <span className="hidden sm:inline">Stop ({optimizationProgress}%)</span>
+                          <span className="sm:hidden">{optimizationProgress}%</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-3 h-3" />
+                          <span className="hidden sm:inline">Optimize</span>
+                        </>
+                      )}
+                    </div>
                   </button>
                   {user && (
                     <button onClick={() => syncAllData(false)} className={`p-1.5 sm:p-2 rounded-full transition-colors relative ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${hasUnsavedChanges ? 'bg-amber-500/10' : ''}`} title="Sync to Cloud">
@@ -3287,7 +3313,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     ? (
                                       <>
                                         <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">Auto</span>
-                                        {selectedAudiences.map(id => AUDIENCES.find(a => a.id === id)?.label || id).join(', ')}
+                                        {selectedAudiences.map(id => id === 'custom' ? (customAudience || 'Custom Persona') : (AUDIENCES.find(a => a.id === id)?.label || id)).join(', ')}
                                       </>
                                     )
                                     : 'Select audiences...'}
@@ -3334,6 +3360,23 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     </button>
                                   ))}
                                 </div>
+                              )}
+                              {selectedAudiences.includes('custom') && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: -10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="mt-3"
+                                >
+                                  <input 
+                                    type="text"
+                                    placeholder="Enter custom persona/audience (e.g., Frontend Lead)..."
+                                    value={customAudience}
+                                    onChange={(e) => setCustomAudience(e.target.value)}
+                                    className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                                      isDarkMode ? 'bg-white/5 border-white/10 text-white placeholder:text-white/40' : 'bg-[#F9F9F9] border-black/10 text-black'
+                                    }`}
+                                  />
+                                </motion.div>
                               )}
                             </div>
                             
@@ -3752,42 +3795,42 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               <button
                                 onClick={() => {
                                   console.log("[Nexus AI] Optimize Button Clicked");
-                                  console.log("[Nexus AI] Status - isOptimizing:", isOptimizing, "isExtracting:", isExtracting);
-                                  if (isOptimizing || isExtracting) {
-                                    console.log("[Nexus AI] Clicking blocked: already in progress");
+                                  if (isOptimizing) {
+                                    handleStop();
                                     return;
                                   }
+                                  if (isExtracting) return;
                                   handleOptimize();
                                 }}
-                                disabled={isOptimizing || isExtracting}
-                                className={`flex-1 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                                disabled={isExtracting}
+                                className={`relative overflow-hidden flex-1 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
                                   isOptimizing 
-                                    ? 'bg-emerald-500/50 cursor-not-allowed' 
+                                    ? 'bg-red-500/10 border border-red-500/20 text-red-500 shadow-red-500/5' 
                                     : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20'
                                 }`}
                               >
-                                {isOptimizing ? (
-                                  <>
-                                    <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                                    Optimizing...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Zap className="w-5 h-5" />
-                                    Optimize Resume
-                                  </>
+                                {isOptimizing && (
+                                  <motion.div 
+                                    className="absolute inset-0 bg-emerald-500/20 pointer-events-none"
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${optimizationProgress}%` }}
+                                    transition={{ ease: "linear", duration: 0.5 }}
+                                  />
                                 )}
+                                <div className="relative z-10 flex items-center justify-center gap-2">
+                                  {isOptimizing ? (
+                                    <>
+                                      <Square className="w-5 h-5 fill-current animate-pulse" />
+                                      Stop Optimization ({optimizationProgress}%)
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Zap className="w-5 h-5" />
+                                      Optimize Resume
+                                    </>
+                                  )}
+                                </div>
                               </button>
-                              
-                              {isOptimizing && (
-                                <button
-                                  onClick={handleStop}
-                                  className="px-6 py-4 rounded-xl font-bold bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500/20 transition-all flex items-center gap-2"
-                                >
-                                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                                  Stop
-                                </button>
-                              )}
                             </div>
 
                             {/* Token Usage Display */}

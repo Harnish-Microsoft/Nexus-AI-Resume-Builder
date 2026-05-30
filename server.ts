@@ -829,14 +829,14 @@ async function startServer() {
         3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages or fake MTTR/Uptime numbers. If metrics are missing, prioritize operational ownership and technical depth.
         4. STAR METHODOLOGY: Every bullet should reflect a challenge, action, technologies used, and realistic outcome. Do NOT force metrics into every bullet; strong qualitative outcomes are acceptable.
         5. LEADERSHIP POSITIONING: Leadership wording must match designation and tenure. For engineering roles, avoid director-level strategy wording. If tenure is short (<6 months), focus on onboarding, shadowing, and support coordination rather than transformations.
-        6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Prefer concise operational wording.
+        6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Provide detailed and descriptive operational wording.
         7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
         
         INPUT DATA (Optimized):
         ${JSON.stringify(optimizedInput, null, 2)}
         
         STRICT RULES:
-        1. TONE & FOCUS: Maintain a professional, concise, executive-level tone suitable for FAANG, Senior Cloud Architect, or Director-level infrastructure roles. Focus heavily on these JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
+        1. TONE & FOCUS: Maintain a professional, detailed, executive-level tone suitable for FAANG, Senior Cloud Architect, or Director-level infrastructure roles. Focus heavily on these JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
         
         2. PRESERVE TITLES: Do NOT modify job titles under any circumstances. Specifically, NEVER change "Officer IT cum Logistics" to "Officer IT cum Logistics". (Fix any "Office" typos found in the source).
         
@@ -844,15 +844,15 @@ async function startServer() {
         
         4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA.
         
-        5. BREVITY & DENSITY (FAANG STANDARD): Experience bullet points MUST be strictly one-liners. Prioritize hard skills, tools, and scale metrics over verbose filler jargon.
+        5. IMPACT & DETAIL (FAANG STANDARD): Experience bullet points should be impactful and detailed, potentially spanning 2 lines to include technical depth, tools used, and specific outcomes. Avoid overly brief one-liners. Prioritize technical context and scale metrics.
         
-        6. RECENT ROLE EXPANSION (Post-2018): You MUST output EXACTLY 4 to 5 bullet points for EVERY single role that occurred after 2018. DO NOT merge bullets.
+        6. RECENT ROLE EXPANSION (Post-2018): You MUST output 5 to 8 bullet points for EVERY single role that occurred after 2018. Provide high density of technical details.
         
-        7. OLDER ROLE COMPRESSION (Pre-2018): Provide EXACTLY one (1) bullet point maximum for roles before 2018.
+        7. OLDER ROLE COMPRESSION (Pre-2018): Provide 2 to 3 high-impact bullet points for roles before 2018. Even older roles should have enough detail to show progression and foundational skills.
         
         8. SOURCE ANCHORING: Derive new bullets ONLY from that specific role’s original content.
         
-        9. BALANCED IaC: Terraform/IaC references are permitted but limited to 2 bullet points TOTAL across the entire resume.
+        9. BALANCED IaC: Terraform/IaC references are encouraged for technical roles. Include up to 5-6 bullet points TOTAL across the entire resume if relevant to the JD.
         
         10. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative on Azure Infrastructure, HA/DR, and Governance.
         
@@ -1008,10 +1008,10 @@ async function startServer() {
           }, null, 2)}
           
           STRICT RULES:
-          1. Summary: Approx 100 words, high impact, NO AI-slop words like "Spearheaded" or "Pioneered". Use "Managed", "Led", "Optimized".
+          1. Summary: 150-250 words, high impact, NO AI-slop words like "Spearheaded" or "Pioneered". Use "Managed", "Led", "Optimized". Provide a comprehensive overview of technical expertise and career trajectory.
           2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
           3. Why This Job: 100-150 words compelling response based on factual alignment.
-          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them.
+          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them. Each project description should be thorough (40-60 words), detailing your specific technical contribution, the stack used, and the measurable outcome.
           5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it.
           6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
           7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
