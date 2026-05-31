@@ -428,7 +428,7 @@ export async function optimizeResume(
           mode,
           audience,
           customPrompt,
-          encryptedKey: config.openaiConfig.apiKey,
+          apiKey: config.openaiConfig.apiKey,
           pipelineType,
           targetCompany,
           brainDump

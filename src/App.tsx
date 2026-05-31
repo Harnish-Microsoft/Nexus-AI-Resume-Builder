@@ -356,9 +356,32 @@ export default function App() {
             }
             if (data.encryptedApiKey) {
               setEncryptedApiKey(data.encryptedApiKey);
-              setOpenaiApiKey(''); // Placeholder
-              setGeminiApiKey(''); // Placeholder
               setIsApiKeySaved(true);
+              
+              // Decrypt keys for the UI if possible
+              try {
+                const decryptResponse = await fetch('/api/decrypt-keys', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ encryptedKey: data.encryptedApiKey })
+                });
+                if (decryptResponse.ok) {
+                  const decryptData = await decryptResponse.json();
+                  if (decryptData.keys) {
+                    if (decryptData.keys.gemini) setGeminiApiKey(decryptData.keys.gemini);
+                    if (decryptData.keys.openai) setOpenaiApiKey(decryptData.keys.openai);
+                  }
+                } else {
+                  const errorData = await decryptResponse.json();
+                  if (errorData.error && errorData.error.includes("DECRYPTION_FAILED")) {
+                    console.warn("API key decryption failed. Encryption key may have changed.");
+                    // We don't show a toast here to avoid annoying the user on every login,
+                    // but the inputs will remain empty, prompting them to re-enter if they need to.
+                  }
+                }
+              } catch (decryptErr) {
+                console.error("Failed to decrypt keys on load:", decryptErr);
+              }
             }
             if (data.driveAccessToken) {
               setDriveAccessToken(data.driveAccessToken);
@@ -1192,6 +1215,7 @@ export default function App() {
   const [isAutoSelectingAudiences, setIsAutoSelectingAudiences] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [optimizationProgress, setOptimizationProgress] = useState(0);
+  const [showOptimizeSuccess, setShowOptimizeSuccess] = useState(false);
   const [optimizationStatus, setOptimizationStatus] = useState('');
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [tokenUsage, setTokenUsage] = useState({
@@ -1751,12 +1775,12 @@ export default function App() {
       geminiConfig: {
         engine: 'gemini',
         model: engineConfig.gemini.model,
-        apiKey: encryptedApiKey || engineConfig.gemini.apiKey
+        apiKey: geminiApiKey || (typeof encryptedApiKey === 'string' && encryptedApiKey.includes(':') ? encryptedApiKey : '') || engineConfig.gemini.apiKey
       },
       openaiConfig: {
         engine: 'openai',
         model: engineConfig.openai.model,
-        apiKey: encryptedApiKey || engineConfig.openai.apiKey
+        apiKey: openaiApiKey || (typeof encryptedApiKey === 'string' && encryptedApiKey.includes(':') ? encryptedApiKey : '') || engineConfig.openai.apiKey
       }
     };
   };
@@ -2148,6 +2172,8 @@ export default function App() {
         progressIntervalRef.current = null;
       }
       setOptimizationProgress(100);
+      setShowOptimizeSuccess(true);
+      setTimeout(() => setShowOptimizeSuccess(false), 5000);
       setIsOptimizing(false);
       setAbortController(null);
 
@@ -2166,7 +2192,9 @@ export default function App() {
         progressIntervalRef.current = null;
       }
       setIsOptimizing(false);
+      setOptimizationProgress(0);
       setAbortController(null);
+      showToast("Optimization stopped.", "info");
     }
   };
 
@@ -3050,15 +3078,17 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     onClick={() => isOptimizing ? handleStop() : handleOptimize()}
                     className={`relative overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all ${
                         isOptimizing 
-                            ? 'bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500/20' 
-                            : (isDarkMode 
-                                ? 'bg-emerald-500 hover:bg-emerald-400 text-black' 
-                                : 'bg-emerald-600 hover:bg-emerald-500 text-white')
+                            ? 'bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500/20 shadow-red-500/5' 
+                            : showOptimizeSuccess
+                                ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 animate-bounce'
+                                : (isDarkMode 
+                                    ? 'bg-emerald-500 hover:bg-emerald-400 text-black' 
+                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white')
                     }`}
                   >
                     {isOptimizing && (
                       <motion.div 
-                        className="absolute inset-0 bg-emerald-500/20 pointer-events-none"
+                        className="absolute inset-0 bg-white/20 dark:bg-black/20 pointer-events-none"
                         initial={{ width: 0 }}
                         animate={{ width: `${optimizationProgress}%` }}
                         transition={{ ease: "linear", duration: 0.5 }}
@@ -3070,6 +3100,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <Square className="w-3 h-3 fill-current animate-pulse" />
                           <span className="hidden sm:inline">Stop ({optimizationProgress}%)</span>
                           <span className="sm:hidden">{optimizationProgress}%</span>
+                        </>
+                      ) : showOptimizeSuccess ? (
+                        <>
+                          <CheckCircle2 className="w-3 h-3 text-black" />
+                          <span>Done</span>
                         </>
                       ) : (
                         <>
@@ -3809,12 +3844,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 className={`relative overflow-hidden flex-1 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
                                   isOptimizing 
                                     ? 'bg-red-500/10 border border-red-500/20 text-red-500 shadow-red-500/5' 
-                                    : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20'
+                                    : showOptimizeSuccess
+                                      ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 transition-all scale-105'
+                                      : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20'
                                 }`}
                               >
                                 {isOptimizing && (
                                   <motion.div 
-                                    className="absolute inset-0 bg-emerald-500/20 pointer-events-none"
+                                    className="absolute inset-0 bg-white/20 dark:bg-black/20 pointer-events-none"
                                     initial={{ width: 0 }}
                                     animate={{ width: `${optimizationProgress}%` }}
                                     transition={{ ease: "linear", duration: 0.5 }}
@@ -3825,6 +3862,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     <>
                                       <Square className="w-5 h-5 fill-current animate-pulse" />
                                       Stop Optimization ({optimizationProgress}%)
+                                    </>
+                                  ) : showOptimizeSuccess ? (
+                                    <>
+                                      <CheckCircle2 className="w-5 h-5" />
+                                      Optimization Ready!
                                     </>
                                   ) : (
                                     <>

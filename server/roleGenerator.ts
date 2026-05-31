@@ -37,9 +37,9 @@ STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
 5. LEADERSHIP POSITIONING: Leadership wording must match designation/tenure. If tenure is short (<6 months), focus on onboarding/shadowing.
 6. HUMANIZATION: Avoid buzzword stacking and AI phrasing.
 7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
-8. DETAIL: Each bullet should be impactful and detailed, potentially spanning up to 2 lines to include specific technical context and outcomes. Avoid overly brief one-liners. Prioritize technical context and scale metrics.
-9. RECENT ROLE EXPANSION (Post-2018): If the role occurred after 2018, you MUST output 5 to 8 bullets. Provide high density of details.
-10. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN.
+8. DETAIL: Each bullet MUST be highly impactful, technical, and detailed. Each bullet should span 2 to 3 lines in a standard resume layout to provide deep technical context and specific outcomes. STRICTLY AVOID brief one-liners. Prioritize technical context, architecture details, and scale metrics.
+9. RECENT ROLE EXPANSION (Post-2018): If the role occurred after 2018, you MUST output 6 to 9 bullets. Provide extremely high density of details.
+10. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Use "Infrastructure Automation", "Workflow Orchestration", or "Release Engineering".
 
 OUTPUT SCHEMA:
 Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role. Example: ["Bullet 1", "Bullet 2"]

@@ -710,7 +710,8 @@ async function startServer() {
       customPrompt, 
       pipelineType,
       targetCompany,
-      brainDump 
+      brainDump,
+      apiKey
     } = req.body;
 
     if (!resumeText || !jobDescription) {
@@ -726,8 +727,26 @@ async function startServer() {
       if (keys) {
         geminiKey = keys.gemini || geminiKey;
         openaiKey = keys.openai || "";
-      } else {
-        console.warn("User has no API key configured. Using system key.");
+      }
+
+      // 2. Override with API key from request if provided (supports both raw and encrypted)
+      if (apiKey) {
+        try {
+          const decrypted = decrypt(apiKey);
+          let parsedKeys: any = {};
+          try {
+            parsedKeys = JSON.parse(decrypted);
+          } catch (e) {
+            parsedKeys = { gemini: decrypted };
+          }
+          if (parsedKeys.gemini) geminiKey = parsedKeys.gemini;
+          if (parsedKeys.openai) openaiKey = parsedKeys.openai;
+        } catch (e) {
+          // If decryption fails, assume it's a raw key (for Gemini)
+          if (typeof apiKey === 'string' && apiKey.length > 20) {
+             geminiKey = apiKey;
+          }
+        }
       }
       
       if (!geminiKey) console.warn("Gemini API key not found. Expecting platform-provided authentication to be available.");
