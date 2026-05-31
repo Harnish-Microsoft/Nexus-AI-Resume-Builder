@@ -119,6 +119,67 @@ type OptimizationMode = 'conservative' | 'balanced' | 'aggressive' | 'automatic'
 
 import { CommandPalette } from './components/CommandPalette';
 
+const GeminiAurora = () => (
+  <div className="absolute inset-0 pointer-events-none overflow-hidden z-[-2]">
+    <motion.div
+      animate={{
+        scale: [1, 1.2, 1],
+        x: [0, 50, 0],
+        y: [0, -30, 0],
+      }}
+      transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+      className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] rounded-full blur-[120px] bg-cyan-500/20 mix-blend-screen opacity-40"
+    />
+    <motion.div
+      animate={{
+        scale: [1.2, 1, 1.2],
+        x: [0, -40, 0],
+        y: [0, 40, 0],
+      }}
+      transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+      className="absolute bottom-[-10%] right-[-10%] w-[70%] h-[70%] rounded-full blur-[140px] bg-indigo-600/20 mix-blend-screen opacity-30"
+    />
+    <motion.div
+      animate={{
+        opacity: [0.1, 0.3, 0.1],
+        scale: [1, 1.1, 1],
+      }}
+      transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
+      className="absolute top-1/4 left-1/3 w-[50%] h-[50%] rounded-full blur-[100px] bg-purple-500/10 mix-blend-screen"
+    />
+    <motion.div
+      animate={{
+        opacity: [0.05, 0.15, 0.05],
+        scale: [0.8, 1.2, 0.8],
+      }}
+      transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[40%] h-[40%] rounded-full blur-[120px] bg-cyan-400/20 mix-blend-overlay"
+    />
+  </div>
+);
+
+const DataStream = () => (
+  <div className="absolute inset-0 pointer-events-none opacity-[0.03] z-[-5] overflow-hidden">
+    {Array.from({ length: 15 }).map((_, i) => (
+      <motion.div
+        key={i}
+        initial={{ y: -100, opacity: 0 }}
+        animate={{ y: '100vh', opacity: [0, 1, 0] }}
+        transition={{ 
+          duration: 10 + Math.random() * 20, 
+          repeat: Infinity, 
+          delay: Math.random() * 20,
+          ease: "linear" 
+        }}
+        className="absolute text-[8px] font-mono whitespace-nowrap text-cyan-500"
+        style={{ left: `${i * 7}%` }}
+      >
+        {Array.from({ length: 50 }).map(() => Math.round(Math.random())).join('')}
+      </motion.div>
+    ))}
+  </div>
+);
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -1024,8 +1085,31 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [isAutoZoom, setIsAutoZoom] = useState(true);
   const [isFocusMode, setIsFocusMode] = useState(false);
-  const [activeTheme, setActiveTheme] = useState(BACKGROUND_THEMES[0]);
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+  const [activeTheme, setActiveTheme] = useState(() => {
+    const saved = localStorage.getItem('activeThemeId');
+    if (saved) {
+      return BACKGROUND_THEMES.find(t => t.id === saved) || BACKGROUND_THEMES[0];
+    }
+    return BACKGROUND_THEMES[0];
+  });
+
+  const getThemeStyles = () => {
+    const isInfoGeneus = activeTheme.id === 'infogeneus';
+    return {
+      primary: isInfoGeneus ? 'cyan-500' : 'emerald-500',
+      primaryText: isInfoGeneus ? 'text-cyan-400' : 'text-emerald-400',
+      primaryBg: isInfoGeneus ? 'bg-cyan-500' : 'bg-emerald-500',
+      primaryBorder: isInfoGeneus ? 'border-cyan-500/20' : 'border-emerald-500/20',
+      primaryShadow: isInfoGeneus ? 'shadow-cyan-500/20' : 'shadow-emerald-500/20',
+      primaryGlow: isInfoGeneus ? 'shadow-cyan-500/10' : 'shadow-emerald-500/10',
+      secondary: isInfoGeneus ? 'indigo-400' : 'rose-400',
+      secondaryText: isInfoGeneus ? 'text-indigo-400' : 'text-rose-400',
+      secondaryBg: isInfoGeneus ? 'bg-indigo-400' : 'bg-rose-400',
+    };
+  };
+
+  const theme = getThemeStyles();
   const themeInputRef = useRef<HTMLInputElement>(null);
 
   const handleCustomTheme = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1190,6 +1274,7 @@ export default function App() {
 
 
   useEffect(() => {
+    document.documentElement.setAttribute('data-theme', activeTheme.id);
     document.documentElement.style.setProperty('--glass-bg-image', `url('${activeTheme.url}')`);
     if ((activeTheme as any).blobs) {
       document.documentElement.style.setProperty('--blob-color', (activeTheme as any).blobs[0]);
@@ -3016,7 +3101,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       className={`h-screen flex flex-col overflow-hidden transition-colors duration-300 ${isDarkMode ? 'text-white' : 'text-slate-900'} font-sans selection:bg-emerald-500/30 relative z-0`}
       style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
     >
-      <div className="absolute inset-0 bg-black/10 dark:bg-black/30 pointer-events-none -z-10" />
+      <div className={`absolute inset-0 transition-colors duration-1000 ${user ? 'bg-black/40' : 'bg-black/10 dark:bg-black/30'} pointer-events-none -z-10`} />
+      <div className="workspace-overlay -z-5" />
+      {activeTheme.id === 'infogeneus' && (
+        <>
+          <GeminiAurora />
+          <DataStream />
+          <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/5 via-transparent to-indigo-500/5 pointer-events-none z-[-1]" />
+        </>
+      )}
       <div className="liquid-container z-10 opacity-30">
         <div className="liquid-blob w-[110vw] h-[110vh] -top-1/2 -left-1/4" style={{ animationDelay: '-2s' }} />
         <div className="liquid-blob liquid-blob-secondary w-[80vw] h-[80vh] top-1/2 right-1/4" style={{ animationDelay: '-5s' }} />
@@ -3161,11 +3254,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   key={theme.id}
                                   onClick={() => {
                                     setActiveTheme(theme);
+                                    localStorage.setItem('activeThemeId', theme.id);
                                     setIsThemeMenuOpen(false);
                                   }}
                                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                                     activeTheme.id === theme.id
-                                      ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-black text-white')
+                                      ? (isDarkMode ? `bg-${activeTheme.id === 'infogeneus' ? 'cyan' : 'emerald'}-500/20 text-${activeTheme.id === 'infogeneus' ? 'cyan' : 'emerald'}-400` : 'bg-black text-white')
                                       : (isDarkMode ? 'hover:bg-white/5 text-white/70' : 'hover:bg-black/5 text-black/70')
                                   }`}
                                 >
@@ -3220,7 +3314,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               {activeTab !== 'tools' && (
                 <div 
                   ref={leftPanelRef}
-                  className={`flex flex-col h-full relative transition-all duration-200 ease-in-out ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} z-10 ${isFocusMode ? 'w-0 opacity-0 pointer-events-none border-none hidden sm:flex' : ''} ${isMobile ? 'h-1/2 sm:h-full w-full' : ''}`}
+                  className={`flex flex-col h-full relative transition-all duration-200 ease-in-out ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel z-10 ${isFocusMode ? 'w-0 opacity-0 pointer-events-none border-none hidden sm:flex' : ''} ${isMobile ? 'h-1/2 sm:h-full w-full' : ''}`}
                   style={{ 
                     width: isFocusMode ? '0' : (isMobile ? '100%' : `${configWidth}%`),
                     minWidth: isFocusMode ? '0' : (isMobile ? '100%' : '320px'),
@@ -4344,7 +4438,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           )}
 
           {/* Result Section */}
-          <div className={`flex-1 min-w-0 flex flex-col h-full overflow-hidden border-l border-black/5 dark:border-white/10 shadow-2xl relative z-20 ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} ${isMobile ? (isFocusMode ? 'h-full flex-1' : 'h-1/2 sm:h-full') : 'flex'}`}>
+          <div className={`flex-1 min-w-0 flex flex-col h-full overflow-hidden border-l border-black/5 dark:border-white/10 shadow-2xl relative z-20 ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel ${isMobile ? (isFocusMode ? 'h-full flex-1' : 'h-1/2 sm:h-full') : 'flex'}`}>
             <AnimatePresence mode="wait">
               {activeTab === 'tools' ? (
                 <motion.div 
