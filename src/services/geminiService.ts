@@ -172,7 +172,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
       // USER REQUIREMENT: Specific Fallback Chains
       const getFallbackChain = (primaryModel: string): string[] => {
         if (primaryModel === 'gemini-3.1-pro-preview') {
-          return ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+          return ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
         }
         if (primaryModel === 'gemini-3.1-flash-lite') {
           return ['gemini-3.1-flash-lite', 'gemini-3.5-flash'];
@@ -182,7 +182,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
         }
         
         // Default catch-all fallback
-        return [primaryModel, 'gemini-3.1-flash-lite'];
+        return [primaryModel, 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
       };
 
       const chain = getFallbackChain(model);
@@ -657,8 +657,8 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         
         // Fallback to Flash if Pro fails with rate limit or JSON error
         if (engineToUse === 'gemini' && (currentModel.includes('pro') || currentModel.includes('3.1-pro'))) {
-          console.warn(`Error hit on Gemini Pro. Falling back to Gemini 3.5 Flash for retry ${retryCount}...`);
-          currentModel = 'gemini-3.5-flash';
+          console.log(`Error hit on Gemini Pro. Falling back to Gemini 3.1 Flash Lite for retry ${retryCount}...`);
+          currentModel = 'gemini-3.1-flash-lite';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;

@@ -1,7 +1,6 @@
 export function deduplicateAndScore(experience: any[]) {
-  const seen = new Set();
-
   return experience.map(role => {
+    const seen = new Set();
     const uniqueBullets = role.bullets.filter((b: string) => {
       const key = b.toLowerCase().replace(/\W/g, '');
       if (seen.has(key)) return false;

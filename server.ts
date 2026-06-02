@@ -839,6 +839,7 @@ async function startServer() {
       console.dir(optimizedInput.experience, { depth: null });
 
       // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
+      const roleCount = optimizedInput.experience.length;
       const finalPrompt = `
         ACT AS:
         You are a Principal Resume Intelligence Architect, FAANG Technical Recruiter, and Enterprise ATS Strategist.
@@ -848,6 +849,10 @@ async function startServer() {
         Audience: ${audience}. Mode: ${mode}.
         ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
         ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
+        
+        CRITICAL INPUT TRACKING:
+        The input contains exactly ${roleCount} separate job roles. 
+        You ARE REQUIRED to output exactly ${roleCount} items in the "experience" array.
         
         CORPORATE DNA TAILORING:
         ${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership", "Bias for Action", and "Data-driven results". Use terminology from Amazon Leadership Principles.' : ''}
@@ -880,7 +885,7 @@ async function startServer() {
         
         2. PRESERVE TITLES: Do NOT modify job titles under any circumstances. Specifically, NEVER change "Officer IT cum Logistics" to "Officer IT cum Logistics". (Fix any "Office" typos found in the source).
         
-        3. INCLUDE ALL ROLES: You MUST include every single role provided in the INPUT DATA. Do not skip any jobs, even very old ones.
+        3. INCLUDE ALL ROLES (MANDATORY): You MUST include ALL ${roleCount} roles provided in the INPUT DATA. Do not skip any jobs, even very old ones. An incomplete experience list is a FAIL.
         
         4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA.
         
@@ -930,7 +935,7 @@ async function startServer() {
             model: usedModel,
             messages: [{ 
               role: "system", 
-              content: "You are a senior executive resume strategist. Output strictly JSON." 
+              content: "You are a senior executive resume strategist. Output strictly JSON. Ensure EVERY SINGLE role from input is preserved." 
             }, { 
               role: "user", 
               content: finalPrompt
@@ -981,8 +986,8 @@ async function startServer() {
           };
         } catch (openaiError: any) {
           console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash Lite...", openaiError.message);
-          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use Gemini 3.5 Flash then 3.1 Flash Lite
-          let fallbackModelName = "gemini-3.5-flash";
+          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use Gemini 3.1 Flash Lite then 3.5 Flash
+          let fallbackModelName = "gemini-3.1-flash-lite";
           const genAI = new GoogleGenAI({ apiKey: geminiKey });
           
           let fallbackResult;
@@ -993,8 +998,8 @@ async function startServer() {
               config: { responseMimeType: "application/json" }
             });
           } catch (e) {
-            console.warn(`[Pipeline] Fallback to ${fallbackModelName} failed, trying 3.1-flash-lite...`);
-            fallbackModelName = "gemini-3.1-flash-lite";
+            console.warn(`[Pipeline] Fallback to ${fallbackModelName} failed, trying 3.5-flash...`);
+            fallbackModelName = "gemini-3.5-flash";
             fallbackResult = await genAI.models.generateContent({
               model: fallbackModelName,
               contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],

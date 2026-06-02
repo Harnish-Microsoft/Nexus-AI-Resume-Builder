@@ -115,8 +115,8 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   `;
 
   // Stage 1: Extraction
-  let primaryModel = "gemini-3.5-flash"; 
-  let fallbackModel = "gemini-3.1-flash-lite";
+  let primaryModel = "gemini-3.1-flash-lite"; // Swapped to lite as primary to avoid 3.5-flash quota issues
+  let fallbackModel = "gemini-3.5-flash"; 
 
   try {
     try {
@@ -137,7 +137,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
     } catch (quotaError: any) {
       const errorMsg = quotaError?.message?.toLowerCase() || "";
       if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
-        console.warn(`[Optimization] ${primaryModel} quota reached. Falling back to ${fallbackModel}...`);
+        console.log(`[Optimization] ${primaryModel} quota reached. Trying ${fallbackModel}...`);
         const response = await genAI.models.generateContent({
           model: fallbackModel,
           contents: prompt,
@@ -208,8 +208,8 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   `;
 
   // Stage 1: JD Analysis
-  let primaryModel = "gemini-3.5-flash"; 
-  let fallbackModel = "gemini-3.1-flash-lite";
+  let primaryModel = "gemini-3.1-flash-lite"; // Swapped to lite as primary
+  let fallbackModel = "gemini-3.5-flash";
 
   try {
     try {
@@ -229,7 +229,7 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
     } catch (quotaError: any) {
       const errorMsg = quotaError?.message?.toLowerCase() || "";
       if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
-        console.warn(`[Optimization] ${primaryModel} quota reached. Falling back to ${fallbackModel}...`);
+        console.log(`[Optimization] ${primaryModel} quota reached. Trying ${fallbackModel}...`);
         const response = await genAI.models.generateContent({
           model: fallbackModel,
           contents: prompt,
