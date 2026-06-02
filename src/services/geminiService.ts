@@ -107,10 +107,11 @@ export async function getDecryptedKey(encryptedKey: string): Promise<string> {
   const idToken = await auth.currentUser?.getIdToken();
   let keyToDecrypt = encryptedKey;
 
-  // Fallback: If no key provided for current user, check 'users/admin' in Firestore
-  if (!keyToDecrypt && auth.currentUser) {
+  // Fallback: If no key provided for current user or no user signed in, check 'users/admin' in Firestore
+  if (!keyToDecrypt) {
     try {
-      console.log("[GeminiService] No user key. Checking 'users/admin' fallback...");
+      console.log("[GeminiService] No specific user key. Checking 'users/admin' fallback...");
+      // Using standard getDoc - if rules allow public read, this will work even if unauthenticated
       const adminDoc = await getDoc(doc(db, 'users', 'admin'));
       if (adminDoc.exists()) {
         const data = adminDoc.data();

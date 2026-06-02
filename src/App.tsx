@@ -389,6 +389,8 @@ export default function App() {
             handleFirestoreError(err, OperationType.GET, 'users/' + currentUser.uid);
             return undefined;
           });
+          
+          let hasUserKey = false;
           if (docSnap && docSnap.exists()) {
             const data = docSnap.data();
             setShowTermsModal(false);
@@ -415,7 +417,9 @@ export default function App() {
                 setSelectedDriveFolder(data.settings.selectedDriveFolder);
               }
             }
+
             if (data.encryptedApiKey) {
+              hasUserKey = true;
               setEncryptedApiKey(data.encryptedApiKey);
               setIsApiKeySaved(true);
               
@@ -432,13 +436,6 @@ export default function App() {
                     if (decryptData.keys.gemini) setGeminiApiKey(decryptData.keys.gemini);
                     if (decryptData.keys.openai) setOpenaiApiKey(decryptData.keys.openai);
                   }
-                } else {
-                  const errorData = await decryptResponse.json();
-                  if (errorData.error && errorData.error.includes("DECRYPTION_FAILED")) {
-                    console.warn("API key decryption failed. Encryption key may have changed.");
-                    // We don't show a toast here to avoid annoying the user on every login,
-                    // but the inputs will remain empty, prompting them to re-enter if they need to.
-                  }
                 }
               } catch (decryptErr) {
                 console.error("Failed to decrypt keys on load:", decryptErr);
@@ -448,17 +445,44 @@ export default function App() {
               setDriveAccessToken(data.driveAccessToken);
               setIsDriveConnected(true);
             }
-          } else {
-            setShowTermsModal(false);
           }
+          
+          // Fallback to admin key if user has no key
+          if (!hasUserKey) {
+            console.log("[App] User has no key, checking admin fallback...");
+            const adminDoc = await getDoc(doc(db, 'users', 'admin')).catch(() => null);
+            if (adminDoc && adminDoc.exists() && adminDoc.data().encryptedApiKey) {
+               setEncryptedApiKey(adminDoc.data().encryptedApiKey);
+               setIsApiKeySaved(true);
+            }
+          }
+
         } catch (err) {
           console.error("Error fetching profile:", err);
         }
       } else {
-        setOpenaiApiKey('');
-        setGeminiApiKey('');
-        setEncryptedApiKey('');
-        setIsApiKeySaved(false);
+        // Not signed in: Check for admin fallback automatically
+        console.log("[App] Not signed in, checking admin fallback key...");
+        const fetchAdminFallback = async () => {
+          try {
+            const adminDoc = await getDoc(doc(db, 'users', 'admin')).catch(() => null);
+            if (adminDoc && adminDoc.exists() && adminDoc.data().encryptedApiKey) {
+               setEncryptedApiKey(adminDoc.data().encryptedApiKey);
+               setIsApiKeySaved(true);
+            } else {
+              setOpenaiApiKey('');
+              setGeminiApiKey('');
+              setEncryptedApiKey('');
+              setIsApiKeySaved(false);
+            }
+          } catch (e) {
+            setOpenaiApiKey('');
+            setGeminiApiKey('');
+            setEncryptedApiKey('');
+            setIsApiKeySaved(false);
+          }
+        };
+        fetchAdminFallback();
         setDriveAccessToken(null);
         setIsDriveConnected(false);
         setShowTermsModal(false);
