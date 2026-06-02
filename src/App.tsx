@@ -252,6 +252,87 @@ export default function App() {
     };
   }, []);
 
+  const [isFetchingKeys, setIsFetchingKeys] = useState(false);
+
+  const fetchKeysFromFirebase = async (isManual = false) => {
+    // We use auth.currentUser (or the 'user' state)
+    const currentUser = auth.currentUser || user;
+    if (!currentUser && isManual) {
+      showToast("Please login first to fetch keys from your profile.", "error");
+      return;
+    }
+    
+    setIsFetchingKeys(true);
+    try {
+      console.log("[App] Fetching keys from Firebase...");
+      let finalEncryptedKey = '';
+      let keyFound = false;
+
+      if (currentUser) {
+        const docRef = doc(db, 'users', currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data().encryptedApiKey) {
+          finalEncryptedKey = docSnap.data().encryptedApiKey;
+          keyFound = true;
+        }
+      }
+
+      if (!keyFound) {
+        // Fallback to admin key
+        console.log("[App] Checking admin fallback...");
+        const adminDoc = await getDoc(doc(db, 'users', 'admin')).catch(() => null);
+        if (adminDoc && adminDoc.exists() && adminDoc.data().encryptedApiKey) {
+          finalEncryptedKey = adminDoc.data().encryptedApiKey;
+          keyFound = true;
+        }
+      }
+
+      if (keyFound && finalEncryptedKey) {
+        setEncryptedApiKey(finalEncryptedKey);
+        setIsApiKeySaved(true);
+        
+        // Decrypt for UI
+        try {
+          const idToken = currentUser ? await currentUser.getIdToken() : "";
+          const decryptResponse = await fetch('/api/decrypt-keys', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': idToken ? `Bearer ${idToken}` : ""
+            },
+            body: JSON.stringify({ encryptedKey: finalEncryptedKey })
+          });
+          
+          if (decryptResponse.ok) {
+            const decryptData = await decryptResponse.json();
+            if (decryptData.keys) {
+              setGeminiApiKey(decryptData.keys.gemini || '');
+              setOpenaiApiKey(decryptData.keys.openai || '');
+              if (isManual) showToast("Successfully get api and inserted in system", "success");
+            }
+          } else {
+            const errData = await decryptResponse.json();
+            if (errData.details && errData.details.includes('DECRYPTION_FAILED')) {
+              showToast("Encryption key mismatch. Please re-save your API keys in Profile settings.", "error");
+            } else if (isManual) {
+              showToast("Fetched encrypted key, but decryption failed.", "error");
+            }
+          }
+        } catch (decryptErr) {
+          console.error("Failed to decrypt keys on fetch:", decryptErr);
+          if (isManual) showToast("Failed to decrypt keys.", "error");
+        }
+      } else {
+        if (isManual) showToast("No API keys found in your profile or system fallback.", "error");
+      }
+    } catch (err) {
+      console.error("Error fetching keys:", err);
+      if (isManual) showToast("Error fetching keys from Firebase.", "error");
+    } finally {
+      setIsFetchingKeys(false);
+    }
+  };
+
   const [isSyncing, setIsSyncing] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   // Add resumeSource state: 'local' (default) or 'firestore'
@@ -447,46 +528,22 @@ export default function App() {
             }
           }
           
-          // Fallback to admin key if user has no key
-          if (!hasUserKey) {
-            console.log("[App] User has no key, checking admin fallback...");
-            const adminDoc = await getDoc(doc(db, 'users', 'admin')).catch(() => null);
-            if (adminDoc && adminDoc.exists() && adminDoc.data().encryptedApiKey) {
-               setEncryptedApiKey(adminDoc.data().encryptedApiKey);
-               setIsApiKeySaved(true);
+              // Fallback to admin key if user has no key
+              if (!hasUserKey) {
+                console.log("[App] User has no key, checking admin fallback...");
+                fetchKeysFromFirebase(false);
+              }
+            } catch (err) {
+              console.error("Error fetching profile:", err);
             }
+          } else {
+            // Not signed in: Check for admin fallback automatically
+            console.log("[App] Not signed in, checking admin fallback key...");
+            fetchKeysFromFirebase(false);
+            setDriveAccessToken(null);
+            setIsDriveConnected(false);
+            setShowTermsModal(false);
           }
-
-        } catch (err) {
-          console.error("Error fetching profile:", err);
-        }
-      } else {
-        // Not signed in: Check for admin fallback automatically
-        console.log("[App] Not signed in, checking admin fallback key...");
-        const fetchAdminFallback = async () => {
-          try {
-            const adminDoc = await getDoc(doc(db, 'users', 'admin')).catch(() => null);
-            if (adminDoc && adminDoc.exists() && adminDoc.data().encryptedApiKey) {
-               setEncryptedApiKey(adminDoc.data().encryptedApiKey);
-               setIsApiKeySaved(true);
-            } else {
-              setOpenaiApiKey('');
-              setGeminiApiKey('');
-              setEncryptedApiKey('');
-              setIsApiKeySaved(false);
-            }
-          } catch (e) {
-            setOpenaiApiKey('');
-            setGeminiApiKey('');
-            setEncryptedApiKey('');
-            setIsApiKeySaved(false);
-          }
-        };
-        fetchAdminFallback();
-        setDriveAccessToken(null);
-        setIsDriveConnected(false);
-        setShowTermsModal(false);
-      }
       setIsAuthReady(true);
       // Allow state to settle before tracking changes
       setTimeout(() => {
@@ -855,7 +912,7 @@ export default function App() {
         updatedAt: serverTimestamp()
       }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'users/' + user.uid));
 
-      showToast("Profile saved successfully!", "success");
+      showToast("Successfully get api and inserted in system", "success");
     } catch (err) {
       console.error("Error saving profile:", err);
       showToast("Failed to save profile.", "error");
@@ -1957,31 +2014,31 @@ export default function App() {
     setOptimizationStatus("Initializing Nexus Pipeline...");
     
     const routerConfig = getRouterConfig();
-    console.log("[Nexus AI] Router Config obtained:", { 
-      engine: routerConfig.mode, 
-      hasGemini: !!routerConfig.geminiConfig.apiKey,
-      hasOpenAI: !!routerConfig.openaiConfig.apiKey 
-    });
     
-    // Check for missing API keys
-    if (selectedEngine === 'openai' && !routerConfig.openaiConfig.apiKey) {
-      console.warn("[Nexus AI] OpenAI Key Missing");
-      setError("API keys are now managed securely in your Profile. Please go to the Profile tab and save your OpenAI API key.");
+    // STRICT CHECK: Ensure at least one API key is present for the selected engine
+    const geminiKeyToUse = geminiApiKey || (typeof encryptedApiKey === 'string' && encryptedApiKey.includes(':') ? encryptedApiKey : '') || engineConfig.gemini.apiKey;
+    const openaiKeyToUse = openaiApiKey || (typeof encryptedApiKey === 'string' && encryptedApiKey.includes(':') ? encryptedApiKey : '') || engineConfig.openai.apiKey;
+
+    // Additional check: if they are still only encrypted strings, we can't really "use" them reliably on the frontend 
+    // but the backend might handle them. However, we should warn if no key was actually decrypted and no fallback exists.
+    
+    // Final check for missing API keys with the specific requested message
+    const isGeminiNeeded = selectedEngine === 'gemini' || selectedEngine === 'hybrid-gemini';
+    const isOpenAINeeded = selectedEngine === 'openai' || selectedEngine === 'hybrid-openai';
+    
+    const hasGKey = !!geminiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
+    const hasOKey = !!openaiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
+
+    if (isGeminiNeeded && !hasGKey) {
+      setError("At least 1 API key needed. Please insert your Gemini API key.");
       return;
     }
-    if (selectedEngine === 'gemini' && !routerConfig.geminiConfig.apiKey) {
-      console.warn("[Nexus AI] Gemini Key Missing");
-      setError("API keys are now managed securely in your Profile. Please go to the Profile tab and save your Gemini API key.");
+    if (isOpenAINeeded && !hasOKey) {
+      setError("At least 1 API key needed. Please insert your OpenAI API key.");
       return;
     }
-    if (selectedEngine === 'hybrid-openai' && (!routerConfig.openaiConfig.apiKey || !routerConfig.geminiConfig.apiKey)) {
-      console.warn("[Nexus AI] Hybrid OpenAI Keys Missing");
-      setError("Hybrid OpenAI Mode requires both OpenAI and Gemini API keys.");
-      return;
-    }
-    if (selectedEngine === 'hybrid-gemini' && !routerConfig.geminiConfig.apiKey) {
-      console.warn("[Nexus AI] Hybrid Gemini Key Missing");
-      setError("Hybrid Gemini Mode requires a Gemini API key.");
+    if (!hasGKey && !hasOKey) {
+      setError("At least 1 API key needed. Please insert your API key in the Profile tab.");
       return;
     }
 
@@ -3191,6 +3248,25 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                 </nav>
               </div>
               <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
+                  <div className="flex items-center gap-1.5 sm:gap-3 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 shrink-0">
+                    <div className="flex items-center gap-1 sm:gap-1.5" title={geminiApiKey ? "Gemini Ready" : encryptedApiKey ? "Gemini Encrypted" : "Gemini Missing"}>
+                      <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${geminiApiKey ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : encryptedApiKey ? 'bg-amber-500' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'}`} />
+                      <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60 hidden xs:inline">Gemini</span>
+                    </div>
+                    <div className="w-px h-3 bg-black/10 dark:bg-white/10" />
+                    <div className="flex items-center gap-1 sm:gap-1.5" title={openaiApiKey ? "OpenAI Ready" : encryptedApiKey ? "OpenAI Encrypted" : "OpenAI Missing"}>
+                      <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${openaiApiKey ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : encryptedApiKey ? 'bg-amber-500' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'}`} />
+                      <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60 hidden xs:inline">OpenAI</span>
+                    </div>
+                    <button 
+                      onClick={() => fetchKeysFromFirebase(true)}
+                      disabled={isFetchingKeys}
+                      className={`ml-0.5 sm:ml-1 p-0.5 sm:p-1 rounded-lg transition-all ${isFetchingKeys ? 'animate-spin opacity-50' : 'hover:bg-black/10 dark:hover:bg-white/10 opacity-60 hover:opacity-100'}`}
+                      title="Sync Keys"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                    </button>
+                  </div>
                   <button
                     onClick={() => isOptimizing ? handleStop() : handleOptimize()}
                     className={`relative overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all ${

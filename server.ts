@@ -157,23 +157,42 @@ function encrypt(text: string) {
   return iv.toString('hex') + ':' + encrypted.toString('hex');
 }
 
+const STATIC_FALLBACK_KEY = "4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b";
+
 function decrypt(text: string) {
-  try {
-    const textParts = text.split(':');
-    if (textParts.length < 2) throw new Error("Invalid encrypted text format");
-    const iv = Buffer.from(textParts.shift()!, 'hex');
-    const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
-    let decrypted = decipher.update(encryptedText);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    return decrypted.toString();
-  } catch (error: any) {
-    console.error("Decryption Error:", error);
-    if (error.message.includes('bad decrypt') || error.code === 'ERR_OSSL_EVP_BAD_DECRYPT') {
-      throw new Error("DECRYPTION_FAILED: The encryption key has changed or the data is corrupted. Please re-save your API keys in your profile.");
+  if (!text) return "";
+  if (!text.includes(':')) return text;
+
+  const textParts = text.split(':');
+  const iv = Buffer.from(textParts.shift()!, 'hex');
+  const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+
+  const attemptDecrypt = (keyHex: string) => {
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(keyHex, 'hex'), iv);
+      let decrypted = decipher.update(encryptedText);
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      return decrypted.toString();
+    } catch (e) {
+      return null;
     }
-    throw error;
+  };
+
+  // Try primary key (derived from env at start)
+  let result = attemptDecrypt(ENCRYPTION_KEY);
+
+  // If failed and primary wasn't the static one, try the static one as fallback
+  if (result === null && ENCRYPTION_KEY !== STATIC_FALLBACK_KEY) {
+    console.log("[Decrypt] Primary key mismatch. Attempting static fallback decryption...");
+    result = attemptDecrypt(STATIC_FALLBACK_KEY);
   }
+
+  if (result !== null) {
+    return result;
+  }
+
+  console.error("Decryption Error: DECRYPTION_FAILED");
+  throw new Error("DECRYPTION_FAILED: The encryption key has changed or the data is corrupted. Please re-save your API keys in your profile.");
 }
 
 async function startServer() {
@@ -759,7 +778,7 @@ async function startServer() {
       // Need to find where Gemini is instantiated to update it
       // Let's first verify where it's initialized and how it's used before changing too much.
 
-      // 2. Check Cache First (Key includes all relevant fields)
+      // 2. Check Cache First (Key includes all relevant fields + API key presence to avoid stale results from different keys)
       const cacheKey = pipelineCache.generateKey({ 
         resumeText: resumeText,
         jobDescription: jobDescription,
@@ -767,7 +786,9 @@ async function startServer() {
         mode, 
         audience, 
         customPrompt,
-        pipelineType: selectedPipeline
+        pipelineType: selectedPipeline,
+        hasGemini: !!geminiKey,
+        hasOpenAI: !!openaiKey
       });
       
       const cachedResult = pipelineCache.get(cacheKey);
@@ -787,8 +808,8 @@ async function startServer() {
         return res.json(cachedResult);
       }
 
-      if (selectedPipeline === 'hybrid-openai' && !openaiKey) {
-        throw new Error("OpenAI API Key is required for Hybrid OpenAI mode.");
+      if (!geminiKey && !openaiKey && !process.env.GEMINI_API_KEY) {
+        throw new Error("No valid API keys found. Please provide at least 1 Gemini or OpenAI API key in your profile.");
       }
 
       // STEP 1: Gemini (Cheap) - Extraction & Analysis
@@ -1034,6 +1055,7 @@ async function startServer() {
           5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it.
           6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
           7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
+          8. COMPLETE DATA: You MUST process and include EVERY SINGLE section provided in the INPUT DATA. Do not omit any roles, projects, or certifications.
           
           OUTPUT JSON SCHEMA:
           {

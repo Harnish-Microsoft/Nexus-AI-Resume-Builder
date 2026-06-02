@@ -517,7 +517,7 @@ STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
 5. LEADERSHIP POSITIONING: Leadership wording must match designation and tenure. For engineering roles, avoid director-level strategy wording. If tenure is short (<6 months), focus on onboarding, shadowing, and support coordination rather than transformations.
 6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Provide detailed and descriptive operational wording.
 7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
-8. BULLET CONSTRAINTS: Each bullet should be impactful and detailed, potentially spanning up to 2 lines to convey complexity, technical stack, and specific outcomes or metrics. Avoid overly brief one-liners that lack technical context. For the first two roles, use 5-8 bullets each. For the third, use 4-6 bullets.
+8. BULLET CONSTRAINTS: Each bullet should be impactful and detailed, potentially spanning up to 2 lines to convey complexity, technical stack, and specific outcomes or metrics. Avoid overly brief one-liners that lack technical context. You MUST process and include EVERY SINGLE role provided in the input, ensuring each has an appropriate number of high-quality bullets based on tenure and relevance.
 9. PRESERVE TITLES: NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics".
 10. EDUCATION FIDELITY: Include ALL educational entries. 
 11. MAX 2 PAGES: Content must fit A4 layout.
