@@ -59,15 +59,13 @@ async function getApiKeys(idToken: string) {
       
       let data = doc.data();
       
-      // FALLBACK: If current user has no key, check for a "shared" key in 'users/admin'
+      // Strictly use user-specific key. No fallback to shared admin key.
       if (!data || !data.encryptedApiKey) {
-        console.log(`[Server] User ${uid} has no key. Checking for fallback in 'users/admin'...`);
-        const adminDoc = await db.collection("users").doc("admin").get();
-        if (adminDoc.exists) {
-          data = adminDoc.data();
-          console.log(`[Server] Found fallback key in 'users/admin'.`);
-        }
+        console.log(`[Server] User ${uid} key missing in Firestore.`);
+        return null;
       }
+      
+      console.log(`[Server] Using strictly user-specific key for ${uid}.`);
 
       if (!data || !data.encryptedApiKey) {
         return null; // Return null instead of throwing
@@ -740,12 +738,17 @@ async function startServer() {
     try {
       // 1. Fetch keys securely from Firestore
       const keys = await getApiKeys(idToken);
-      let geminiKey = process.env.GEMINI_API_KEY;
-      let openaiKey = "";
+      let geminiKey = keys?.gemini || "";
+      let openaiKey = keys?.openai || "";
       
-      if (keys) {
-        geminiKey = keys.gemini || geminiKey;
-        openaiKey = keys.openai || "";
+      // Only fall back to system key if NO identity is provided (Guest Mode)
+      if (!idToken) {
+        geminiKey = geminiKey || process.env.GEMINI_API_KEY || "";
+        openaiKey = openaiKey || "";
+      }
+      
+      if (!geminiKey && !idToken) {
+         console.warn("No API key found in Guest Mode. System may fall back to platform default.");
       }
 
       // 2. Override with API key from request if provided (supports both raw and encrypted)
@@ -869,39 +872,42 @@ async function startServer() {
         ` : ''}
 
         STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
-        1. TRUTHFULNESS IS MANDATORY: NEVER fabricate metrics, technologies (Kubernetes/Terraform), leadership ownership, direct reports, hiring authority, certifications, or strategic transformation initiatives not explicitly present in the source.
-        2. AI-GENERATED LANGUAGE PREVENTION: DO NOT use "Spearheaded", "Orchestrated", "Pioneered". Use grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated", "Improved", "Maintained", "Resolved", "Led", "Streamlined".
-        3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages or fake MTTR/Uptime numbers. If metrics are missing, prioritize operational ownership and technical depth.
-        4. STAR METHODOLOGY: Every bullet should reflect a challenge, action, technologies used, and realistic outcome. Do NOT force metrics into every bullet; strong qualitative outcomes are acceptable.
-        5. LEADERSHIP POSITIONING: Leadership wording must match designation and tenure. For engineering roles, avoid director-level strategy wording. If tenure is short (<6 months), focus on onboarding, shadowing, and support coordination rather than transformations.
-        6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Provide detailed and descriptive operational wording.
-        7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
+        1. TRUTHFULNESS & GROUNDING (MANDATORY): You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
+        
+        2. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
+        
+        3. TIMELINE-BASED BULLET CONSTRAINTS (STRICT):
+           - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
+           - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
+           - OLDER ROLES (Before 2017): Strictly 1 brief bullet point focusing only on the core outcome.
+           - CASEPOINT: At least 4 bullet points.
+           - HCL: Strictly 2 basic bullet points.
+        
+        4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
+        4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
+        
+        5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
+        
+        6. NO TRUNCATION: Adhere strictly to the bullet counts above. Do not exceed them, as the goal is to fit everything on 1-2 pages.
+        
+        7. SOURCE ANCHORING: Derive new bullets primarily from that specific role’s context. Do not invent fake projects.
+        
+        8. TRUTHFULNESS & GROUNDING: You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
+        
+        9. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
         
         INPUT DATA (Optimized):
         ${JSON.stringify(optimizedInput, null, 2)}
         
-        STRICT RULES:
-        1. TONE & FOCUS: Maintain a professional, detailed, executive-level tone suitable for FAANG, Senior Cloud Architect, or Director-level infrastructure roles. Focus heavily on these JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
-        
-        2. PRESERVE TITLES: Do NOT modify job titles under any circumstances. Specifically, NEVER change "Officer IT cum Logistics" to "Officer IT cum Logistics". (Fix any "Office" typos found in the source).
-        
-        3. INCLUDE ALL ROLES (MANDATORY): You MUST include ALL ${roleCount} roles provided in the INPUT DATA. Do not skip any jobs, even very old ones. An incomplete experience list is a FAIL.
-        
-        4. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, metrics, or experience that are not explicitly present in the INPUT DATA.
-        
-        5. IMPACT & DETAIL (FAANG STANDARD): Experience bullet points should be impactful and detailed, potentially spanning 2 lines to include technical depth, tools used, and specific outcomes. Avoid overly brief one-liners. Prioritize technical context and scale metrics.
-        
-        6. RECENT ROLE EXPANSION (Post-2018): You MUST output 5 to 8 bullet points for EVERY single role that occurred after 2018. Provide high density of technical details.
-        
-        7. OLDER ROLE COMPRESSION (Pre-2018): Provide 2 to 3 high-impact bullet points for roles before 2018. Even older roles should have enough detail to show progression and foundational skills.
-        
-        8. SOURCE ANCHORING: Derive new bullets ONLY from that specific role’s original content.
-        
-        9. BALANCED IaC: Terraform/IaC references are encouraged for technical roles. Include up to 5-6 bullet points TOTAL across the entire resume if relevant to the JD.
-        
-        10. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative on Azure Infrastructure, HA/DR, and Governance.
-        
-        11. PROJECT FIDELITY: You MUST output EVERY project provided in the INPUT DATA.
+        STRICT FINAL RULES:
+        1. TONE & FOCUS: Maintain a professional, detailed, human-written tone. Focus on JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
+        2. PRESERVE TITLES: Do NOT modify job titles.
+        3. TIMELINE ADHERENCE: Strictly follow the bullet counts for RECENT, MID-CAREER, and OLDER roles.
+        4. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative on Azure Infrastructure, HA/DR, and Governance.
+        5. PROJECT FIDELITY: You MUST output EVERY project. Limit descriptions to 2 sentences.
+        6. NO FABRICATION: Do not invent metrics or technologies.
+        7. NO AI SLOP: Ban "Spearheaded", "Leveraged", etc. Use grounded verbs.
+        8. BALANCED IaC: Terraform/IaC references are encouraged for technical roles. Include up to 5-6 bullet points TOTAL across the entire resume if relevant to the JD.
         
         OUTPUT JSON SCHEMA:
         {
@@ -1053,10 +1059,10 @@ async function startServer() {
           }, null, 2)}
           
           STRICT RULES:
-          1. Summary: 150-250 words, high impact, NO AI-slop words like "Spearheaded" or "Pioneered". Use "Managed", "Led", "Optimized". Provide a comprehensive overview of technical expertise and career trajectory.
+          1. Summary: 50-100 words, high impact, NO AI-slop words. Use natural, grounded operational verbs. Provide a concise overview of technical expertise and career trajectory.
           2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
-          3. Why This Job: 100-150 words compelling response based on factual alignment.
-          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them. Each project description should be thorough (40-60 words), detailing your specific technical contribution, the stack used, and the measurable outcome.
+          3. Why This Job: 75-125 words compelling response based on factual alignment.
+          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them. Keep project descriptions to a maximum of 2 sentences or 25 words, focusing strictly on the technical architecture and the business outcome.
           5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it.
           6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
           7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
@@ -1275,6 +1281,211 @@ async function startServer() {
     res.json({ sessionId });
   });
 
+  // API Endpoints for Diagnostics
+  app.get("/api/key-status", async (req, res) => {
+    const authHeader = req.header('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(200).json({ type: "system", geminiStatus: "Using System Default", openaiStatus: "Using System Default" });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    try {
+      const keys = await getApiKeys(idToken);
+      if (keys && keys.gemini) {
+        return res.json({ 
+          type: "user", 
+          geminiStatus: `Personal Key (${keys.gemini.substring(0, 4)}...${keys.gemini.slice(-4)})`,
+          openaiStatus: keys.openai ? `Personal Key (${keys.openai.substring(0, 4)}...${keys.openai.slice(-4)})` : "Not Configured"
+        });
+      }
+      res.json({ type: "system", geminiStatus: "System Default (No Personal Key Found)", openaiStatus: "System Default" });
+    } catch (error) {
+      res.json({ type: "error", message: "Failed to verify identity" });
+    }
+  });
+
+  app.post("/api/diagnose/gemini", async (req, res) => {
+    const { idToken } = req.body;
+    try {
+      const keys = await getApiKeys(idToken);
+      const geminiKey = keys?.gemini || process.env.GEMINI_API_KEY;
+      if (!geminiKey) return res.status(401).json({ error: "No API key configured" });
+
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      
+      // Test 1: Simple List Models
+      await ai.models.list();
+      
+      // Test 2: Deep Research capability test (with minimal/dummy prompt to trigger error if key issue)
+      await ai.interactions.create({
+        agent: "deep-research-preview-04-2026",
+        input: "test connection",
+      }).catch(e => {
+        if(e.status === 400) throw e;
+      });
+
+      res.status(200).json({ status: "ok" });
+    } catch (error: any) {
+      console.error("[Diagnostics] Gemini Error:", error);
+      res.status(500).json({ error: error.message || "Unknown error" });
+    }
+  });
+
+  app.post("/api/diagnose/openai", async (req, res) => {
+    const { idToken } = req.body;
+    try {
+      const keys = await getApiKeys(idToken);
+      const openaiKey = keys?.openai || process.env.OPENAI_API_KEY;
+      if (!openaiKey) return res.status(401).json({ error: "No API key configured" });
+
+      const openai = new OpenAI({ apiKey: openaiKey });
+      await openai.models.list();
+      res.status(200).json({ status: "ok" });
+    } catch (error: any) {
+      console.error("[Diagnostics] OpenAI Error:", error);
+      res.status(500).json({ error: error.message || "Unknown error" });
+    }
+  });
+
+  app.post("/api/update-keys", async (req, res) => {
+    const { idToken, geminiKey, openaiKey } = req.body;
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const uid = decodedToken.uid;
+      const encrypted = encrypt(JSON.stringify({ gemini: geminiKey, openai: openaiKey }));
+      await db.collection("users").doc(uid).set({ encryptedApiKey: encrypted }, { merge: true });
+      res.status(200).json({ success: true });
+    } catch (error: any) {
+      console.error("[Diagnostics] Update Error:", error);
+      res.status(500).json({ error: error.message || "Unknown error" });
+    }
+  });
+
+  // OMNI FEATURES: Vision Scanning
+  app.post("/api/gemini/scan-resume", async (req, res) => {
+    const { imageData, mimeType, idToken } = req.body;
+    if (!imageData) return res.status(400).json({ error: "Image data required" });
+
+    try {
+      const keys = await getApiKeys(idToken);
+      const geminiKey = keys?.gemini || (!idToken ? process.env.GEMINI_API_KEY : "");
+      if (!geminiKey && idToken) return res.status(401).json({ error: "Personal API key required. Please update your profile settings." });
+      if (!geminiKey) return res.status(401).json({ error: "No API key found" });
+
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [{
+          parts: [
+            { inlineData: { data: imageData, mimeType: mimeType || "image/png" } },
+            { text: "ACT AS: Expert ATS Resume Parser. EXTRACT ALL DATA from this resume image. Output as a clean JSON object compatible with a resume builder. Fields should include: contact (name, email, phone, location, linkedin), summary, experience (title, company, location, dateRange, highlights array), education (degree, school, location, dateRange), skills (category if applicable, or flat array), and projects. If you cannot read certain parts, leave them null. Output ONLY the JSON." }
+          ]
+        }],
+        config: { responseMimeType: "application/json" }
+      });
+
+      res.json(JSON.parse(response.text || "{}"));
+    } catch (error: any) {
+      console.error("[Omni Scan] Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // OMNI FEATURES: Deep Research
+  app.post("/api/deep-research/start", async (req, res) => {
+    const { resume, jd, idToken } = req.body;
+    try {
+      const keys = await getApiKeys(idToken);
+      const geminiKey = keys?.gemini || process.env.GEMINI_API_KEY;
+      if (!geminiKey) return res.status(401).json({ error: "No API key found" });
+
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const interaction = await ai.interactions.create({
+        agent: "deep-research-preview-04-2026",
+        input: `Conduct a DEEP RESEARCH analysis of this resume against this Job Description. 
+                RESUME: ${JSON.stringify(resume)}
+                JD: ${jd}
+                
+                GOALS:
+                1. Identify the most critical gaps in the resume for this specific role.
+                2. Suggest highly specific, data-driven achievements to add (based on the provided resume content).
+                3. Research the company's culture and typical interview questions for this role to provide tailoring advice.
+                4. Final Output: Provide a structured report with "Critical Gaps", "Tailoring Suggestions", and "Strategic Advancements".`,
+        background: true,
+      });
+
+      res.json({ interactionId: interaction.id });
+    } catch (error: any) {
+      console.error("[Deep Research] Start Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/deep-research/status/:id", async (req, res) => {
+    const { id } = req.params;
+    const { idToken } = req.query;
+    try {
+      const keys = await getApiKeys(idToken as string);
+      const geminiKey = keys?.gemini || process.env.GEMINI_API_KEY;
+      if (!geminiKey) return res.status(401).json({ error: "No API key found" });
+
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const interaction = await ai.interactions.get(id);
+      
+      let fullOutput = "";
+      if (interaction.status === "completed") {
+        for (const step of interaction.steps || []) {
+          if (step.type === 'model_output') {
+            const stepContent = step.content as any[];
+            const textContent = stepContent?.find((c: any) => c.type === 'text');
+            if (textContent && textContent.text) {
+              fullOutput += textContent.text;
+            }
+          }
+        }
+      }
+
+      res.json({
+        status: interaction.status,
+        output: fullOutput,
+        progress: interaction.status === "completed" ? 100 : 50 // Simplified progress
+      });
+    } catch (error: any) {
+      console.error("[Deep Research] Status Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // OMNI FEATURES: TTS Feedback
+  app.post("/api/resume-feedback-audio", async (req, res) => {
+    const { text, idToken } = req.body;
+    try {
+      const keys = await getApiKeys(idToken);
+      const geminiKey = keys?.gemini || (!idToken ? process.env.GEMINI_API_KEY : "");
+      if (!geminiKey && idToken) return res.status(401).json({ error: "Personal API key required. Please update your profile settings." });
+      if (!geminiKey) return res.status(401).json({ error: "No API key found" });
+
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-tts-preview',
+        contents: [{ parts: [{ text: `Provide professional, encouraging audio feedback on this resume critique: ${text}` }] }],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: "Zephyr" }
+            }
+          }
+        }
+      });
+
+      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      res.json({ audioData });
+    } catch (error: any) {
+      console.error("[TTS Feedback] Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // API Endpoint to download PDF from session
   app.get("/api/download-pdf/:sessionId", async (req, res) => {
     const { sessionId } = req.params;
@@ -1292,15 +1503,8 @@ async function startServer() {
       return res.status(400).json({ error: "HTML content is required" });
     }
 
-    console.log(`Generating PDF. HTML length: ${html.length}`);
-    console.log(`CSS length: ${css?.length || 0}`);
-    console.log(`Fonts length: ${fonts?.length || 0}`);
-    console.log(`CSS snippet: ${css?.substring(0, 500) || ''}`);
-
     let browser;
     try {
-      // In this environment, we often need to force puppeteer to use the installed chrome
-      // or let it find its own. Deleting the env var sometimes helps if it points to a wrong path.
       const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
       
       browser = await puppeteer.launch({
@@ -1317,10 +1521,9 @@ async function startServer() {
 
       const page = await browser.newPage();
       
-      // Set viewport to A4 dimensions at 96 DPI
+      // Hard scale parameters to force perfect layout metrics
       await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
 
-      // Construct a more robust base HTML
       const baseHtml = `
         <!DOCTYPE html>
         <html>
@@ -1328,30 +1531,62 @@ async function startServer() {
             <meta charset="UTF-8">
             <title>${title}</title>
             <style>
+              /* 1. Inject Standard FAANG Font */
+              @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap');
+
               * { box-sizing: border-box; }
-              
+
               @page { 
                 size: A4; 
-                margin: 12mm 0; /* Allows native, perfect page breaks */
+                margin: 10mm 10mm !important; /* Reclaims horizontal space on the physical page */
               }
-              
+
               html, body {
-                margin: 0;
-                padding: 0;
-                width: 210mm;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
                 height: auto !important;
                 background: white;
+                font-family: 'Open Sans', sans-serif !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
               }
-              
+
+              /* 2. STRETCH CONTENT HORIZONTALLY */
               #resume-container, .resume-page {
                 width: 100% !important;
-                margin: 0 !important;
+                max-width: 100% !important;
+                margin: 0 auto !important;
+                /* Overrides the massive 25mm internal padding from React to use the full page width */
+                padding: 0mm 5mm !important; 
                 box-shadow: none !important;
                 border: none !important;
               }
-              
+
+              /* Reduce bullet point indentation to gain more line length */
+              ul {
+                padding-left: 16px !important;
+                margin-left: 0 !important;
+              }
+
+              /* 3. Beautiful Typography & Vertical Compression */
+              p, li, span, div, .resume-bullet-text { 
+                font-size: 9.5pt !important; 
+                line-height: 1.35 !important; 
+              }
+
+              p, li, .resume-bullet-text, .experience-item div {
+                text-align: left !important;
+                text-justify: auto !important;
+              }
+
+              /* 4. Clean Section Spacing */
+              .resume-section { margin-bottom: 8px !important; padding: 0 !important; }
+              .experience-item { margin-bottom: 6px !important; }
+              ul.resume-list { margin-top: 4px !important; margin-bottom: 4px !important; }
+              li { margin-bottom: 4px !important; }
+
+              /* Dynamic Scale Injection from Frontend */
               ${css || ''}
               ${fonts || ''}
             </style>
@@ -1364,29 +1599,21 @@ async function startServer() {
 
       // Set content and wait for it to load
       await page.setContent(baseHtml, { 
-        waitUntil: "networkidle2", // Wait until no more than 2 network connections
+        waitUntil: "networkidle0", 
         timeout: 30000 
       });
 
-      // Wait for fonts to load
+      // Wait for Google Fonts to load
       await page.evaluateHandle('document.fonts.ready');
 
-      // Generate PDF
+      // Generate PDF with Hard 2-Page Limit
       const pdfBuffer = await page.pdf({
         format: "A4",
         printBackground: true,
         displayHeaderFooter: false,
-        preferCSSPageSize: true,
-        pageRanges: "1-2"
+        preferCSSPageSize: true
       });
 
-      console.log(`PDF generated. Size: ${pdfBuffer.length} bytes`);
-
-      if (pdfBuffer.length < 100) {
-        throw new Error("Generated PDF is suspiciously small. It might be empty or corrupted.");
-      }
-
-      // Set headers and send
       res.setHeader("Content-Type", "application/pdf");
       const safeTitle = title.replace(/[^a-zA-Z0-9_-]/g, '_');
       res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.pdf"`);
@@ -1395,13 +1622,8 @@ async function startServer() {
 
     } catch (error: any) {
       console.error("CRITICAL PDF ERROR:", error);
-      // If we haven't sent headers yet, send a JSON error
       if (!res.headersSent) {
-        res.status(500).json({ 
-          error: "Failed to generate PDF", 
-          details: error.message,
-          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
+        res.status(500).json({ error: "Failed to generate PDF", details: error.message });
       }
     } finally {
       if (browser) {

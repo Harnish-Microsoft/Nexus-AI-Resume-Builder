@@ -60,6 +60,12 @@ export interface OptimizationResult {
   _model?: string;
 }
 
+export interface DeepResearchResult {
+  status: string;
+  output: string;
+  progress: number;
+}
+
 export type EngineType = 'gemini' | 'openai';
 
 export interface EngineConfig {
@@ -107,25 +113,7 @@ export async function getDecryptedKey(encryptedKey: string): Promise<string> {
   const idToken = await auth.currentUser?.getIdToken();
   let keyToDecrypt = encryptedKey;
 
-  // Fallback: If no key provided for current user or no user signed in, check 'users/admin' in Firestore
-  if (!keyToDecrypt) {
-    try {
-      console.log("[GeminiService] No specific user key. Checking 'users/admin' fallback...");
-      // Using standard getDoc - if rules allow public read, this will work even if unauthenticated
-      const adminDoc = await getDoc(doc(db, 'users', 'admin'));
-      if (adminDoc.exists()) {
-        const data = adminDoc.data();
-        if (data.encryptedApiKey) {
-          keyToDecrypt = data.encryptedApiKey;
-          console.log("[GeminiService] Found shared key in 'users/admin'.");
-        }
-      }
-    } catch (e) {
-      console.warn("[GeminiService] Failed to fetch admin fallback key:", e);
-    }
-  }
-
-  if (!keyToDecrypt) return process.env.GEMINI_API_KEY || '';
+  if (!keyToDecrypt) return '';
   if (!keyToDecrypt.includes(':')) return keyToDecrypt;
 
   try {
@@ -290,6 +278,48 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   }
 }
 
+
+export async function scanResumeImage(imageData: string, mimeType: string): Promise<any> {
+  const idToken = await auth.currentUser?.getIdToken();
+  const response = await fetch('/api/gemini/scan-resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageData, mimeType, idToken })
+  });
+  if (!response.ok) throw new Error("Vision Scan Failed");
+  return await response.json();
+}
+
+export async function startDeepResearch(resume: any, jd: string): Promise<string> {
+  const idToken = await auth.currentUser?.getIdToken();
+  const response = await fetch('/api/deep-research/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resume, jd, idToken })
+  });
+  if (!response.ok) throw new Error("Deep Research Initiation Failed");
+  const data = await response.json();
+  return data.interactionId;
+}
+
+export async function getDeepResearchStatus(id: string): Promise<DeepResearchResult> {
+  const idToken = await auth.currentUser?.getIdToken();
+  const response = await fetch(`/api/deep-research/status/${id}?idToken=${idToken}`);
+  if (!response.ok) throw new Error("Deep Research Status Check Failed");
+  return await response.json();
+}
+
+export async function getAudioFeedback(text: string): Promise<string> {
+  const idToken = await auth.currentUser?.getIdToken();
+  const response = await fetch('/api/resume-feedback-audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, idToken })
+  });
+  if (!response.ok) throw new Error("Audio Generation Failed");
+  const data = await response.json();
+  return data.audioData;
+}
 
 export async function fetchJobDescription(url: string, config: RouterConfig): Promise<string> {
   const routedConfig = routeTask('extract_job_description', config);
@@ -509,18 +539,23 @@ ${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design" an
 ${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Shipping Engineering Impact".' : ''}
 ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery" and "Managed Services".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
 
-STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
-1. TRUTHFULNESS IS MANDATORY: NEVER fabricate metrics, technologies (Kubernetes/Terraform), leadership ownership, direct reports, hiring authority, certifications, or strategic transformation initiatives not explicitly present in the source.
-2. AI-GENERATED LANGUAGE PREVENTION: DO NOT use "Spearheaded", "Orchestrated", "Pioneered". Use grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated", "Improved", "Maintained", "Resolved", "Led", "Streamlined".
-3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages or fake MTTR/Uptime numbers. If metrics are missing, prioritize operational ownership and technical depth.
-4. STAR METHODOLOGY: Every bullet should reflect a challenge, action, technologies used, and realistic outcome. Do NOT force metrics into every bullet; strong qualitative outcomes are acceptable.
-5. LEADERSHIP POSITIONING: Leadership wording must match designation and tenure. For engineering roles, avoid director-level strategy wording. If tenure is short (<6 months), focus on onboarding, shadowing, and support coordination rather than transformations.
-6. HUMANIZATION: The resume must feel naturally written. Remove buzzword stacking, LinkedIn-style AI phrasing, and repetitive sentence structures. Provide detailed and descriptive operational wording.
-7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
-8. BULLET CONSTRAINTS: Each bullet should be impactful and detailed, potentially spanning up to 2 lines to convey complexity, technical stack, and specific outcomes or metrics. Avoid overly brief one-liners that lack technical context. You MUST process and include EVERY SINGLE role provided in the input, ensuring each has an appropriate number of high-quality bullets based on tenure and relevance.
-9. PRESERVE TITLES: NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics".
-10. EDUCATION FIDELITY: Include ALL educational entries. 
-11. MAX 2 PAGES: Content must fit A4 layout.
+        3. TIMELINE-BASED BULLET CONSTRAINTS (STRICT):
+           - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
+           - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
+           - OLDER ROLES (Before 2017): Strictly 1 brief bullet point focusing only on the core outcome.
+           - CASEPOINT: At least 4 bullet points.
+           - HCL: Strictly 2 basic bullet points.
+        4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
+        4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
+        5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
+        6. TRUTHFULNESS & GROUNDING (MANDATORY): You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
+        7. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
+        8. STAR METHODOLOGY: Every bullet should reflect a realistic challenge and outcome. Do NOT force metrics where none existed.
+        9. HUMANIZATION: Provide detailed and descriptive operational wording that sounds like a human wrote it. Avoid repetitive sentence structures.
+        10. PRESERVE TITLES: NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics".
+        11. MANDATORY 1-2 PAGE LIMIT: Strictly adhere to these counts to ensure the document fits on 1-2 pages. Priority is technical density and strategic impact within these limits.
+        12. SENIOR ARCHITECT PHILOSOPHY (16+ YEARS EXPERTISE): You are representing a high-level technologist. Phrasing must reflect strategic decision-making, stakeholder management, and enterprise-wide impact. Use words like "Architected", "Partnered", "Evaluated", "Defined", and "Governed". Instead of just "using" tools, focus on "Selection Criteria", "Cost Optimization (FinOps)", "Security Posture Improvement", and "Roadmap Alignment". For a 16-year veteran, ensure the technical depth is matched by business value and leadership scale.
+        13. SCALE & COMPLEXITY: Use grounded, mature terminology for enterprise contexts: "Zero-Downtime Migration", "High-Availability Configuration", "Multi-Tenant Infrastructure", "DR Orchestration", "Lifecycle Management". Avoid junior descriptions like "Helped out with..." or "Worked on...".
 
 INPUT:
 RESUME: ${resumeText}
@@ -1202,7 +1237,7 @@ export async function generateMasterResume(
   const routedConfig = routeTask('rewrite_resume', config);
   const prompt = `
     ROLE: Expert Career Coach & Resume Writer.
-    TASK: Generate 5-8 high-impact, detailed, and ATS-friendly bullet points for a user's experience entry. Each bullet should be substantial (spanning 1-2 lines) and provide specific technical context and outcomes.
+    TASK: Generate 6-8 high-impact, detailed, and ATS-friendly bullet points for a user's experience entry. A minimum of 6 bullet points is mandatory to ensure technical depth. Each bullet should be substantial (spanning 1-2 lines) and provide specific technical context and outcomes.
     
     INPUT DATA:
     Company: ${data.company}

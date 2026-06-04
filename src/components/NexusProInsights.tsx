@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, 
@@ -15,9 +15,14 @@ import {
   ArrowUpRight,
   Lightbulb,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Volume2,
+  VolumeX,
+  Play,
+  Square
 } from 'lucide-react';
 import { StarStory, AuditReport } from '../types';
+import { getAudioFeedback } from '../services/geminiService';
 
 interface NexusProInsightsProps {
   isDarkMode: boolean;
@@ -28,6 +33,43 @@ interface NexusProInsightsProps {
 export const NexusProInsights: React.FC<NexusProInsightsProps> = ({ isDarkMode, starStories, auditReport }) => {
   const [activeTab, setActiveTab] = useState<'interview' | 'audit'>('interview');
   const [expandedStar, setExpandedStar] = useState<number | null>(null);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePlayFeedback = async () => {
+    if (isPlayingAudio) {
+      audioRef.current?.pause();
+      setIsPlayingAudio(false);
+      return;
+    }
+
+    if (audioUrl) {
+      audioRef.current?.play();
+      setIsPlayingAudio(true);
+      return;
+    }
+
+    try {
+      setIsPlayingAudio(true);
+      const feedbackText = auditReport ? 
+        `Your Executive Readiness Score is ${auditReport.score}. Your career trajectory is currently in the ${auditReport.trajectory.stage} phase. ${auditReport.trajectory.description}. Recommendation: ${auditReport.trajectory.recommendation}. I detected ${auditReport.flags.length} red flags that need your attention.` :
+        "Analysis pending.";
+      
+      const audioData = await getAudioFeedback(feedbackText);
+      const blob = new Blob([Uint8Array.from(atob(audioData), c => c.charCodeAt(0))], { type: 'audio/mp3' });
+      const url = URL.createObjectURL(blob);
+      setAudioUrl(url);
+      
+      if (audioRef.current) {
+        audioRef.current.src = url;
+        audioRef.current.play();
+      }
+    } catch (err) {
+      console.error("Audio failed:", err);
+      setIsPlayingAudio(false);
+    }
+  };
 
   if (!starStories && !auditReport) {
     return (
@@ -57,7 +99,26 @@ export const NexusProInsights: React.FC<NexusProInsightsProps> = ({ isDarkMode, 
           </div>
         </div>
 
-        <div className={`flex p-1 rounded-full border ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-black/5 border-black/5'}`}>
+        <div className="flex items-center gap-2">
+          <audio ref={audioRef} onEnded={() => setIsPlayingAudio(false)} className="hidden" />
+          <button 
+            onClick={handlePlayFeedback}
+            className={`p-2 rounded-xl transition-all flex items-center gap-2 ${
+              isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'
+            }`}
+            title="Listen to AI Feedback"
+          >
+            {isPlayingAudio ? (
+              <Square className="w-4 h-4 text-red-500 fill-current" />
+            ) : (
+              <Volume2 className="w-4 h-4 text-purple-500" />
+            )}
+            <span className="text-[10px] font-black uppercase tracking-tighter">
+              {isPlayingAudio ? 'Stop' : 'Listen'}
+            </span>
+          </button>
+
+          <div className={`flex p-1 rounded-full border ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-black/5 border-black/5'}`}>
           <button 
             onClick={() => setActiveTab('interview')}
             className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
@@ -80,6 +141,7 @@ export const NexusProInsights: React.FC<NexusProInsightsProps> = ({ isDarkMode, 
           </button>
         </div>
       </div>
+    </div>
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">

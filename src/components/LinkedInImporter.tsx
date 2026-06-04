@@ -8,11 +8,12 @@ import {
   AlertCircle, 
   ArrowRight,
   ShieldCheck,
-  RefreshCw
+  RefreshCw,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { extractTextFromPDFFile } from '../lib/pdfUtils';
-import { EngineType } from '../services/geminiService';
+import { EngineType, scanResumeImage } from '../services/geminiService';
 
 interface LinkedInImporterProps {
   linkedInUrl: string;
@@ -39,10 +40,11 @@ export const LinkedInImporter: React.FC<LinkedInImporterProps> = ({
   isExtracting,
   setIsExtracting
 }) => {
-  const [importMode, setImportMode] = useState<'url' | 'pdf' | 'text'>('url');
+  const [importMode, setImportMode] = useState<'url' | 'pdf' | 'text' | 'vision'>('url');
   const [pastedText, setPastedText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const visionInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -63,6 +65,62 @@ export const LinkedInImporter: React.FC<LinkedInImporterProps> = ({
       } else {
         setError('Please upload a PDF file.');
       }
+    }
+  };
+
+  const handleVisionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setIsExtracting(true);
+      setLinkedInFileName(file.name);
+      try {
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const base64 = (event.target?.result as string).split(',')[1];
+            const parsedData = await scanResumeImage(base64, file.type);
+            onImport(JSON.stringify(parsedData));
+            setLinkedInPdfText(JSON.stringify(parsedData));
+          } catch (err) {
+            setError('Vision scan failed. Use text paste.');
+          } finally {
+            setIsExtracting(false);
+          }
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        setError('Vision scan failed. Use text paste.');
+        setIsExtracting(false);
+      }
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (importMode === 'vision') {
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf("image") !== -1) {
+                const file = items[i].getAsFile();
+                if (file) {
+                    setIsExtracting(true);
+                    setLinkedInFileName(file.name);
+                    const reader = new FileReader();
+                    reader.onload = async (event) => {
+                        try {
+                            const base64 = (event.target?.result as string).split(',')[1];
+                            const parsedData = await scanResumeImage(base64, file.type);
+                            onImport(JSON.stringify(parsedData));
+                            setLinkedInPdfText(JSON.stringify(parsedData));
+                        } catch (err) {
+                            setError('Vision scan failed. Use text paste.');
+                        } finally {
+                            setIsExtracting(false);
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
+        }
     }
   };
 
@@ -91,7 +149,7 @@ export const LinkedInImporter: React.FC<LinkedInImporterProps> = ({
       </div>
 
       <div className="flex gap-2 mb-6 p-1 bg-black/5 dark:bg-white/5 rounded-xl">
-        {(['url', 'pdf', 'text'] as const).map((mode) => (
+        {(['url', 'pdf', 'text', 'vision'] as const).map((mode) => (
           <button
             key={mode}
             onClick={() => setImportMode(mode)}
@@ -101,7 +159,7 @@ export const LinkedInImporter: React.FC<LinkedInImporterProps> = ({
                 : 'text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white'
             }`}
           >
-            {mode === 'url' ? 'Profile URL' : mode === 'pdf' ? 'PDF Export' : 'Manual Paste'}
+            {mode === 'url' ? 'URL' : mode === 'pdf' ? 'PDF' : mode === 'text' ? 'Paste' : 'Vision Scan'}
           </button>
         ))}
       </div>
@@ -138,14 +196,14 @@ export const LinkedInImporter: React.FC<LinkedInImporterProps> = ({
             className="space-y-4"
           >
             <div 
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => pdfInputRef.current?.click()}
               className={`relative border-2 border-dashed rounded-xl p-8 transition-all cursor-pointer flex flex-col items-center justify-center gap-3 ${
                 isDarkMode ? 'bg-white/5 border-white/10 hover:border-blue-500/50' : 'bg-[#F9F9F9] border-black/10 hover:border-blue-500/50'
               }`}
             >
               <input 
                 type="file"
-                ref={fileInputRef}
+                ref={pdfInputRef}
                 accept=".pdf"
                 onChange={handleFileUpload}
                 className="hidden"
@@ -196,6 +254,45 @@ export const LinkedInImporter: React.FC<LinkedInImporterProps> = ({
             >
               Sync Profile Data
             </button>
+          </motion.div>
+        )}
+
+        {importMode === 'vision' && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-4"
+          >
+            <div 
+              onClick={() => visionInputRef.current?.click()}
+              onPaste={handlePaste}
+              tabIndex={0}
+              className={`relative border-2 border-dashed rounded-xl p-8 transition-all cursor-pointer flex flex-col items-center justify-center gap-3 ${
+                isDarkMode ? 'bg-white/5 border-white/10 hover:border-blue-500/50' : 'bg-[#F9F9F9] border-black/10 hover:border-blue-500/50'
+              }`}
+            >
+              <input 
+                type="file"
+                ref={visionInputRef}
+                accept="image/*"
+                onChange={handleVisionUpload}
+                className="hidden"
+              />
+              {isExtracting ? (
+                <div className="flex flex-col items-center gap-2">
+                  <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                  <span className="text-xs font-medium">Scanning with Gemini Vision...</span>
+                </div>
+              ) : (
+                <>
+                  <Eye className="w-8 h-8 opacity-30" />
+                  <div className="text-center">
+                    <p className="text-xs font-bold uppercase tracking-wider mb-1">Omni Vision Scan</p>
+                    <p className="text-[10px] opacity-50">Upload a screenshot or photo of your resume</p>
+                  </div>
+                </>
+              )}
+            </div>
           </motion.div>
         )}
       </div>

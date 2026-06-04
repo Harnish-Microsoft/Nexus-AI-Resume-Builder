@@ -32,14 +32,14 @@ ${targetCompany ? `Tailor appropriately for ${targetCompany}. Focus on specific 
 STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
 1. TRUTHFULNESS IS MANDATORY: NEVER fabricate metrics, budget numbers, or leadership ownership. (Use ONLY provided role data).
 2. AI-GENERATED LANGUAGE PREVENTION: DO NOT use "Spearheaded", "Orchestrated", "Pioneered". Use "Managed", "Implemented", "Coordinated", "Optimized", "Configured", "Automated".
-3. METRIC CONFIDENCE ENGINE: Metrics ONLY allowed if explicit or strongly inferable. NEVER generate arbitrary percentages. If metrics are missing, prioritize technical depth.
-4. STAR METHODOLOGY: Reflect challenge, action, technologies, and realistic outcome. Do NOT force metrics.
-5. LEADERSHIP POSITIONING: Leadership wording must match designation/tenure. If tenure is short (<6 months), focus on onboarding/shadowing.
-6. HUMANIZATION: Avoid buzzword stacking and AI phrasing.
-7. RESUME DENSITY CONTROL: Max 1 primary achievement per bullet. Max 2 technologies per bullet. Max 1 metric per bullet.
-8. DETAIL: Each bullet MUST be highly impactful, technical, and detailed. Each bullet should span 2 to 3 lines in a standard resume layout to provide deep technical context and specific outcomes. STRICTLY AVOID brief one-liners. Prioritize technical context, architecture details, and scale metrics.
-9. RECENT ROLE EXPANSION (Post-2018): If the role occurred after 2018, you MUST output 6 to 9 bullets. Provide extremely high density of details.
-10. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Use "Infrastructure Automation", "Workflow Orchestration", or "Release Engineering".
+3. THE FAANG Standard (Google XYZ): EVERY single bullet point MUST follow Google's XYZ formula: 'Accomplished [X] as measured by [Y], by doing [Z]'. Bullets can span 1 to 2 lines maximum. Be highly technical, metric-driven, and dense. Do not use filler words.
+4. ROLE-SPECIFIC COUNTS:
+   - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
+   - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
+   - OLDER ROLES (Before 2017): Strictly 1 brief XYZ bullet point focusing only on the core outcome.
+5. DETAIL: Each bullet should be impactful, technical, and dense. Provide specific technical context and outcomes within the 1-2 line limit.
+6. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Use "Infrastructure Automation", "Workflow Orchestration", or "Release Engineering".
+7. PROJECT FIDELITY: Limit descriptions to 2 sentences or 25 words.
 
 OUTPUT SCHEMA:
 Return ONLY a valid JSON array of strings containing the high-impact bullet points for this role. Example: ["Bullet 1", "Bullet 2"]

@@ -67,7 +67,8 @@ import { useResumeStore } from './store';
 import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
+import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
@@ -155,6 +156,16 @@ const GeminiAurora = () => (
       transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
       className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[40%] h-[40%] rounded-full blur-[120px] bg-cyan-400/20 mix-blend-overlay"
     />
+  </div>
+);
+
+const GeminiOmniAurora = () => (
+  <div className="omni-aurora">
+    <div className="omni-aurora-blob w-[80%] h-[80%] -top-[10%] -left-[10%]" style={{ background: '#4285f4', opacity: 0.15 }} />
+    <div className="omni-aurora-blob w-[70%] h-[70%] top-[20%] right-[-10%]" style={{ background: '#a142f4', opacity: 0.12 }} />
+    <div className="omni-aurora-blob w-[90%] h-[90%] -bottom-[20%] left-[10%]" style={{ background: '#ea4335', opacity: 0.1 }} />
+    <div className="omni-aurora-blob w-[60%] h-[60%] bottom-[10%] right-[30%]" style={{ background: '#fbbc04', opacity: 0.08 }} />
+    <div className="omni-aurora-blob w-[50%] h-[50%] top-[40%] left-[40%]" style={{ background: '#34a853', opacity: 0.07 }} />
   </div>
 );
 
@@ -338,6 +349,7 @@ export default function App() {
   // Add resumeSource state: 'local' (default) or 'firestore'
   const [resumeSource, setResumeSource] = useState<'local' | 'firestore'>('local');
   const isInitialLoad = useRef(true);
+  const isSuitabilityCancelledRef = useRef<boolean>(false);
 
   // Load master resume when preference changes
   useEffect(() => {
@@ -990,6 +1002,7 @@ export default function App() {
   const [isAdditionalToolActive, setIsAdditionalToolActive] = useState(false);
   const [isFetchingJob, setIsFetchingJob] = useState(false);
   const [suitabilityResult, setSuitabilityResult] = useState<SuitabilityResult | null>(null);
+  const [multiSuitabilityResults, setMultiSuitabilityResults] = useState<Record<string, SuitabilityResult>>({});
   const [isCheckingSuitability, setIsCheckingSuitability] = useState(false);
 
   // Profile Overrides
@@ -1390,6 +1403,10 @@ export default function App() {
   });
 
   const [isRefreshingTokens, setIsRefreshingTokens] = useState(false);
+  const [deepResearchId, setDeepResearchId] = useState<string | null>(null);
+  const [deepResearchReport, setDeepResearchReport] = useState<string | null>(null);
+  const [isDeepResearching, setIsDeepResearching] = useState(false);
+  const deepResearchIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const getTodayStr = () => new Date().toISOString().split('T')[0];
   const getCurrentMonthStr = () => {
@@ -1990,7 +2007,9 @@ export default function App() {
 
     setIsCheckingSuitability(true);
     setSuitabilityResult(null);
+    setMultiSuitabilityResults({});
     setError(null);
+    isSuitabilityCancelledRef.current = false;
 
     try {
       let finalJobDescription = jobDescription;
@@ -1998,13 +2017,92 @@ export default function App() {
         finalJobDescription = await fetchJobDescription(jobUrl, getRouterConfig());
       }
 
-      const result = await evaluateSuitability(resumeText, finalJobDescription, getRouterConfig(), fastMode);
-      setSuitabilityResult(result);
+      // Check all master resumes
+      const results: Record<string, SuitabilityResult> = {};
+      const jobDesc = finalJobDescription;
+      const config = getRouterConfig();
+
+      // We run them in parallel for speed
+      await Promise.all(masterResumes.map(async (resume) => {
+        try {
+          const resText = JSON.stringify(resume.data, null, 2);
+          const evaluation = await evaluateSuitability(resText, jobDesc, config, true);
+          if (!isSuitabilityCancelledRef.current) {
+            results[resume.id] = evaluation;
+          }
+        } catch (e) {
+          console.error(`Failed to evaluate resume ${resume.id}:`, e);
+        }
+      }));
+
+      if (!isSuitabilityCancelledRef.current) {
+        setMultiSuitabilityResults(results);
+        
+        // Find the resume ID with the highest match score
+        let bestResumeId = selectedResumeId;
+        let highestScore = -1;
+
+        Object.entries(results).forEach(([id, result]) => {
+          if (result.matchScore > highestScore) {
+            highestScore = result.matchScore;
+            bestResumeId = id;
+          }
+        });
+
+        const primaryResult = results[bestResumeId];
+        if (primaryResult) {
+          setSuitabilityResult(primaryResult);
+          
+          // Auto-select the best resume for the user
+          const bestResume = masterResumes.find(r => r.id === bestResumeId);
+          if (bestResume) {
+            setSelectedResumeId(bestResumeId);
+            setResumeText(JSON.stringify(bestResume.data, null, 2));
+          }
+        } else {
+          throw new Error("Failed to evaluate any of the resumes.");
+        }
+      }
     } catch (err: any) {
       console.error("Suitability check failed:", err);
       setError(err.message || 'Failed to check suitability. Please try again.');
     } finally {
       setIsCheckingSuitability(false);
+    }
+  };
+
+  const handleDeepResearch = async () => {
+    if (!jobDescription || !resumeText) {
+      showToast("Please provide job description and resume content", "info");
+      return;
+    }
+    
+    setIsDeepResearching(true);
+    setDeepResearchReport(null);
+    try {
+      const interactionId = await startDeepResearch(resumeText, jobDescription);
+      setDeepResearchId(interactionId);
+      
+      // Stop old polling if any
+      if (deepResearchIntervalRef.current) clearInterval(deepResearchIntervalRef.current);
+      
+      // Start polling
+      deepResearchIntervalRef.current = setInterval(async () => {
+        try {
+          const status = await getDeepResearchStatus(interactionId);
+          if (status.status === "completed") {
+            setDeepResearchReport(status.output);
+            setIsDeepResearching(false);
+            if (deepResearchIntervalRef.current) clearInterval(deepResearchIntervalRef.current);
+            showToast("Deep Research Completed", "success");
+          }
+        } catch (err) {
+          console.error("Polling error:", err);
+        }
+      }, 5000);
+    } catch (err: any) {
+      setIsDeepResearching(false);
+      showToast(err.message, "error");
     }
   };
 
@@ -2094,14 +2192,12 @@ export default function App() {
     }
     progressIntervalRef.current = setInterval(() => {
       setOptimizationProgress(prev => {
-        if (prev < 30) return prev + Math.floor(Math.random() * 3) + 1;
-        if (prev < 60) return prev + Math.floor(Math.random() * 2) + 1;
-        if (prev < 85) return prev + 1;
-        if (prev < 95) return prev + (Math.random() > 0.5 ? 1 : 0);
-        if (prev < 98) return prev + (Math.random() > 0.8 ? 1 : 0);
+        if (prev < 95) {
+          return Math.round(prev + (95 - prev) * 0.05);
+        }
         return prev;
       });
-    }, 200);
+    }, 50);
     
     const engineNameMap: Record<string, string> = {
       'gemini': 'Google Gemini 2.0',
@@ -2401,7 +2497,7 @@ CERTIFICATIONS
 ${(res.certifications || [] as any[]).map(cert => typeof cert === 'string' ? cert : `${cert.name}`).join('\n')}
 
 EDUCATION
-${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (Expected ${edu.expected_completion})`).join('\n')}
+${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (Expected : ${edu.expected_completion})`).join('\n')}
     `.trim();
     
     navigator.clipboard.writeText(text);
@@ -2754,61 +2850,70 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     if (!res) return null;
 
     return (
-      <div className="bg-white text-black font-serif leading-tight max-w-[210mm] min-w-[210mm] min-h-[297mm] mx-auto shadow-sm" style={{ padding: '12mm' }}>
-        {/* Header - 2 Lines */}
-        <div className="text-center mb-4 border-b pb-2">
-          <h1 className="text-xl font-bold uppercase mb-0.5 tracking-tight">{res.personal_info?.name || ''}</h1>
-          <p className="text-[10px] opacity-80 tracking-wide">
+      <div className="bg-white text-black leading-tight max-w-[210mm] min-w-[210mm] min-h-[297mm] mx-auto shadow-sm" style={{ padding: '25mm', fontFamily: '"Calibri", "Open Sans", sans-serif' }}>
+        {/* Header */}
+        <div className="text-center mb-5 border-b border-black pb-2">
+          <h1 className="font-bold uppercase mb-0.5 tracking-[0.1em]" style={{ fontSize: '18pt' }}>{res.personal_info?.name || ''}</h1>
+          <p className="font-medium tracking-wide" style={{ fontSize: '10.5pt' }}>
             {res.personal_info?.location || ''} | {res.personal_info?.email || ''} | {res.personal_info?.phone || ''} | {res.personal_info?.linkedin || ''}
           </p>
         </div>
 
         {/* Summary */}
         <div className="mb-4">
-          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-widest">Professional Summary</h2>
-          <p className="text-[11px] text-justify leading-relaxed">{(res as any).summary || (res as any).personal_info?.summary || ""}</p>
+          <h2 className="font-bold border-b border-black mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Summary</h2>
+          <p className="leading-normal text-justify" style={{ fontSize: '10.5pt' }}>{(res as any).summary || (res as any).personal_info?.summary || ""}</p>
         </div>
 
         {/* Skills */}
         <div className="mb-4">
-          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Technical Skills</h2>
-          <p className="text-[11px] leading-relaxed">
+          <h2 className="font-bold border-b border-black mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Skills</h2>
+          <div className="leading-normal" style={{ fontSize: '10.5pt' }}>
             {Array.isArray(res.skills) 
               ? res.skills.join(", ") 
-              : Object.entries(res.skills).map(([cat, skills]) => `${cat}: ${(skills as string[]).join(", ")}`).join(" | ")}
-          </p>
+              : Object.entries(res.skills).map(([cat, skills]) => (
+                  <div key={cat} className="flex">
+                    <span className="font-bold mr-2">{cat}:</span>
+                    <span>{(skills as string[]).join(", ")}</span>
+                  </div>
+                ))}
+          </div>
         </div>
 
         {/* Experience */}
         <div className="mb-4">
-          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Professional Experience</h2>
+          <h2 className="font-bold border-b border-black mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Experience</h2>
           {Array.isArray(res.experience) && res.experience.map((exp: any, i: number) => (
             <div key={i} className="mb-3">
-              <div className="flex justify-between font-bold text-[11px]">
+              <div className="flex justify-between font-bold" style={{ fontSize: '11.5pt' }}>
                 <span>{exp.role}</span>
-                <span className="font-normal italic">{exp.duration}</span>
+                <span className="font-medium">{exp.duration}</span>
               </div>
-              <div className="italic mb-0.5 text-[10.5px] opacity-90">{exp.company}</div>
-              <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+              <div className="font-bold mb-0.5" style={{ fontSize: '11pt' }}>{exp.company}</div>
+              <div className="space-y-0.5">
                 {Array.isArray(exp.bullets) && exp.bullets.map((bullet: string, bi: number) => (
-                  <li key={bi} className="leading-snug">{bullet}</li>
+                  <div key={bi} className="flex gap-2">
+                    <span className="shrink-0 text-[10.5pt]">•</span>
+                    <span className="leading-normal" style={{ fontSize: '10.5pt' }}>{bullet}</span>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
           ))}
         </div>
 
         {/* Projects */}
         {Array.isArray(res.projects) && res.projects.length > 0 && (
-          <div className="mb-4">
-            <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Strategic Projects</h2>
+          <div className="mb-3">
+            <h2 className="font-bold border-b border-black/10 mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Projects</h2>
             {res.projects.map((proj: any, i: number) => (
-              <div key={i} className="mb-2">
-                <div className="font-bold text-[11px]">{typeof proj === 'string' ? proj : proj.title}</div>
+              <div key={i} className="mb-1.5">
+                <div className="font-bold" style={{ fontSize: '11.5' }}>{typeof proj === 'string' ? proj : proj.title}</div>
                 {typeof proj !== 'string' && proj.description && (
-                  <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
-                    <li className="leading-snug">{proj.description}</li>
-                  </ul>
+                  <div className="flex gap-2">
+                    <span className="shrink-0 text-[10.5pt]">•</span>
+                    <span className="leading-normal" style={{ fontSize: '10.5pt' }}>{proj.description}</span>
+                  </div>
                 )}
               </div>
             ))}
@@ -2817,29 +2922,29 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
         {/* Certifications */}
         {Array.isArray(res.certifications) && res.certifications.length > 0 && (
-          <div className="mb-4">
-            <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Certifications</h2>
-            <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+          <div className="mb-3">
+            <h2 className="font-bold border-b border-black/10 mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Certifications</h2>
+            <div className="space-y-0.5">
               {res.certifications.map((cert: any, i: number) => (
-                <li key={i}>
-                  {typeof cert === 'string' ? cert : `${cert.name}`}
-                </li>
+                <div key={i} className="text-[10.5pt]">
+                  • {typeof cert === 'string' ? cert : `${cert.name}`}
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
         )}
 
         {/* Education */}
         {Array.isArray(res.education) && res.education.length > 0 && (
-          <div className="mb-4">
-            <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Education</h2>
-            <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+          <div className="mb-3">
+            <h2 className="font-bold border-b border-black/10 mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Education</h2>
+            <div className="space-y-0.5">
               {res.education.map((edu: any, i: number) => (
-                <li key={i}>
-                  {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`}
-                </li>
+                <div key={i} className="text-[10.5pt] font-medium">
+                  • {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (Expected : ${edu.expected_completion})`}
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
         )}
       </div>
@@ -2863,7 +2968,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div 
             key="header"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'header' })}
-            className={`cursor-pointer transition-all rounded p-2 -m-2 mb-2 resume-section ${activeSection === 'header' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`cursor-pointer transition-all rounded p-2 mb-2 resume-section ${activeSection === 'header' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('header').fontFamily, 
               textAlign: 'center',
@@ -2874,10 +2979,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               marginBottom: `${getSectionStyle('header').margin}px`,
             }}
           >
-            <h1 className="font-bold uppercase tracking-[0.2em] mb-1" style={{ fontSize: '26px' }}>
+            <h1 className="font-bold uppercase tracking-[0.1em] mb-1" style={{ fontSize: '18pt' }}>
               {personalInfo.name}
             </h1>
-            <div className="font-semibold opacity-80 border-t-2 border-black/10 pt-3 flex justify-center items-center gap-x-4 gap-y-1 flex-wrap" style={{ fontSize: '11px', lineHeight: '1.2' }}>
+            <div className="font-medium border-t border-black/10 pt-2 flex justify-center items-center gap-x-4 gap-y-1 flex-wrap" style={{ fontSize: '10.5pt', lineHeight: '1.2' }}>
               <span className="whitespace-nowrap">{personalInfo.location}</span>
               <span className="opacity-30"></span>
               <span className="whitespace-nowrap">{personalInfo.email}</span>
@@ -2897,7 +3002,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div 
             key="summary"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'summary' })}
-            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'summary' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 resume-section ${activeSection === 'summary' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('summary').fontFamily, 
               textAlign: 'justify',
@@ -2909,10 +3014,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               fontSize: `${getSectionStyle('summary').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
-              Professional Summary
+            <h2 className="font-bold mb-1 uppercase tracking-[0.05em] border-b border-black/10 pb-0.5" style={{ fontSize: '13pt' }}>
+              Summary
             </h2>
-            <p className="opacity-90 leading-relaxed">{results[activeAudience!]?.summary || data.personal_info.summary}</p>
+            <p className="leading-normal" style={{ fontSize: '10.5pt' }}>{results[activeAudience!]?.summary || data.personal_info.summary}</p>
           </div>
         );
       case 'skills':
@@ -2920,7 +3025,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div 
             key="skills"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'skills' })}
-            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 resume-section ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('skills').fontFamily, 
               lineHeight: getSectionStyle('skills').lineHeight,
@@ -2931,42 +3036,37 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               fontSize: `${getSectionStyle('skills').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
-              Core Competencies
+            <h2 className="font-bold mb-1 uppercase tracking-[0.05em] border-b border-black/10 pb-0.5" style={{ fontSize: '13pt' }}>
+              Skills
             </h2>
             {results[activeAudience!]?.skills && !Array.isArray(results[activeAudience!].skills) ? (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <div className="grid grid-cols-1 gap-y-1">
                 {Object.entries(results[activeAudience!].skills).map(([category, items]) => (
-                  <div key={category} className="text-[11px] leading-tight">
-                    <div className="font-bold uppercase text-gray-600 mb-1">{category}</div>
-                    <div className="opacity-90">{(items as unknown as string[]).join(', ')}</div>
+                  <div key={category} className="grid grid-cols-[160px_1fr] gap-2 text-[10.5pt] leading-tight">
+                    <span className="font-bold">{category}:</span>
+                    <span className="">{(items as unknown as string[]).join(', ')}</span>
                   </div>
                 ))}
               </div>
             ) : typeof data.skills === 'object' && !Array.isArray(data.skills) ? (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <div className="grid grid-cols-1 gap-y-1">
                 {Object.entries(data.skills as any).map(([category, items]) => (
-                  <div key={category} className="text-[11px] leading-tight">
-                    <div className="font-bold uppercase text-gray-600 mb-1">{category}</div>
-                    <div className="opacity-90">{(items as unknown as string[]).join(', ')}</div>
+                  <div key={category} className="grid grid-cols-[160px_1fr] gap-2 text-[10.5pt] leading-tight">
+                    <span className="font-bold">{category}:</span>
+                    <span className="">{(items as unknown as string[]).join(', ')}</span>
                   </div>
                 ))}
               </div>
             ) : (
-              <ul className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5 list-none p-0 m-0">
+              <div className="text-[10.5pt] leading-normal">
                 {((
                   activeAudience && results[activeAudience]?.skills 
                     ? (Array.isArray(results[activeAudience].skills) 
                         ? results[activeAudience].skills 
                         : Object.values(results[activeAudience].skills).flat())
                     : data.skills
-                ) as string[]).map((s, i) => (
-                  <li key={i} className="flex items-start gap-2 text-[11px] opacity-90 leading-tight">
-                    <span className="mt-1.5 w-1 h-1 bg-black rounded-full shrink-0 opacity-60"></span>
-                    <span>{s}</span>
-                  </li>
-                ))}
-              </ul>
+                ) as string[]).join(', ')}
+              </div>
             )}
           </div>
         );
@@ -2975,7 +3075,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div 
             key="certifications"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'certifications' })}
-            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 resume-section ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('certifications').fontFamily, 
               lineHeight: getSectionStyle('certifications').lineHeight,
@@ -2986,22 +3086,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               fontSize: `${getSectionStyle('certifications').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
-              Professional Certifications
+            <h2 className="font-bold mb-1 uppercase tracking-[0.05em] border-b border-black/10 pb-0.5" style={{ fontSize: '13pt' }}>
+              Certifications
             </h2>
-            <div className="grid grid-cols-1 gap-1">
+            <div className="grid grid-cols-1 gap-0.5">
               {(results[activeAudience!]?.certifications || data.certifications || []).map((cert: any, i) => (
-                <div key={i} className="resume-bullet-item">
-                  <div className="resume-bullet-dot" />
-                  <div className="flex-1 flex justify-between items-baseline min-w-0">
-                    <span className="resume-bullet-text opacity-90 font-medium">
-                      {typeof cert === 'string' ? cert : cert.name}
-                    </span>
-                    {typeof cert !== 'string' && (
-                      <div className="text-[10px] opacity-60 flex gap-2 italic ml-4 shrink-0">
-                      </div>
-                    )}
-                  </div>
+                <div key={i} className="text-[10.5pt]">
+                  • {typeof cert === 'string' ? cert : cert.name}
                 </div>
               ))}
             </div>
@@ -3014,7 +3105,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div 
             key={isContinuation ? "experience-split-2" : "experience"}
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'experience' })}
-            className={`cursor-pointer transition-all rounded p-2 -m-2 mb-2 resume-section ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`cursor-pointer transition-all rounded p-2 mb-2 resume-section ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('experience').fontFamily, 
               lineHeight: getSectionStyle('experience').lineHeight,
@@ -3026,22 +3117,22 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             }}
           >
             {!isContinuation && (
-              <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
-                Professional Experience
+              <h2 className="font-bold mb-1 uppercase tracking-[0.05em] border-b border-black/10 pb-0.5" style={{ fontSize: '13pt' }}>
+                Experience
               </h2>
             )}
             {allExp.map((exp: any, i: number) => (
-              <div key={i} className="experience-item mb-3 last:mb-0">
-                <div className="flex justify-between font-bold items-baseline mb-0.5">
-                  <span style={{ fontSize: '13px' }}>{exp.role}</span>
-                  <span className="opacity-70 font-medium italic" style={{ fontSize: '11px' }}>{exp.duration}</span>
+              <div key={i} className="experience-item mb-2 last:mb-0">
+                <div className="flex justify-between font-bold items-baseline mb-0">
+                  <span style={{ fontSize: '11.5pt' }}>{exp.role}</span>
+                  <span className="font-medium" style={{ fontSize: '11pt' }}>{exp.duration}</span>
                 </div>
-                <div className="font-semibold mb-2 text-emerald-700" style={{ fontSize: '12px' }}>{exp.company}</div>
-                <ul className="space-y-1 list-none p-0 m-0">
+                <div className="font-bold mb-1" style={{ fontSize: '11.5pt' }}>{exp.company}</div>
+                <ul className="space-y-0.5 list-none p-0 m-0">
                   {Array.isArray(exp.bullets) && exp.bullets.map((b: string, bi: number) => (
-                    <li key={bi} className="resume-bullet-item flex">
-                      <div className="resume-bullet-dot" />
-                      <span className="resume-bullet-text opacity-90 leading-relaxed">{b}</span>
+                    <li key={bi} className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span className="leading-normal" style={{ fontSize: '10.5pt' }}>{b}</span>
                     </li>
                   ))}
                 </ul>
@@ -3058,7 +3149,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div 
             key="projects"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'projects' })}
-            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'projects' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 resume-section ${activeSection === 'projects' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('projects').fontFamily, 
               lineHeight: getSectionStyle('projects').lineHeight,
@@ -3069,19 +3160,19 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               fontSize: `${getSectionStyle('projects').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
-              Key Strategic Projects
+            <h2 className="font-bold mb-1 uppercase tracking-[0.05em] border-b border-black/10 pb-0.5" style={{ fontSize: '13pt' }}>
+              Projects
             </h2>
-            <div className="space-y-3">
+            <div className="space-y-1.5">
               {allProjects.map((proj: any, i: number) => (
-                <div key={i} className="project-item mb-3 last:mb-0">
-                  <div className="font-bold mb-1" style={{ fontSize: '13px' }}>
+                <div key={i} className="project-item mb-1 last:mb-0">
+                  <div className="font-bold mb-0" style={{ fontSize: '11.5pt' }}>
                     {typeof proj === 'string' ? proj : (proj as any).title}
                   </div>
                   {typeof proj !== 'string' && (proj as any).description && (
-                    <div className="resume-bullet-item">
-                      <div className="resume-bullet-dot" />
-                      <span className="resume-bullet-text opacity-90 leading-relaxed">
+                    <div className="flex gap-2">
+                      <span className="shrink-0">•</span>
+                      <span className="leading-normal" style={{ fontSize: '10.5pt' }}>
                         {(proj as any).description}
                       </span>
                     </div>
@@ -3100,7 +3191,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div 
             key="education"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'education' })}
-            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 resume-section ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('education').fontFamily, 
               lineHeight: getSectionStyle('education').lineHeight,
@@ -3111,21 +3202,18 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               fontSize: `${getSectionStyle('education').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+            <h2 className="font-bold mb-1 uppercase tracking-[0.05em] border-b border-black/10 pb-0.5" style={{ fontSize: '13pt' }}>
               Education
             </h2>
             {allEdu.map((edu: any, i: number) => (
-              <div key={i} className="mb-1 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
-                <div className="resume-bullet-item">
-                  <div className="resume-bullet-dot" />
-                  <span className="resume-bullet-text opacity-90 font-medium">
-                    {typeof edu === 'string' 
-                      ? edu 
-                      : (edu.degree || edu.institution)
-                        ? `${edu.degree || 'Degree'} - ${edu.institution || 'Institution'}${edu.expected_completion ? ` (${edu.expected_completion})` : ''}`
-                        : JSON.stringify(edu)
-                    }
-                  </span>
+              <div key={i} className="mb-0.5 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
+                <div className="text-[10.5pt] font-medium">
+                  • {typeof edu === 'string' 
+                    ? edu 
+                    : (edu.degree || edu.institution)
+                      ? `${edu.degree || 'Degree'} - ${edu.institution || 'Institution'}${edu.expected_completion ? ` (Expected : ${edu.expected_completion})` : ''}`
+                      : JSON.stringify(edu)
+                  }
                 </div>
               </div>
             ))}
@@ -3184,6 +3272,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     >
       <div className={`absolute inset-0 transition-colors duration-1000 ${user ? 'bg-black/40' : 'bg-black/10 dark:bg-black/30'} pointer-events-none -z-10`} />
       <div className="workspace-overlay -z-5" />
+      <GeminiOmniAurora />
       {activeTheme.id === 'infogeneus' && (
         <>
           <GeminiAurora />
@@ -3641,7 +3730,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   onChange={(e) => setJobDescription(e.target.value)}
                                 />
                                 
-                              <button
+                                <button
                                 onClick={handleCheckSuitability}
                                 disabled={isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText}
                                 className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border ${
@@ -3651,14 +3740,37 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 }`}
                               >
                                   {isCheckingSuitability ? (
+                                    <div className="flex items-center gap-2">
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          isSuitabilityCancelledRef.current = true;
+                                          setIsCheckingSuitability(false);
+                                        }}
+                                        className="px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded text-[9px] font-black uppercase transition-colors"
+                                      >
+                                        Stop
+                                      </button>
+                                      <div className="flex items-center gap-1.5">
+                                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                        Evaluating Fit...
+                                      </div>
+                                    </div>
+                                  ) : suitabilityResult ? (
                                     <>
-                                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                      Evaluating Fit...
+                                      <div className={`px-1.5 py-0.5 rounded text-[10px] font-black mr-1 ${
+                                        suitabilityResult.matchScore >= 80 ? 'bg-emerald-500 text-white' :
+                                        suitabilityResult.matchScore >= 60 ? 'bg-amber-500 text-white' :
+                                        'bg-red-500 text-white'
+                                      }`}>
+                                        {suitabilityResult.matchScore}%
+                                      </div>
+                                      Check All Resumes
                                     </>
                                   ) : (
                                     <>
-                                      <Search className="w-4 h-4" />
-                                      Quick Check Suitability
+                                      <ShieldCheck className="w-4 h-4" />
+                                      Check All Resumes for Fit
                                     </>
                                   )}
                                 </button>
@@ -3729,8 +3841,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 </AnimatePresence>
                               </div>
 
-                              {/* Brain Dump Input */}
-                              <div className="space-y-2">
+                              {/* Brain Dump Input - Hidden for now */}
+                              <div className="space-y-2 hidden">
                                 <div className="flex items-center justify-between">
                                   <label className={`block text-[10px] font-black uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>The "Brain Dump" Context</label>
                                   <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20">
@@ -3897,6 +4009,43 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         </motion.div>
                       </div>
                           
+                          {Object.keys(multiSuitabilityResults).length > 1 && (
+                            <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
+                              {masterResumes.map(resume => {
+                                const result = multiSuitabilityResults[resume.id];
+                                if (!result) return null;
+                                const isSelected = selectedResumeId === resume.id;
+                                return (
+                                  <button
+                                    key={resume.id}
+                                    onClick={() => setSuitabilityResult(result)}
+                                    className={`p-2 rounded-lg border text-left transition-all ${
+                                      suitabilityResult === result
+                                        ? (isDarkMode ? 'bg-blue-500/20 border-blue-500/50' : 'bg-blue-50 border-blue-200')
+                                        : (isDarkMode ? 'bg-black/20 border-white/5 hover:border-white/10' : 'bg-slate-50 border-slate-200 hover:border-slate-300')
+                                    }`}
+                                  >
+                                    <p className={`text-[9px] font-black uppercase truncate ${isDarkMode ? 'text-white/40' : 'text-slate-500'}`}>
+                                      {resume.name}
+                                    </p>
+                                    <div className="flex items-center justify-between mt-0.5">
+                                      <span className={`text-xs font-bold ${
+                                        result.matchScore >= 80 ? 'text-emerald-500' :
+                                        result.matchScore >= 60 ? 'text-amber-500' :
+                                        'text-red-500'
+                                      }`}>
+                                        {result.matchScore}%
+                                      </span>
+                                      {suitabilityResult === result && (
+                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                      )}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
                           {suitabilityResult && (
                               <div className={`mt-3 p-4 rounded-xl border ${
                                 suitabilityResult.verdict === 'Strong Match' 
@@ -4024,6 +4173,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         {/* Optimize Button Section */}
                           <div className="pt-4 border-t border-black/5 dark:border-white/10">
                             <div className="flex gap-3">
+
                               <button
                                 onClick={() => {
                                   console.log("[Nexus AI] Optimize Button Clicked");
@@ -4045,7 +4195,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               >
                                 {isOptimizing && (
                                   <motion.div 
-                                    className="absolute inset-0 bg-white/20 dark:bg-black/20 pointer-events-none"
+                                    className="absolute inset-x-0 bottom-0 h-1 omni-progress-bar pointer-events-none"
                                     initial={{ width: 0 }}
                                     animate={{ width: `${optimizationProgress}%` }}
                                     transition={{ ease: "linear", duration: 0.5 }}
@@ -4100,6 +4250,38 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   </div>
                                 </div>
                               </div>
+
+                              {/* Deep Research Report */}
+                              <AnimatePresence>
+                                {deepResearchReport && (
+                                  <motion.div 
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    className="mt-4"
+                                  >
+                                    <div className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-purple-900/10 border-purple-500/20' : 'bg-purple-50 border-purple-200'}`}>
+                                      <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-2">
+                                          <Sparkles className="w-4 h-4 text-purple-500" />
+                                          <h4 className="text-xs font-black uppercase tracking-widest text-purple-600 dark:text-purple-400">Deep Research Intelligence Report</h4>
+                                        </div>
+                                        <button 
+                                          onClick={() => setDeepResearchReport(null)}
+                                          className="text-[10px] font-bold uppercase opacity-40 hover:opacity-100"
+                                        >
+                                          Dismiss
+                                        </button>
+                                      </div>
+                                      <div className={`text-xs leading-relaxed space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2 ${isDarkMode ? 'text-white/80' : 'text-black/80'}`}>
+                                        <div className="markdown-body">
+                                          <Markdown>{deepResearchReport}</Markdown>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
                               <div className="flex justify-end mb-2">
                                 <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest text-right">
                                   {selectedEngine.includes('hybrid') ? 'Hybrid Mode' : `Active Engine: ${engineConfig.gemini.model}`}
@@ -4647,46 +4829,76 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         animate={{ rotate: 360 }}
                         transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
                       >
+                      {/* Omni Fluid Background Light */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-red-500/10 rounded-full blur-[40px] animate-pulse" />
+                      
                       {/* Outer Ring */}
-                      <div className="absolute inset-0 border-4 border-emerald-500/10 rounded-full" />
-                      {/* Progress Ring */}
+                      <div className={`absolute inset-0 border-4 rounded-full ${isDarkMode ? 'border-white/5' : 'border-black/5'}`} />
+                      
+                      {/* Progress Ring with Omni Gradient */}
                       <svg className="absolute inset-0 w-full h-full -rotate-90">
+                        <defs>
+                          <linearGradient id="omniGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stopColor="#4285f4" />
+                            <stop offset="25%" stopColor="#a142f4" />
+                            <stop offset="50%" stopColor="#ea4335" />
+                            <stop offset="75%" stopColor="#fbbc04" />
+                            <stop offset="100%" stopColor="#34a853" />
+                          </linearGradient>
+                        </defs>
                         <circle
                           cx="64"
                           cy="64"
                           r="60"
                           fill="transparent"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                          className="text-emerald-500"
+                          stroke="url(#omniGradient)"
+                          strokeWidth="6"
+                          strokeLinecap="round"
+                          className="drop-shadow-[0_0_8px_rgba(66,133,244,0.3)]"
                           strokeDasharray={377}
                           strokeDashoffset={377 - (377 * optimizationProgress) / 100}
-                          style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+                          style={{ transition: 'stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1)' }}
                         />
                       </svg>
                       <div className="absolute inset-0 flex items-center justify-center">
-                        <Cpu className="w-12 h-12 text-emerald-500 animate-pulse" />
+                        <motion.div
+                          animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
+                          transition={{ duration: 2, repeat: Infinity }}
+                        >
+                          <Cpu className="w-12 h-12 text-white/80" />
+                        </motion.div>
                       </div>
                     </motion.div>
                     
                     <div className="space-y-6">
-                      <h3 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-black'}`}>Optimizing Resume</h3>
+                      <h3 className={`text-4xl font-bold tracking-tight omni-gradient-text`}>Resume optimization in progress please wait.....</h3>
                       
                       <div className="flex justify-between items-end">
-                        <p className="text-xs font-mono text-emerald-500 uppercase tracking-[0.2em] text-left max-w-[70%] leading-relaxed">
-                          {optimizationStatus}
-                        </p>
-                        <span className="text-4xl font-black font-mono text-emerald-500">
+                        <div className="text-left space-y-1">
+                          <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-30">Status Update</p>
+                          <AnimatePresence mode="wait">
+                            <motion.p 
+                              key={optimizationStatus}
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -5 }}
+                              className="text-xs font-mono font-bold text-white/70 uppercase tracking-widest max-w-[280px] leading-relaxed"
+                            >
+                              {optimizationStatus}
+                            </motion.p>
+                          </AnimatePresence>
+                        </div>
+                        <span className="text-5xl font-black font-mono omni-gradient-text">
                           {optimizationProgress}%
                         </span>
                       </div>
                       
-                      <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                      <div className={`h-2 w-full rounded-full overflow-hidden ${isDarkMode ? 'bg-white/5' : 'bg-black/5'} border border-white/5`}>
                         <motion.div 
-                          className="h-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
+                          className="h-full omni-progress-bar shadow-[0_0_20px_rgba(66,133,244,0.4)]"
                           initial={{ width: 0 }}
                           animate={{ width: `${optimizationProgress}%` }}
-                          transition={{ type: "spring", bounce: 0, duration: 0.5 }}
+                          transition={{ type: "spring", bounce: 0, duration: 1 }}
                         />
                       </div>
                       

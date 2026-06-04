@@ -89,8 +89,8 @@ export function ProfessionalWelcomePage({
         <div className="liquid-blob w-[90vw] h-[90vh] bg-pink-500/10 top-1/2 -right-1/4" style={{ animationDelay: '-5s' }} />
         <div className="liquid-blob w-[100vw] h-[100vh] bg-amber-500/8 -bottom-1/4 left-1/3" style={{ animationDelay: '-8s' }} />
       </div>
-      <main className="min-h-screen grid lg:grid-cols-[1.1fr_0.9fr] relative z-10">
-        <section className="flex flex-col justify-between px-4 py-6 sm:px-8 lg:px-12 lg:py-8">
+      <main className="min-h-screen flex flex-col lg:grid lg:grid-cols-[1fr_0.8fr] relative z-10">
+        <section className="flex flex-col justify-between px-6 py-8 sm:px-10 lg:px-16 lg:py-12">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-white text-emerald-600' : 'bg-slate-950 text-emerald-300'}`}>
@@ -110,7 +110,7 @@ export function ProfessionalWelcomePage({
             </button>
           </div>
 
-          <div className="max-w-2xl py-8 sm:py-10 lg:py-12">
+          <div className="py-12 lg:py-8">
             <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${isDarkMode ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
               <ShieldCheck className="w-3 h-3" />
               Private & ATS-Ready
@@ -118,18 +118,18 @@ export function ProfessionalWelcomePage({
             <h1 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
               Tune every resume to the job before you apply.
             </h1>
-            <p className={`mt-4 max-w-xl text-sm leading-6 sm:text-base ${muted}`}>
+            <p className={`mt-4 max-w-xl text-sm leading-relaxed sm:text-base ${muted}`}>
               Paste a job description, compare fit signals, rewrite experience bullets, and export a clean ATS-ready resume from one focused workspace.
             </p>
 
-            <div className="mt-6 hidden max-w-xl gap-3 sm:grid sm:grid-cols-3">
+            <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3 max-w-2xl">
               {[
                 { icon: Target, title: 'Target', body: 'Role & JD.', color: 'text-emerald-500' },
                 { icon: BarChart3, title: 'Score', body: 'Keyword analysis.', color: 'text-blue-500' },
                 { icon: FileText, title: 'Export', body: 'PDF/DOCX/JSON.', color: isDarkMode ? 'text-white/70' : 'text-slate-700' },
               ].map((item) => (
-                <div key={item.title} className={`rounded-lg border p-3 ${panel}`}>
-                  <item.icon className={`w-4 h-4 ${item.color}`} />
+                <div key={item.title} className={`rounded-xl border p-4 ${panel}`}>
+                  <item.icon className={`w-5 h-5 ${item.color}`} />
                   <p className="mt-2 text-xs font-semibold">{item.title}</p>
                   <p className={`mt-0.5 text-[10px] leading-4 ${muted}`}>{item.body}</p>
                 </div>
@@ -137,26 +137,26 @@ export function ProfessionalWelcomePage({
             </div>
           </div>
 
-          <p className={`hidden text-[10px] sm:block ${isDarkMode ? 'text-white/30' : 'text-slate-400'}`}>Fast-tracked resume tailoring.</p>
+          <p className={`hidden text-[10px] lg:block ${isDarkMode ? 'text-white/30' : 'text-slate-400'}`}>Fast-tracked resume tailoring.</p>
         </section>
 
-        <section className={`flex items-start justify-center border-t px-4 py-6 sm:items-center sm:py-8 lg:border-l lg:border-t-0 lg:px-8 ${isDarkMode ? 'bg-black/10 border-white/10' : 'bg-white/10 border-slate-200'}`}>
+        <section className={`flex items-center justify-center border-t px-6 py-12 lg:border-l lg:border-t-0 lg:px-12 ${isDarkMode ? 'bg-black/10 border-white/10' : 'bg-slate-50/50 border-slate-200'}`}>
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="w-full max-w-xs sm:max-w-sm"
+            className="w-full max-w-sm"
           >
-            <div className={`mb-4 hidden rounded-lg border p-3 sm:block ${softPanel}`}>
-              <div className={`flex items-center justify-between border-b pb-2 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
+            <div className={`mb-6 rounded-xl border p-4 ${softPanel}`}>
+              <div className={`flex items-center justify-between border-b pb-3 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
                 <div>
                   <p className={`text-[10px] font-semibold uppercase ${isDarkMode ? 'text-white/45' : 'text-slate-500'}`}>Preview</p>
                   <p className="text-xs font-bold">Cloud Architect</p>
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-100 text-emerald-700'}`}>Ready</span>
               </div>
-              <div className="mt-2 grid grid-cols-3 gap-1">
+              <div className="mt-3 grid grid-cols-3 gap-2">
                 {previewRows.map((row) => (
-                  <div key={row.label} className={`rounded-md border p-1.5 ${getMetricTone(row.tone)}`}>
+                  <div key={row.label} className={`rounded-lg border p-2 ${getMetricTone(row.tone)}`}>
                     <p className="text-sm font-bold">{row.value}</p>
                     <p className="text-[9px] font-semibold uppercase leading-3 opacity-80">{row.label}</p>
                   </div>

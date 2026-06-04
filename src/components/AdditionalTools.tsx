@@ -4,6 +4,8 @@ import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, 
 import { LinkedInImporter } from './LinkedInImporter';
 import { MasterResumeGenerator } from './MasterResumeGenerator';
 import { MasterResumeManager } from './MasterResumeManager';
+import { NexusProInsights } from './NexusProInsights';
+import { ApiDiagnostics } from './ApiDiagnostics';
 import { MasterResume } from '../types';
 
 interface AdditionalToolsProps {
@@ -59,7 +61,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   onToolActive,
   linkedinProps
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline' | 'whyThisJob' | 'linkedin' | 'masterResumeGenerator' | 'masterResumeManager' | null>(null);
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline' | 'whyThisJob' | 'linkedin' | 'masterResumeGenerator' | 'masterResumeManager' | 'audioFeedback' | 'diagnostics' | null>(null);
 
   useEffect(() => {
     if (onToolActive) {
@@ -586,18 +588,33 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           </button>
 
           <button 
-            onClick={() => setActiveTab('whyThisJob')} 
+            onClick={() => setActiveTab('audioFeedback')} 
             className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
-              activeTab === 'whyThisJob' 
+              activeTab === 'audioFeedback' 
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
                 : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
             }`}
           >
             <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4"/>
-              <span className="text-[11px] font-bold">Why This Job?</span>
+              <Sparkles className="w-4 h-4"/>
+              <span className="text-[11px] font-bold">Audio Feedback</span>
             </div>
-            <span className="text-[9px] opacity-70 text-left leading-tight">Response for recruiters</span>
+            <span className="text-[9px] opacity-70 text-left leading-tight">Listen to career audit</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('diagnostics')} 
+            className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
+              activeTab === 'diagnostics' 
+                ? 'bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400' 
+                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4"/>
+              <span className="text-[11px] font-bold">System & Keys</span>
+            </div>
+            <span className="text-[9px] opacity-70 text-left leading-tight">Diagnostic tools & API keys</span>
           </button>
         </div>
       ) : (
@@ -859,6 +876,20 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
               </button>
             </div>
           )}
+        </div>
+      )}
+      {activeTab === 'audioFeedback' && (
+        <div className="max-w-3xl mx-auto w-full">
+          <NexusProInsights 
+            isDarkMode={isDarkMode}
+            starStories={activeAudience && currentResults ? currentResults[activeAudience]?.star_stories : undefined}
+            auditReport={activeAudience && currentResults ? currentResults[activeAudience]?.audit_report : undefined}
+          />
+        </div>
+      )}
+      {activeTab === 'diagnostics' && (
+        <div className="max-w-2xl mx-auto w-full">
+          <ApiDiagnostics />
         </div>
       )}
       {activeTab === 'masterResumeGenerator' && (
