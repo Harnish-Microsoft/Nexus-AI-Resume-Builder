@@ -98,6 +98,8 @@ import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, addDoc, ge
 import { handleFirestoreError } from './lib/firebaseUtils';
 import { OperationType } from './types';
 import { DriveFolderPicker } from './components/DriveFolderPicker';
+import CloudArchitectureLoader from './components/CloudArchitectureLoader';
+import PremiumEnterpriseLoader from './components/PremiumEnterpriseLoader';
 import { AuthModal } from './components/AuthModal';
 import { TermsModal } from './components/TermsModal';
 
@@ -997,6 +999,7 @@ export default function App() {
   const [linkedInPdfText, setLinkedInPdfText] = useState(() => localStorage.getItem('linkedInPdfText') || '');
   const [linkedInFileName, setLinkedInFileName] = useState(() => localStorage.getItem('linkedInFileName') || '');
   const [jobUrl, setJobUrl] = useState('');
+  const [usePremiumLoader, setUsePremiumLoader] = useState(true);
   const [isExtractingLinkedIn, setIsExtractingLinkedIn] = useState(false);
   const [isCareerToolActive, setIsCareerToolActive] = useState(false);
   const [isAdditionalToolActive, setIsAdditionalToolActive] = useState(false);
@@ -2192,12 +2195,13 @@ export default function App() {
     }
     progressIntervalRef.current = setInterval(() => {
       setOptimizationProgress(prev => {
-        if (prev < 95) {
-          return Math.round(prev + (95 - prev) * 0.05);
+        if (prev < 90) {
+          // Move much slower: close 1% of the distance to 90 every 100ms
+          return prev + (90 - prev) * 0.01;
         }
         return prev;
       });
-    }, 50);
+    }, 100);
     
     const engineNameMap: Record<string, string> = {
       'gemini': 'Google Gemini 2.0',
@@ -2216,8 +2220,12 @@ export default function App() {
     // SMART MASTER SELECTION STRATEGY
     // If there are multiple resumes in Nexus Master, help the user pick the right base
     if (masterResumes.length > 0) {
-      setOptimizationStatus("Selecting Best Master Resume profile...");
+      setOptimizationStatus("Scanning for best master resume profile...");
       try {
+        // Add artificial delay to show scanning process as requested by user
+        await new Promise(r => setTimeout(r, 800));
+        setOptimizationStatus("Selecting Best Master Resume profile...");
+        
         const bestId = await selectBestMasterResume(
           jobDescription || jobUrl || "",
           masterResumes,
@@ -2264,23 +2272,28 @@ export default function App() {
       const totalAudiences = currentAudiences.length;
       const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
 
+      // Set a combined status for all audiences to avoid rapid overwriting
+      const allAudienceLabels = currentAudiences.map(audienceId => 
+        audienceId === 'custom' 
+          ? (customAudience || 'Custom Persona') 
+          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId)
+      );
+      setOptimizationStatus(`Optimizing for: \n${allAudienceLabels.join(', ')}`);
+
       // Run all audience optimizations in parallel
-      const optimizationPromises = currentAudiences.map(async (audienceId) => {
+      const optimizationPromises = currentAudiences.map(async (audienceId, index) => {
         const audienceLabel = audienceId === 'custom' 
           ? (customAudience || 'Custom Persona') 
           : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId);
         
-        // Progress reporting for hybrid mode
-        if (selectedEngine.includes('hybrid')) {
-          setOptimizationStatus(`Step 1: Extracting Keywords with Gemini...`);
+        // Progress reporting for hybrid mode (only set by first one to prevent overlap)
+        if (selectedEngine.includes('hybrid') && index === 0) {
           setTimeout(() => {
-            if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming...`);
-          }, 3000);
+            if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming for ${allAudienceLabels.length} audiences...`);
+          }, 4000);
           setTimeout(() => {
             if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
-          }, 6000);
-        } else {
-          setOptimizationStatus(`Optimizing for ${audienceLabel}...`);
+          }, 8000);
         }
         
         const data = await optimizeResume(
@@ -3380,8 +3393,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       {isOptimizing ? (
                         <>
                           <Square className="w-3 h-3 fill-current animate-pulse" />
-                          <span className="hidden sm:inline">Stop ({optimizationProgress}%)</span>
-                          <span className="sm:hidden">{optimizationProgress}%</span>
+                          <span className="hidden sm:inline">Stop ({Math.round(optimizationProgress)}%)</span>
+                          <span className="sm:hidden">{Math.round(optimizationProgress)}%</span>
                         </>
                       ) : showOptimizeSuccess ? (
                         <>
@@ -3866,6 +3879,27 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           {/* Settings Content */}
                           <div className="space-y-4">
                             <h3 className="text-xs font-bold uppercase tracking-widest opacity-50">3. Optimization Settings</h3>
+                            
+                            <div className="flex items-center justify-between mb-4 border-b border-black/5 dark:border-white/5 pb-4">
+                              <label className={`block text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Loader Visualization</label>
+                              <div className="flex rounded-md overflow-hidden border border-black/10 dark:border-white/10 text-xs font-bold uppercase tracking-widest">
+                                <button
+                                  type="button"
+                                  onClick={() => setUsePremiumLoader(true)}
+                                  className={`px-3 py-1 transition-colors ${usePremiumLoader ? 'bg-primary text-primary-foreground' : (isDarkMode ? 'bg-black text-white/50' : 'bg-white text-black/50')}`}
+                                >
+                                  Enterprise
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setUsePremiumLoader(false)}
+                                  className={`px-3 py-1 transition-colors ${!usePremiumLoader ? 'bg-primary text-primary-foreground' : (isDarkMode ? 'bg-black text-white/50' : 'bg-white text-black/50')}`}
+                                >
+                                  Cloud
+                                </button>
+                              </div>
+                            </div>
+                            
                             <div>
                               <div className="flex items-center justify-between mb-2">
                                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Optimization Mode</label>
@@ -4205,7 +4239,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   {isOptimizing ? (
                                     <>
                                       <Square className="w-5 h-5 fill-current animate-pulse" />
-                                      Stop Optimization ({optimizationProgress}%)
+                                      Stop Optimization ({Math.round(optimizationProgress)}%)
                                     </>
                                   ) : showOptimizeSuccess ? (
                                     <>
@@ -4813,107 +4847,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     )}
                   </div>
                 </motion.div>
-              ) : isOptimizing && Object.keys(results).length === 0 ? (
-                <motion.div 
-                  key="optimizing"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className={`h-full min-h-[500px] flex flex-col items-center justify-center text-center p-12 rounded-2xl border border-dashed ${
-                    isDarkMode ? 'glass-panel border-white/20' : 'glass-panel-light border-black/10'
-                  }`}
-                >
-                  <div className="w-full max-w-md space-y-12">
-                    <motion.div 
-                        className="relative w-32 h-32 mx-auto"
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-                      >
-                      {/* Omni Fluid Background Light */}
-                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-red-500/10 rounded-full blur-[40px] animate-pulse" />
-                      
-                      {/* Outer Ring */}
-                      <div className={`absolute inset-0 border-4 rounded-full ${isDarkMode ? 'border-white/5' : 'border-black/5'}`} />
-                      
-                      {/* Progress Ring with Omni Gradient */}
-                      <svg className="absolute inset-0 w-full h-full -rotate-90">
-                        <defs>
-                          <linearGradient id="omniGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stopColor="#4285f4" />
-                            <stop offset="25%" stopColor="#a142f4" />
-                            <stop offset="50%" stopColor="#ea4335" />
-                            <stop offset="75%" stopColor="#fbbc04" />
-                            <stop offset="100%" stopColor="#34a853" />
-                          </linearGradient>
-                        </defs>
-                        <circle
-                          cx="64"
-                          cy="64"
-                          r="60"
-                          fill="transparent"
-                          stroke="url(#omniGradient)"
-                          strokeWidth="6"
-                          strokeLinecap="round"
-                          className="drop-shadow-[0_0_8px_rgba(66,133,244,0.3)]"
-                          strokeDasharray={377}
-                          strokeDashoffset={377 - (377 * optimizationProgress) / 100}
-                          style={{ transition: 'stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1)' }}
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <motion.div
-                          animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
-                          transition={{ duration: 2, repeat: Infinity }}
-                        >
-                          <Cpu className="w-12 h-12 text-white/80" />
-                        </motion.div>
-                      </div>
-                    </motion.div>
-                    
-                    <div className="space-y-6">
-                      <h3 className={`text-4xl font-bold tracking-tight omni-gradient-text`}>Resume optimization in progress please wait.....</h3>
-                      
-                      <div className="flex justify-between items-end">
-                        <div className="text-left space-y-1">
-                          <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-30">Status Update</p>
-                          <AnimatePresence mode="wait">
-                            <motion.p 
-                              key={optimizationStatus}
-                              initial={{ opacity: 0, y: 5 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -5 }}
-                              className="text-xs font-mono font-bold text-white/70 uppercase tracking-widest max-w-[280px] leading-relaxed"
-                            >
-                              {optimizationStatus}
-                            </motion.p>
-                          </AnimatePresence>
-                        </div>
-                        <span className="text-5xl font-black font-mono omni-gradient-text">
-                          {optimizationProgress}%
-                        </span>
-                      </div>
-                      
-                      <div className={`h-2 w-full rounded-full overflow-hidden ${isDarkMode ? 'bg-white/5' : 'bg-black/5'} border border-white/5`}>
-                        <motion.div 
-                          className="h-full omni-progress-bar shadow-[0_0_20px_rgba(66,133,244,0.4)]"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${optimizationProgress}%` }}
-                          transition={{ type: "spring", bounce: 0, duration: 1 }}
-                        />
-                      </div>
-                      
-                      <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-30">
-                        <span>Analyzing Job Context</span>
-                        <span>Generating Content</span>
-                        <span>Finalizing</span>
-                      </div>
-                    </div>
-
-                    <p className="opacity-40 text-sm leading-relaxed italic font-serif">
-                      "Tailoring your experience for maximum impact..."
-                    </p>
-                  </div>
-                </motion.div>
+              ) : isOptimizing ? (
+                usePremiumLoader ? (
+                  <PremiumEnterpriseLoader 
+                    isLoading={isOptimizing}
+                    progress={optimizationProgress}
+                    currentStage={optimizationStatus}
+                  />
+                ) : (
+                  <CloudArchitectureLoader 
+                    isLoading={isOptimizing}
+                    progress={optimizationProgress}
+                    currentStage={optimizationStatus}
+                  />
+                )
               ) : (Object.keys(results).length === 0) ? (
                 <motion.div 
                   key="empty-state"

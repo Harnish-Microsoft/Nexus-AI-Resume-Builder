@@ -881,7 +881,10 @@ async function startServer() {
            - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
            - OLDER ROLES (Before 2017): Strictly 1 brief bullet point focusing only on the core outcome.
            - CASEPOINT: At least 4 bullet points.
-           - HCL: Strictly 2 basic bullet points.
+           - HCL: Strictly 2 bullet points, both must be single line.
+           - Sterling Accuris Diagnostics: Strictly 3 bullet points, all must be single line.
+           - AGILUS Diagnostics: Strictly 2 bullet points, both must be single line.
+           - Galaxy Office Automation Pvt. Ltd.: Strictly 1 brief one-liner bullet point.
         
         4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
         4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
