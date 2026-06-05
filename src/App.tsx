@@ -1731,8 +1731,8 @@ export default function App() {
       
       // Use offsetWidth directly as it represents the unscaled CSS dimensions (e.g. 210mm = 794px)
       // Dividing by currentZoom was causing the scaling loop to minimum zoom
-      const contentWidth = resumeElement.offsetWidth;
-      const contentHeight = resumeElement.offsetHeight;
+      const contentWidth = resumeElement.scrollWidth;
+      const contentHeight = resumeElement.scrollHeight;
       
       if (contentWidth === 0 || contentHeight === 0) return;
       

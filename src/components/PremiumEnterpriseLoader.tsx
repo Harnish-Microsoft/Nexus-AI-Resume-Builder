@@ -128,7 +128,7 @@ const PremiumEnterpriseLoader: React.FC<PremiumEnterpriseLoaderProps> = ({
         <div>
           <h1 className="text-2xl md:text-3xl font-light text-white flex items-center gap-3 tracking-tight">
             <Activity className="text-blue-500 animate-pulse" size={28} />
-            AI Resume Command Center
+            Nexus AI Resume Optimizer
           </h1>
           <p className="text-slate-400 font-mono text-xs uppercase tracking-widest mt-2 ml-10">Building the strongest version of your professional profile</p>
         </div>
