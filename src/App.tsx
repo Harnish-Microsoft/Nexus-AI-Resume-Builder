@@ -2202,8 +2202,9 @@ export default function App() {
     }
   };
 
-  const handleOptimize = async () => {
+  const handleOptimize = async (overrideResumeText?: string) => {
     console.log("[Nexus AI] handleOptimize started. Engine:", selectedEngine);
+    if (isExtracting) return;
     setError(null);
     setOptimizationStatus("Initializing Nexus Pipeline...");
     
@@ -2224,27 +2225,37 @@ export default function App() {
     const hasOKey = !!openaiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
 
     if (isGeminiNeeded && !hasGKey) {
-      setError("At least 1 API key needed. Please insert your Gemini API key.");
+      const msg = "At least 1 API key needed. Please insert your Gemini API key.";
+      setError(msg);
+      showToast(msg, "error");
       return;
     }
     if (isOpenAINeeded && !hasOKey) {
-      setError("At least 1 API key needed. Please insert your OpenAI API key.");
+      const msg = "At least 1 API key needed. Please insert your OpenAI API key.";
+      setError(msg);
+      showToast(msg, "error");
       return;
     }
     if (!hasGKey && !hasOKey) {
-      setError("At least 1 API key needed. Please insert your API key in the Profile tab.");
+      const msg = "At least 1 API key needed. Please insert your API key in the Profile tab.";
+      setError(msg);
+      showToast(msg, "error");
       return;
     }
 
     if (!targetRole.trim() || !companyName.trim()) {
       console.warn("[Nexus AI] Mandatory fields missing");
-      setError('Target Role and Company Name are mandatory.');
+      const msg = 'Target Role and Company Name are mandatory.';
+      setError(msg);
+      showToast(msg, "error");
       return;
     }
 
     if (!jobDescription && !jobUrl) {
       console.warn("[Nexus AI] Job description/URL missing");
-      setError('Please provide a job description or job URL to optimize against.');
+      const msg = 'Please provide a job description or job URL to optimize against.';
+      setError(msg);
+      showToast(msg, "error");
       return;
     }
 
@@ -2308,7 +2319,7 @@ export default function App() {
     const controller = new AbortController();
     setAbortController(controller);
     
-    let finalResumeText = resumeText || "";
+    let finalResumeText = overrideResumeText || resumeText || "";
 
     // SMART MASTER SELECTION STRATEGY
     // If there are multiple resumes in Nexus Master, help the user pick the right base
@@ -3491,7 +3502,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </button>
                   </div>
                   <button
-                    onClick={() => isOptimizing ? handleStop() : handleOptimize()}
+                    onClick={() => {
+                      if (isOptimizing) {
+                        handleStop();
+                        return;
+                      }
+                      if (isExtracting) return;
+                      handleOptimize();
+                    }}
+                    disabled={isExtracting}
                     className={`relative overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all ${
                         isOptimizing 
                             ? 'bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500/20 shadow-red-500/5' 
@@ -3499,8 +3518,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 animate-bounce'
                                 : (isDarkMode 
                                     ? 'bg-emerald-500 hover:bg-emerald-400 text-black' 
-                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white')
-                    }`}
+                                    : 'bg-emerald-600 hover:bg-[#059669] text-white')
+                    } ${isExtracting ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     {isOptimizing && (
                       <motion.div 
@@ -5053,8 +5072,16 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         </div>
                       </button>
                       <button 
-                        onClick={() => handleOptimize()}
-                        className="space-y-2 md:space-y-4 group text-center focus:outline-none"
+                        onClick={() => {
+                          if (isOptimizing) {
+                            handleStop();
+                            return;
+                          }
+                          if (isExtracting) return;
+                          handleOptimize();
+                        }}
+                        disabled={isExtracting}
+                        className={`space-y-2 md:space-y-4 group text-center focus:outline-none ${isExtracting ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
                           <Zap className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
