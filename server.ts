@@ -877,16 +877,13 @@ async function startServer() {
         2. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
         
         3. TIMELINE-BASED BULLET CONSTRAINTS (STRICT):
-           - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
-           - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
-           - OLDER ROLES (Before 2017): Strictly 1 brief bullet point focusing only on the core outcome.
-           - CASEPOINT: At least 4 bullet points.
-           - HCL: Strictly 2 bullet points, both must be single line.
-           - Sterling Accuris Diagnostics: Strictly 3 bullet points, all must be single line.
-           - AGILUS Diagnostics: Strictly 2 bullet points, both must be single line.
-           - Galaxy Office Automation Pvt. Ltd.: Strictly 1 brief one-liner bullet point.
+           - RECENT ROLES (Concentrix, M&M, ARCHER, Casepoint): Strictly 3 to 4 bullet points.
+           - OLDER ROLES: Senior Executive – IT (Sterling), HCL, AGILUS Diagnostics, Galaxy Office Automation Pvt. Ltd., Aegis Global: Strictly 1 to 2 brief bullet points maximum. Do not elaborate heavily on these early roles.
         
-        4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
+        4. STRICT 1-LINE FAANG RULE (CRITICAL):
+           - EVERY single bullet point MUST be strictly ONE SINGLE LINE. 
+           - Do not exceed 110 characters per bullet. 
+           - Use Google's XYZ formula but keep it brutally concise and punchy. NEVER wrap a bullet point to a second line.
         4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
         
         5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
@@ -1506,6 +1503,15 @@ async function startServer() {
       return res.status(400).json({ error: "HTML content is required" });
     }
 
+    // Extract printScale if present, defaulting to 1
+    let printScale = 1;
+    if (css) {
+      const match = css.match(/scale\(([\d.]+)\)/) || css.match(/zoom:\s*([\d.]+)/);
+      if (match) {
+        printScale = parseFloat(match[1]);
+      }
+    }
+
     let browser;
     try {
       const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -1556,7 +1562,7 @@ async function startServer() {
               }
 
               /* 2. STRETCH CONTENT HORIZONTALLY */
-              #resume-container, .resume-page {
+              .resume-page {
                 width: 100% !important;
                 max-width: 100% !important;
                 margin: 0 auto !important;
@@ -1566,16 +1572,25 @@ async function startServer() {
                 border: none !important;
               }
 
+              /* Reliable scaling */
+              #resume-container {
+                transform: scale(${printScale}) !important;
+                transform-origin: top left !important;
+                width: calc(100% / ${printScale}) !important;
+                box-shadow: none !important;
+                border: none !important;
+              }
+
               /* Reduce bullet point indentation to gain more line length */
               ul {
-                padding-left: 16px !important;
+                padding-left: 14px !important;
                 margin-left: 0 !important;
               }
 
-              /* 3. Beautiful Typography & Vertical Compression */
+              /* --- COMPACT TYPOGRAPHY & LAYOUT --- */
               p, li, span, div, .resume-bullet-text { 
-                font-size: 9.5pt !important; 
-                line-height: 1.35 !important; 
+                font-size: 9pt !important; 
+                line-height: 1.25 !important; 
               }
 
               p, li, .resume-bullet-text, .experience-item div {
@@ -1583,11 +1598,40 @@ async function startServer() {
                 text-justify: auto !important;
               }
 
-              /* 4. Clean Section Spacing */
-              .resume-section { margin-bottom: 8px !important; padding: 0 !important; }
-              .experience-item { margin-bottom: 6px !important; }
+              /* 4. Clean Section Spacing & Strict Pagination */
+              .resume-section { 
+                margin-bottom: 12px !important; 
+                padding: 0 !important; 
+              }
+
+              /* Ensure roles are grouped and don't split across pages */
+              .experience-item, .project-item { 
+                margin-bottom: 6px !important; 
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                display: inline-block !important; 
+                width: 100% !important;
+                vertical-align: top;
+              }
+
+              /* Prevent titles from separating from their content */
+              h2,
+              .experience-item > div:first-child, 
+              .experience-item > div:nth-child(2), 
+              .project-item > div:first-child {
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+              }
+
+              .experience-item li, .project-item li, .resume-bullet-item {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+
               ul.resume-list { margin-top: 4px !important; margin-bottom: 4px !important; }
-              li { margin-bottom: 4px !important; }
+              li { 
+                margin-bottom: 2px !important; 
+              }
 
               /* Dynamic Scale Injection from Frontend */
               ${css || ''}
@@ -1614,7 +1658,8 @@ async function startServer() {
         format: "A4",
         printBackground: true,
         displayHeaderFooter: false,
-        preferCSSPageSize: true
+        preferCSSPageSize: true,
+        pageRanges: "1-2"
       });
 
       res.setHeader("Content-Type", "application/pdf");

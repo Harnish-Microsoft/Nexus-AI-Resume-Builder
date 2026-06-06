@@ -102,6 +102,7 @@ import CloudArchitectureLoader from './components/CloudArchitectureLoader';
 import PremiumEnterpriseLoader from './components/PremiumEnterpriseLoader';
 import { AuthModal } from './components/AuthModal';
 import { TermsModal } from './components/TermsModal';
+import { AINeuralNetworkBackground } from './components/AINeuralNetworkBackground';
 
 import defaultMasterResume from './services/master_resume.json';
 
@@ -1532,7 +1533,7 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [printScale, setPrintScale] = useState(1);
 
-  // Add this effect to calculate the 2-page fit
+  // Add this effect to calculate the 2-page fit and perform smart auto-trimming
   useEffect(() => {
     const calculateFit = () => {
       const resumeEl = document.getElementById('resume-container');
@@ -1549,7 +1550,101 @@ export default function App() {
       const actualHeight = resumeEl.scrollHeight;
 
       if (actualHeight > MAX_SAFE_HEIGHT) {
-        // Calculate how much we need to shrink it to fit
+        const hasAudience = activeAudience && results[activeAudience];
+        const experienceList = hasAudience 
+          ? results[activeAudience].experience || [] 
+          : data.experience || [];
+        const projectsList = hasAudience
+          ? results[activeAudience].projects || []
+          : data.projects || [];
+
+        // 1. Inspect experience array for roles with max bullet points above threshold (2)
+        let maxBulletsIndex = -1;
+        let maxBulletCount = 0;
+        
+        experienceList.forEach((exp: any, index: number) => {
+          const count = Array.isArray(exp.bullets) ? exp.bullets.length : 0;
+          if (count > maxBulletCount) {
+            maxBulletCount = count;
+            maxBulletsIndex = index;
+          }
+        });
+
+        if (maxBulletCount > 2 && maxBulletsIndex !== -1) {
+          const updatedExp = experienceList.map((exp: any, index: number) => {
+            if (index === maxBulletsIndex) {
+              return {
+                ...exp,
+                bullets: exp.bullets.slice(0, -1)
+              };
+            }
+            return exp;
+          });
+
+          if (hasAudience) {
+            setResults(prev => ({
+              ...prev,
+              [activeAudience!]: {
+                ...prev[activeAudience!],
+                experience: updatedExp
+              }
+            }));
+          } else {
+            setData({
+              ...data,
+              experience: updatedExp
+            });
+          }
+          return; // Allow React to re-render and re-measure
+        }
+
+        // 2. Target projects array to shorten descriptions or remove a project
+        if (projectsList.length > 0) {
+          let trimmedSomething = false;
+          const updatedProjects = [...projectsList];
+
+          for (let i = updatedProjects.length - 1; i >= 0; i--) {
+            const proj = updatedProjects[i];
+            if (proj && typeof proj !== 'string') {
+              const desc = proj.description || '';
+              const sentences = desc.split(/[.!?]+\s+/).filter(Boolean);
+              if (sentences.length > 1) {
+                updatedProjects[i] = {
+                  ...proj,
+                  description: sentences[0].trim() + '.'
+                };
+                trimmedSomething = true;
+                break;
+              }
+            }
+          }
+
+          if (!trimmedSomething) {
+            // Remove the last project
+            updatedProjects.pop();
+            trimmedSomething = true;
+          }
+
+          if (trimmedSomething) {
+            if (hasAudience) {
+              setResults(prev => ({
+                ...prev,
+                [activeAudience!]: {
+                  ...prev[activeAudience!],
+                  projects: updatedProjects
+                }
+              }));
+            } else {
+              setData({
+                ...data,
+                projects: updatedProjects
+              });
+            }
+            return; // Allow React to re-render and re-measure
+          }
+        }
+
+        // Safeguard: if it still overflows and cannot be trimmed further, apply scaling
         const newScale = MAX_SAFE_HEIGHT / actualHeight;
         setPrintScale(newScale);
       } else {
@@ -1560,7 +1655,7 @@ export default function App() {
     // Run calculation after DOM updates
     const timeoutId = setTimeout(calculateFit, 1000); // 1s to be safer
     return () => clearTimeout(timeoutId);
-  }, [resumeText, results, activeAudience, previewMode, zoom]);
+  }, [resumeText, results, activeAudience, previewMode, zoom, data, setData, setResults, setPrintScale]);
   const [contentHeight, setContentHeight] = useState(1123);
   const [isPiiMasked, setIsPiiMasked] = useState(false);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
@@ -1595,9 +1690,8 @@ export default function App() {
 
       const scaleCSS = `
         #resume-container {
-          transform: scale(${printScale});
-          transform-origin: top left;
-          /* Increase width to compensate for the scale down, ensuring it fills the page */
+          transform: scale(${printScale}) !important;
+          transform-origin: top left !important;
           width: calc(100% / ${printScale}) !important;
         }
       `;
@@ -1711,7 +1805,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!previewContainerRef.current || !isAutoZoom) return;
+    if (!previewContainerRef.current) return;
     
     let animationFrameId: number;
     
@@ -1736,8 +1830,11 @@ export default function App() {
       
       if (contentWidth === 0 || contentHeight === 0) return;
       
-      // Update state for exact container sizing
+      // Update state for exact container sizing ALWAYS so it doesn't clip
       setContentHeight(contentHeight);
+
+      // Early return if we shouldn't adjust zoom
+      if (!isAutoZoom) return;
 
       const padding = window.innerWidth < 768 ? 8 : 32; 
       const availableWidth = containerWidth - padding;
@@ -1802,10 +1899,6 @@ export default function App() {
       }
     };
   }, [activeAudience, isAutoZoom, results, data, previewMode, isFocusMode, isOptimizing]); // Re-run when content or mode changes
-
-  useEffect(() => {
-    console.log("isOptimizing changed:", isOptimizing);
-  }, [isOptimizing]);
 
   const extractTextFromPDF = async (file: File) => {
     setIsExtracting(true);
@@ -2680,6 +2773,24 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     try {
       // Small delay to allow React to re-render without highlights
       await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const targetOuterHTML = element.outerHTML;
+
+      // Show the loader UI overlay
+      setOptimizationProgress(0);
+      setOptimizationStatus("Compiling Final PDF Asset...");
+      setIsOptimizing(true);
+
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = setInterval(() => {
+        setOptimizationProgress(prev => {
+           const next = prev + 5;
+           if (next > 30 && prev <= 30) setOptimizationStatus("Configuring Print Scaling...");
+           if (next > 60 && prev <= 60) setOptimizationStatus("Rendering PDF Document...");
+           if (next > 85 && prev <= 85) setOptimizationStatus("Finalizing PDF Download...");
+           return Math.min(95, next);
+        });
+      }, 500);
 
       // Extract all styles from the document to ensure the PDF matches the preview
       const styles = Array.from(document.styleSheets)
@@ -2713,9 +2824,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       const scaleCSS = `
         #resume-container {
-          transform: scale(${printScale});
-          transform-origin: top left;
-          /* Increase width to compensate for the scale down, ensuring it fills the page */
+          transform: scale(${printScale}) !important;
+          transform-origin: top left !important;
           width: calc(100% / ${printScale}) !important;
         }
       `;
@@ -2732,7 +2842,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          html: element.outerHTML,
+          html: targetOuterHTML,
           css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
           fonts: customFonts.map(font => `
@@ -2819,11 +2929,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       console.error('PDF Generation Error:', err);
       showToast(err.message || 'Failed to generate PDF. Please try again.', 'error');
     } finally {
-      // Restore active section
-      if (previousActiveSection) {
-        formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: previousActiveSection });
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
       }
-      setIsDownloading(false);
+      setOptimizationProgress(100);
+      setOptimizationStatus("PDF Generated Successfully!");
+      
+      setTimeout(() => {
+        setIsOptimizing(false);
+        // Restore active section
+        if (previousActiveSection) {
+          formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: previousActiveSection });
+        }
+        setIsDownloading(false);
+      }, 1500);
     }
   };
 
@@ -3286,6 +3406,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       <div className={`absolute inset-0 transition-colors duration-1000 ${user ? 'bg-black/40' : 'bg-black/10 dark:bg-black/30'} pointer-events-none -z-10`} />
       <div className="workspace-overlay -z-5" />
       <GeminiOmniAurora />
+      <AINeuralNetworkBackground isDarkMode={isDarkMode} opacity={0.25} />
       {activeTheme.id === 'infogeneus' && (
         <>
           <GeminiAurora />
@@ -3743,24 +3864,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   onChange={(e) => setJobDescription(e.target.value)}
                                 />
                                 
-                                <button
-                                onClick={handleCheckSuitability}
-                                disabled={isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText}
-                                className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border ${
-                                  isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText
-                                    ? (isDarkMode ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed' : 'bg-black/5 border-black/10 text-black/30 cursor-not-allowed')
-                                    : (isDarkMode ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/40 shadow-lg shadow-indigo-500/20' : 'bg-white border-blue-200 text-blue-600 hover:bg-blue-50 shadow-md shadow-blue-500/10')
-                                }`}
-                              >
-                                  {isCheckingSuitability ? (
+                                {isCheckingSuitability ? (
+                                  <div
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border ${
+                                      isDarkMode ? 'bg-white/5 border-white/10 text-white/30' : 'bg-black/5 border-black/10 text-black/30'
+                                    }`}
+                                  >
                                     <div className="flex items-center gap-2">
                                       <button 
+                                        type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           isSuitabilityCancelledRef.current = true;
                                           setIsCheckingSuitability(false);
                                         }}
-                                        className="px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded text-[9px] font-black uppercase transition-colors"
+                                        className="px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded text-[9px] font-black uppercase transition-colors cursor-pointer"
                                       >
                                         Stop
                                       </button>
@@ -3769,24 +3887,37 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                         Evaluating Fit...
                                       </div>
                                     </div>
-                                  ) : suitabilityResult ? (
-                                    <>
-                                      <div className={`px-1.5 py-0.5 rounded text-[10px] font-black mr-1 ${
-                                        suitabilityResult.matchScore >= 80 ? 'bg-emerald-500 text-white' :
-                                        suitabilityResult.matchScore >= 60 ? 'bg-amber-500 text-white' :
-                                        'bg-red-500 text-white'
-                                      }`}>
-                                        {suitabilityResult.matchScore}%
-                                      </div>
-                                      Check All Resumes
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ShieldCheck className="w-4 h-4" />
-                                      Check All Resumes for Fit
-                                    </>
-                                  )}
-                                </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={handleCheckSuitability}
+                                    disabled={(!jobDescription && !jobUrl) || !resumeText}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border ${
+                                      (!jobDescription && !jobUrl) || !resumeText
+                                        ? (isDarkMode ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed' : 'bg-black/5 border-black/10 text-black/30 cursor-not-allowed')
+                                        : (isDarkMode ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/40 shadow-lg shadow-indigo-500/20' : 'bg-white border-blue-200 text-blue-600 hover:bg-blue-50 shadow-md shadow-blue-500/10')
+                                    }`}
+                                  >
+                                    {suitabilityResult ? (
+                                      <>
+                                        <div className={`px-1.5 py-0.5 rounded text-[10px] font-black mr-1 ${
+                                          suitabilityResult.matchScore >= 80 ? 'bg-emerald-500 text-white' :
+                                          suitabilityResult.matchScore >= 60 ? 'bg-amber-500 text-white' :
+                                          'bg-red-500 text-white'
+                                        }`}>
+                                          {suitabilityResult.matchScore}%
+                                        </div>
+                                        Check All Resumes
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ShieldCheck className="w-4 h-4" />
+                                        Check All Resumes for Fit
+                                      </>
+                                    )}
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -4848,19 +4979,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   </div>
                 </motion.div>
               ) : isOptimizing ? (
-                usePremiumLoader ? (
-                  <PremiumEnterpriseLoader 
-                    isLoading={isOptimizing}
-                    progress={optimizationProgress}
-                    currentStage={optimizationStatus}
-                  />
-                ) : (
-                  <CloudArchitectureLoader 
-                    isLoading={isOptimizing}
-                    progress={optimizationProgress}
-                    currentStage={optimizationStatus}
-                  />
-                )
+                <div className="w-full h-full overflow-y-auto custom-scrollbar rounded-2xl flex flex-col">
+                  {usePremiumLoader ? (
+                    <PremiumEnterpriseLoader 
+                      isLoading={isOptimizing}
+                      progress={optimizationProgress}
+                      currentStage={optimizationStatus}
+                    />
+                  ) : (
+                    <CloudArchitectureLoader 
+                      isLoading={isOptimizing}
+                      progress={optimizationProgress}
+                      currentStage={optimizationStatus}
+                    />
+                  )}
+                </div>
               ) : (Object.keys(results).length === 0) ? (
                 <motion.div 
                   key="empty-state"

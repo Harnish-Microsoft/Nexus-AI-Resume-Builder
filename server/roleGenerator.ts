@@ -32,12 +32,15 @@ ${targetCompany ? `Tailor appropriately for ${targetCompany}. Focus on specific 
 STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
 1. TRUTHFULNESS IS MANDATORY: NEVER fabricate metrics, budget numbers, or leadership ownership. (Use ONLY provided role data).
 2. AI-GENERATED LANGUAGE PREVENTION: DO NOT use "Spearheaded", "Orchestrated", "Pioneered". Use "Managed", "Implemented", "Coordinated", "Optimized", "Configured", "Automated".
-3. THE FAANG Standard (Google XYZ): EVERY single bullet point MUST follow Google's XYZ formula: 'Accomplished [X] as measured by [Y], by doing [Z]'. Bullets can span 1 to 2 lines maximum. Be highly technical, metric-driven, and dense. Do not use filler words.
-4. ROLE-SPECIFIC COUNTS:
-   - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
-   - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
-   - OLDER ROLES (Before 2017): Strictly 1 brief XYZ bullet point focusing only on the core outcome.
-5. DETAIL: Each bullet should be impactful, technical, and dense. Provide specific technical context and outcomes within the 1-2 line limit.
+3. THE FAANG Standard (Google XYZ): EVERY single bullet point MUST follow Google's XYZ formula: 'Accomplished [X] as measured by [Y], by doing [Z]'.
+4. ROLE-SPECIFIC COUNTS (STRICT ASYMMETRICAL LAYOUT):
+   - If role is Concentrix, M&M, ARCHER, or Casepoint: Strictly 4 to 5 high-impact XYZ bullet points.
+   - If role is HCLTech: Strictly 2 brief XYZ bullet points.
+   - If role is Sterling, AGILUS, Galaxy, or Aegis: Strictly 2 brief XYZ bullet points.
+   
+5. THE 1-LINE FAANG RULE:
+   - Every bullet MUST be one single line (max 110 characters). 
+   - Never wrap to a second line.
 6. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Use "Infrastructure Automation", "Workflow Orchestration", or "Release Engineering".
 7. PROJECT FIDELITY: Limit descriptions to 2 sentences or 25 words.
 
