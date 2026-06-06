@@ -1002,6 +1002,8 @@ export async function generateCoverLetter(
       
       CRITICAL: You MUST identify the company name from the job description and use it throughout the letter. Do not use placeholders like "[Company Name]". If the company name is not explicitly clear, use a generic but professional reference like "the team at your organization".
       
+      STRICT REQUIREMENT: DO NOT include candidate contact headers (like "Harnish Jariwala", "Surat, Gujarat", email addresses, phone numbers, or social links) at the top of the cover letter. These blocks look extremely unprofessional. Instead, start directly with the salutation (e.g. "Dear Hiring Manager," or "Dear [Company] Hiring Team,"). No contact header information is allowed at the top.
+
       JOB DESCRIPTION: ${jobDescription}
       RESUME: ${resumeText}
       TARGET ROLE: ${targetRole}
@@ -1012,6 +1014,42 @@ export async function generateCoverLetter(
   try {
     const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     let result = data.result || "";
+    
+    // Programmatic sanitization to remove contact details from the top if the AI still included them
+    try {
+      let cleaned = result.trim();
+      const lines = cleaned.split('\n');
+      let firstLinesToRemove = 0;
+      
+      // Look at the first 12 lines to check for typical contact detail patterns
+      for (let i = 0; i < Math.min(lines.length, 12); i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        
+        const isContactInfo = 
+          /harnish\s+jariwala/i.test(line) ||
+          /surat,\s+gujarat/i.test(line) ||
+          /\+91/i.test(line) ||
+          /param_jariwala/i.test(line) ||
+          /yahoo\.com/i.test(line) ||
+          /linkedin\.com/i.test(line) ||
+          /8980161289/.test(line) ||
+          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(line) || // generic Email regex
+          /^\+?[\d\s-]{8,20}$/.test(line); // generic Phone regex
+          
+        if (isContactInfo) {
+          firstLinesToRemove = i + 1;
+        }
+      }
+      
+      if (firstLinesToRemove > 0) {
+        // Strip out the contact header lines and any empty lines following them
+        result = lines.slice(firstLinesToRemove).join('\n').trim();
+      }
+    } catch (sanitizerError) {
+      console.warn("Error running cover letter sanitizer:", sanitizerError);
+    }
+
     
     // Try to parse if it looks like JSON
     if (result.includes('{') && result.includes('}')) {
@@ -1266,3 +1304,173 @@ export async function generateMasterResume(
     throw error;
   }
 }
+
+export async function generateWhyLookingNewRole(
+  jobDescription: string,
+  resumeText: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('recruiter_message', config);
+  const prompt = `
+      You are an expert career advisor.
+      The user is being asked "Why are you looking for a new role?" or "What motivates you to seek this opportunity?".
+      Based on the following job description and the candidate's resume, write a highly professional, authentic, and polished response in human conversational language (max 150-200 words).
+      Provide a positive reason focusing on growth, seeking new technical challenges, or alignment with the role, rather than complaining about any past company.
+      
+      JOB DESCRIPTION: ${jobDescription}
+      RESUME: ${resumeText}
+      
+      Return the response as a plain text string. Do not include any extra conversational text or labels.
+    `;
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return (data.result || "").trim();
+  } catch (error) {
+    console.error("Error generating Why Looking New Role response:", error);
+    return "";
+  }
+}
+
+export async function generateWhyLookingForChange(
+  jobDescription: string,
+  resumeText: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('recruiter_message', config);
+  const prompt = `
+      You are an expert resume reviewer and career strategist.
+      Recruiters and hiring managers often ask "Why are you looking for a change?" or "Why do you want to transition from your current position?".
+      Based on the following job description and the candidate's resume, write a highly professional, authentic response in conversational human language (max 150-200 words).
+      Focus on wishing to apply existing expertise to a new sphere, scaling up skills, and alignment with the target company.
+      
+      JOB DESCRIPTION: ${jobDescription}
+      RESUME: ${resumeText}
+      
+      Return the response as a plain text string. Do not include any extra conversational text or labels.
+    `;
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return (data.result || "").trim();
+  } catch (error) {
+    console.error("Error generating Why Looking For Change response:", error);
+    return "";
+  }
+}
+
+export async function generateWhyJoinCompany(
+  companyName: string,
+  targetRole: string,
+  resumeText: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('recruiter_message', config);
+  let apiKey = "";
+  try {
+    apiKey = await getDecryptedKey(config.gemini?.apiKey || "");
+  } catch (e) {
+    console.warn("Could not decrypt key, falling back", e);
+  }
+
+  const useKey = apiKey || process.env.GEMINI_API_KEY || "";
+  const prompt = `
+    You are an expert business and career analyst.
+    The user is asking whether they should join the company "${companyName}" for the role of "${targetRole || 'their professional capability'}", and why.
+    
+    TASK:
+    1. Search and analyze the organization "${companyName}" using Web Search (especially looking at Glassdoor ratings, employee feedback, corporate culture, core business strength, and company sentiment).
+    2. Provide a recommendation on whether they should join the company (e.g., "Highly Recommended", "Recommended with Caveats", or similar).
+    3. Explain WHY they should join, citing specific cultural attributes, employee reviews, glassdoor-like ratings or feedback you found, and how it aligns with a high-performing career.
+    4. Provide some valuable career development tips and potential discussion points or questions they can ask in the interview about the company's culture.
+    
+    Make the response highly professional, written in elegant, encouraging, but objective conversational human language.
+    Include specific references to employee satisfaction and company reputation on sites like Glassdoor to support your coaching decision.
+    
+    Candidate's Resume Reference:
+    ${resumeText || "No resume provided"}
+  `;
+
+  if (useKey) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: useKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }]
+        }
+      });
+      return response.text || "No analysis available.";
+    } catch (error: any) {
+      console.warn("Search grounded request failed, falling back to standard LLM generation:", error);
+    }
+  }
+
+  // Fallback to standard OpenAI or Gemini if key is missing or search is unsupported
+  try {
+    const fallbackPrompt = `${prompt}\n(Note: Search grounding is unavailable, please provide analysis based on your pre-trained knowledge of ${companyName})`;
+    const data = await callAI(fallbackPrompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return (data.result || "").trim();
+  } catch (e) {
+    return "Failed to analyze the company details.";
+  }
+}
+
+export async function estimateSalaryIntelligence(
+  targetRole: string,
+  companyName: string,
+  resumeText: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('recruiter_message', config);
+  let apiKey = "";
+  try {
+    apiKey = await getDecryptedKey(config.gemini?.apiKey || "");
+  } catch (e) {
+    console.warn("Could not decrypt key, falling back", e);
+  }
+
+  const useKey = apiKey || process.env.GEMINI_API_KEY || "";
+  const prompt = `
+    You are an expert career and compensation consultant.
+    The user is applying for the role of "${targetRole}" at "${companyName || 'their target organization'}".
+    
+    TASK:
+    1. Research and analyze the estimated salary range for this specific role and company using Web Search (checking sites like Glassdoor, Levels.fyi, Indeed, and Payscale).
+    2. Consider the candidate's seniority and profile from their resume text to refine the estimate within the range (Entry, Mid, Senior, Staff, etc.).
+    3. Provide a detailed salary intelligence report including:
+       - Estimated Base Salary Range (Annual).
+       - Estimated Bonus/Variable compensation potential.
+       - Common benefits or equity packages typical for this role/company.
+       - A "Negotiation Strength" assessment based on the candidate's profile relative to the role.
+    
+    Make the response highly professional, formatted with clean bullet points, and written in encouraging but factual human language.
+    
+    Candidate's Resume Reference:
+    ${resumeText || "No resume provided"}
+  `;
+
+  if (useKey) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: useKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }]
+        }
+      });
+      return response.text || "No salary intelligence available.";
+    } catch (error: any) {
+      console.warn("Search grounded salary request failed, falling back to standard LLM generation:", error);
+    }
+  }
+
+  try {
+    const fallbackPrompt = `${prompt}\n(Note: Search grounding is unavailable, please provide estimates based on your pre-trained knowledge of market rates for ${targetRole} in the ${companyName || 'relevant'} industry)`;
+    const data = await callAI(fallbackPrompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return (data.result || "").trim();
+  } catch (e) {
+    return "Failed to analyze salary intelligence.";
+  }
+}
+
