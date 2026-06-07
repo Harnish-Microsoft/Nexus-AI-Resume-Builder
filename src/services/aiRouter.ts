@@ -20,6 +20,8 @@ export interface RouterConfig {
   mode: EngineType | 'production';
   geminiConfig: EngineConfig;
   openaiConfig: EngineConfig;
+  gemini?: any;
+  openai?: any;
 }
 
 export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
