@@ -55,36 +55,12 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
       description: 'AI resume generator'
     },
     {
-      id: 'optimization',
-      label: 'Job Optimization',
-      icon: Zap,
-      tabMapping: 'build' as const,
-      route: '/build',
-      description: 'ATS tailoring'
-    },
-    {
-      id: 'masterResumes',
-      label: 'Master Resumes',
-      icon: FolderLock,
-      tabMapping: 'tools' as const,
-      route: '/tools',
-      description: 'Profile manager'
-    },
-    {
       id: 'tools',
       label: 'Career Tools',
       icon: LayoutGrid,
       tabMapping: 'tools' as const,
       route: '/tools',
       description: 'SaaS utilities'
-    },
-    {
-      id: 'tracker',
-      label: 'Applications',
-      icon: Target,
-      tabMapping: 'tools' as const,
-      route: '/tools',
-      description: 'Job pipelines'
     },
     {
       id: 'profile',

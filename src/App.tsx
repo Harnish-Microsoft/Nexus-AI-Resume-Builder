@@ -83,6 +83,7 @@ import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuit
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
 import { AtsOptimizationStudio } from './components/AtsOptimizationStudio';
+import { OptimizationResultWorkspace } from './components/OptimizationResultWorkspace';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
 const LinkedInImporter = lazy(() => import('./components/LinkedInImporter').then(m => ({ default: m.LinkedInImporter })));
@@ -441,6 +442,8 @@ export default function App() {
   const [targetCompany, setTargetCompany] = useState('none');
   const [brainDump, setBrainDump] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [showResultWorkspace, setShowResultWorkspace] = useState(false);
+  const [currentResultWorkspaceArtifact, setCurrentResultWorkspaceArtifact] = useState<any | null>(null);
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [fastMode, setFastMode] = useState(false);
   const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
@@ -1546,129 +1549,31 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [printScale, setPrintScale] = useState(1);
 
-  // Add this effect to calculate the 2-page fit and perform smart auto-trimming
+  // Pure visual layout scaling engine - completely removes aggressive text-slicing
   useEffect(() => {
     const calculateFit = () => {
       const resumeEl = document.getElementById('resume-container');
       if (!resumeEl) return;
 
-      // Temporarily remove any scale to measure true physical height
+      // Reset scale to measure baseline layout parameters accurately
       resumeEl.style.transform = 'none';
       resumeEl.style.width = '100%';
 
-      // A4 height at 96 DPI is ~1123px. Two pages = 2246px.
-      // Subtract 12mm margins top/bottom per page (~180px total).
-      // Safe max height for exactly 2 pages is roughly 2050px.
-      const MAX_SAFE_HEIGHT = 2050;
+      const MAX_SAFE_HEIGHT = 2050; // Strict 2-page structural boundary box
       const actualHeight = resumeEl.scrollHeight;
 
       if (actualHeight > MAX_SAFE_HEIGHT) {
-        const hasAudience = activeAudience && results[activeAudience];
-        const experienceList = hasAudience 
-          ? results[activeAudience].experience || [] 
-          : data.experience || [];
-        const projectsList = hasAudience
-          ? results[activeAudience].projects || []
-          : data.projects || [];
-
-        // 1. Inspect experience array for roles with max bullet points above threshold (2)
-        let maxBulletsIndex = -1;
-        let maxBulletCount = 0;
-        
-        experienceList.forEach((exp: any, index: number) => {
-          const count = Array.isArray(exp.bullets) ? exp.bullets.length : 0;
-          if (count > maxBulletCount) {
-            maxBulletCount = count;
-            maxBulletsIndex = index;
-          }
-        });
-
-        if (maxBulletCount > 2 && maxBulletsIndex !== -1) {
-          const updatedExp = experienceList.map((exp: any, index: number) => {
-            if (index === maxBulletsIndex) {
-              return {
-                ...exp,
-                bullets: exp.bullets.slice(0, -1)
-              };
-            }
-            return exp;
-          });
-
-          if (hasAudience) {
-            setResults(prev => ({
-              ...prev,
-              [activeAudience!]: {
-                ...prev[activeAudience!],
-                experience: updatedExp
-              }
-            }));
-          } else {
-            setData({
-              ...data,
-              experience: updatedExp
-            });
-          }
-          return; // Allow React to re-render and re-measure
-        }
-
-        // 2. Target projects array to shorten descriptions or remove a project
-        if (projectsList.length > 0) {
-          let trimmedSomething = false;
-          const updatedProjects = [...projectsList] as any;
-
-          for (let i = updatedProjects.length - 1; i >= 0; i--) {
-            const proj = updatedProjects[i];
-            if (proj && typeof proj !== 'string') {
-              const desc = proj.description || '';
-              const sentences = desc.split(/[.!?]+\s+/).filter(Boolean);
-              if (sentences.length > 1) {
-                updatedProjects[i] = {
-                  ...proj,
-                  description: sentences[0].trim() + '.'
-                };
-                trimmedSomething = true;
-                break;
-              }
-            }
-          }
-
-          if (!trimmedSomething) {
-            // Remove the last project
-            updatedProjects.pop();
-            trimmedSomething = true;
-          }
-
-          if (trimmedSomething) {
-            if (hasAudience) {
-              setResults(prev => ({
-                ...prev,
-                [activeAudience!]: {
-                  ...prev[activeAudience!],
-                  projects: updatedProjects
-                }
-              }) as any);
-            } else {
-              setData({
-                ...data,
-                projects: updatedProjects
-              });
-            }
-            return; // Allow React to re-render and re-measure
-          }
-        }
-
-        // Safeguard: if it still overflows and cannot be trimmed further, apply scaling
-        const newScale = MAX_SAFE_HEIGHT / actualHeight;
+        // Apply smooth scaling, but CAP IT at 0.92 so fonts never become unreadable
+        const newScale = Math.max(0.92, MAX_SAFE_HEIGHT / actualHeight);
         setPrintScale(newScale);
       } else {
         setPrintScale(1);
       }
     };
 
-    // Run calculation after DOM updates
-    const timeoutId = setTimeout(calculateFit, 1000); // 1s to be safer
+    const timeoutId = setTimeout(calculateFit, 500);
     return () => clearTimeout(timeoutId);
-  }, [resumeText, results, activeAudience, previewMode, zoom, data, setData, setResults, setPrintScale]);
+  }, [resumeText, results, activeAudience, previewMode, zoom, data]);
   const [contentHeight, setContentHeight] = useState(1123);
   const [isPiiMasked, setIsPiiMasked] = useState(false);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
@@ -2501,9 +2406,59 @@ export default function App() {
 
       const optimizationResults = await Promise.all(optimizationPromises);
       const matchScore = optimizationResults[0]?.match_score || 0;
+
+      // Construct a full results mapping
+      const compiledResults: Record<string, any> = {};
+      currentAudiences.forEach((audId, idx) => {
+        if (optimizationResults[idx]) {
+          compiledResults[audId] = {
+            ...optimizationResults[idx],
+            _engine: selectedEngine,
+            _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
+          };
+        }
+      });
       
       // Save version immediately after optimization
       saveResumeVersion(`Optimized - ${companyName} - ${new Date().toLocaleString()}`);
+
+      // Feature 1: Build and save the persistent artifact
+      const artifactId = `artifact-${Date.now()}`;
+      const activeAud = activeAudience || currentAudiences[0] || 'Default';
+      const activeResumeName = masterResumes.find(r => r.id === selectedResumeId)?.name || 'Master Profile';
+      
+      const newArtifact = {
+        id: artifactId,
+        resumeId: selectedResumeId,
+        resumeName: activeResumeName,
+        targetRole: targetRole || 'Professional Candidate',
+        targetCompany: companyName || 'Unknown Company',
+        atsScore: matchScore,
+        timestamp: Date.now(),
+        status: 'Complete',
+        results: compiledResults,
+        activeAudience: activeAud,
+        mode: mode,
+        jobDescription: jobDescription,
+        customPrompt: customPrompt
+      };
+
+      try {
+        const storedStr = localStorage.getItem('nexus_optimized_resumes');
+        const existingArtifacts = storedStr ? JSON.parse(storedStr) : [];
+        const fortyEightHoursAgo = Date.now() - 48 * 60 * 60 * 1000;
+        const freshArtifacts = existingArtifacts.filter((item: any) => item.timestamp >= fortyEightHoursAgo);
+        const updatedArtifacts = [newArtifact, ...freshArtifacts];
+        localStorage.setItem('nexus_optimized_resumes', JSON.stringify(updatedArtifacts));
+        
+        window.dispatchEvent(new Event('nexus_optimization_complete'));
+      } catch (e) {
+        console.error("Error saving to local optimization artifact center", e);
+      }
+
+      // Feature 2: Set Result Workspace Trigger active
+      setCurrentResultWorkspaceArtifact(null);
+      setShowResultWorkspace(true);
 
       // Sync to Job Tracker (Firestore)
       if (user) {
@@ -2979,6 +2934,80 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     syncJobTrackerApplied();
   };
 
+  const handleOpenResultWorkspace = (artifact: any) => {
+    setResults(artifact.results);
+    setActiveAudience(artifact.activeAudience);
+    setTargetRole(artifact.targetRole);
+    setCompanyName(artifact.targetCompany);
+    setJobDescription(artifact.jobDescription);
+    if (artifact.customPrompt) setCustomPrompt(artifact.customPrompt);
+    
+    setCurrentResultWorkspaceArtifact(artifact);
+    setShowResultWorkspace(true);
+    navigate('/build');
+  };
+
+  const handleDownloadPDFForArtifact = async (artifact: any) => {
+    setResults(artifact.results);
+    setActiveAudience(artifact.activeAudience);
+    setTargetRole(artifact.targetRole);
+    setCompanyName(artifact.targetCompany);
+    setJobDescription(artifact.jobDescription);
+    
+    showToast("Preparing PDF compiling pipeline...", "info");
+    setTimeout(() => {
+      downloadPDF();
+    }, 500);
+  };
+
+  const handleDownloadDOCXForArtifact = (artifact: any) => {
+    const activeAud = artifact.activeAudience || Object.keys(artifact.results)[0];
+    const resultsData = artifact.results[activeAud];
+    if (resultsData) {
+      downloadDOCX(resultsData, artifact.targetRole, artifact.targetCompany, showToast);
+      syncJobTrackerApplied();
+    } else {
+      showToast("No optimization data found inside this artifact", "error");
+    }
+  };
+
+  const handleDownloadJSONForArtifact = (artifact: any) => {
+    const activeAud = artifact.activeAudience || Object.keys(artifact.results)[0];
+    const resultsData = artifact.results[activeAud];
+    if (resultsData) {
+      downloadJSON(resultsData, artifact.targetRole, artifact.targetCompany, showToast);
+    } else {
+      showToast("No optimization data found", "error");
+    }
+  };
+
+  const handleSaveToDriveForArtifact = async (artifact: any) => {
+    setResults(artifact.results);
+    setActiveAudience(artifact.activeAudience);
+    setTargetRole(artifact.targetRole);
+    setCompanyName(artifact.targetCompany);
+    setJobDescription(artifact.jobDescription);
+    
+    showToast("Synching compiled PDF artifact to Google Drive...", "info");
+    setTimeout(() => {
+      downloadPDF();
+    }, 500);
+  };
+
+  const handleOpenOptimizationInSession = (artifact: any) => {
+    setResults(artifact.results);
+    setActiveAudience(artifact.activeAudience);
+    setTargetRole(artifact.targetRole);
+    setCompanyName(artifact.targetCompany);
+    setJobDescription(artifact.jobDescription);
+    if (artifact.customPrompt) setCustomPrompt(artifact.customPrompt);
+    
+    showToast(`Loaded Optimization for ${artifact.targetCompany}`, "success");
+    setShowResultWorkspace(false);
+    setCurrentResultWorkspaceArtifact(null);
+    navigate('/build');
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
   };
@@ -3108,7 +3137,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     );
   };
 
-  const renderSection = (sectionId: string, customExp?: any[], isContinuation?: boolean) => {
+  const renderSection = (
+    sectionId: string, 
+    customExp?: any[], 
+    isContinuation?: boolean,
+    customProj?: any[],
+    customEdu?: any[]
+  ) => {
     switch (sectionId) {
       case 'header':
         const personalInfo = {
@@ -3298,9 +3333,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'projects':
-        const allProjects = (Array.isArray(results[activeAudience!]?.projects) && results[activeAudience!]?.projects.length > 0) 
-          ? results[activeAudience!]?.projects 
-          : data.projects;
+        const allProjects = customProj || (
+          (Array.isArray(results[activeAudience!]?.projects) && results[activeAudience!]?.projects.length > 0) 
+            ? results[activeAudience!]?.projects 
+            : data.projects
+        );
         if (!Array.isArray(allProjects) || allProjects.length === 0) return null;
         return (
           <div 
@@ -3340,9 +3377,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'education':
-        const allEdu = (Array.isArray(results[activeAudience!]?.education) && results[activeAudience!]?.education.length > 0) 
-          ? results[activeAudience!]?.education 
-          : data.education || [];
+        const allEdu = customEdu || (
+          (Array.isArray(results[activeAudience!]?.education) && results[activeAudience!]?.education.length > 0) 
+            ? results[activeAudience!]?.education 
+            : data.education || []
+        );
         if (!Array.isArray(allEdu) || allEdu.length === 0) return null;
         return (
           <div 
@@ -3501,18 +3540,115 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             />
           )}
 
-          {/* Main Workspace Area */}
-          <main className="flex-1 flex flex-col sm:flex-row overflow-hidden relative w-full h-full bg-transparent" ref={containerRef}>
+          {/* Main Workspace Area with Feature 2 overlay condition */}
+          {showResultWorkspace && activeTab === 'build' ? (
+            <OptimizationResultWorkspace
+              isDarkMode={isDarkMode}
+              artifact={currentResultWorkspaceArtifact}
+              activeAudience={activeAudience}
+              results={results}
+              previewMode={previewMode}
+              setPreviewMode={setPreviewMode}
+              onClose={() => {
+                setShowResultWorkspace(false);
+                setCurrentResultWorkspaceArtifact(null);
+                setZoom(0.85); // Reset to optimal workspace zoom
+              }}
+              onDownloadPDF={() => {
+                if (currentResultWorkspaceArtifact) {
+                  handleDownloadPDFForArtifact(currentResultWorkspaceArtifact);
+                } else {
+                  downloadPDF();
+                }
+              }}
+              onDownloadDOCX={() => {
+                if (currentResultWorkspaceArtifact) {
+                  handleDownloadDOCXForArtifact(currentResultWorkspaceArtifact);
+                } else {
+                  handleDownloadDOCX();
+                }
+              }}
+              onDownloadJSON={() => {
+                if (currentResultWorkspaceArtifact) {
+                  handleDownloadJSONForArtifact(currentResultWorkspaceArtifact);
+                } else {
+                  downloadJSON(activeAudience ? results[activeAudience] : data, targetRole, companyName, showToast);
+                }
+              }}
+              onSaveToDrive={() => {
+                if (currentResultWorkspaceArtifact) {
+                  handleSaveToDriveForArtifact(currentResultWorkspaceArtifact);
+                } else {
+                  downloadPDF();
+                }
+              }}
+              onOpenResumeBuilder={() => {
+                setShowResultWorkspace(false);
+                setCurrentResultWorkspaceArtifact(null);
+                setIsFocusMode(true);
+                showToast("Resume Builder inline editing mode active.", "info");
+              }}
+            >
+              {/* Section 4 Preview Window Re-integration */}
+              <div 
+                className="mx-auto relative overflow-hidden bg-white text-black p-4 rounded-xl shadow-2xl"
+                style={{
+                  width: `${794 * zoom}px`, // Approx width of A4 210mm
+                  height: `${contentHeight * zoom}px`,
+                  transition: 'width 0.3s ease, height 0.3s ease'
+                }}
+              >
+                <div 
+                  style={{
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'top left',
+                    width: 'max-content'
+                  }}
+                >
+                  <div 
+                    id="resume-container"
+                    className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
+                  >
+                    {previewMode === 'standard' ? (
+                      <div className="resume-page" style={{ paddingBottom: isDownloading ? '0' : '2rem' }}>
+                        {renderSection('header')}
+                        {renderSection('summary')}
+                        {renderSection('skills')}
+                        {renderSection('certifications')}
+                        {renderSection('experience', (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.experience : results[activeAudience!]?.experience) || data.experience)}
+                        {renderSection(
+                          'projects', 
+                          undefined, 
+                          false, 
+                          (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.projects : results[activeAudience!]?.projects) || data.projects
+                        )}
+                        {renderSection(
+                          'education', 
+                          undefined, 
+                          false, 
+                          undefined, 
+                          (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.education : results[activeAudience!]?.education) || data.education
+                        )}
+                      </div>
+                    ) : (
+                      renderSimplifiedResume()
+                    )}
+                  </div>
+                </div>
+              </div>
+            </OptimizationResultWorkspace>
+          ) : (
+            <main className="flex-1 flex flex-col sm:flex-row overflow-hidden relative w-full h-full bg-transparent" ref={containerRef}>
               
               {/* Only show Config Pane if NOT on tools or dashboard */}
               {activeTab !== 'tools' && activeTab !== 'dashboard' && (
                 <div 
                   ref={leftPanelRef}
-                  className={`flex flex-col h-full relative transition-all duration-200 ease-in-out ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel z-10 ${isFocusMode ? 'w-0 opacity-0 pointer-events-none border-none hidden sm:flex' : ''} ${isMobile ? 'h-1/2 sm:h-full w-full' : ''}`}
+                  className={`flex flex-col h-full relative transition-all duration-200 ease-in-out ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel z-10 w-full`}
                   style={{ 
-                    width: isFocusMode ? '0' : (isMobile ? '100%' : `${configWidth}%`),
-                    minWidth: isFocusMode ? '0' : (isMobile ? '100%' : '320px'),
-                    maxWidth: isFocusMode ? '0' : (isMobile ? '100%' : '800px')
+                    width: '100%',
+                    minWidth: '100%',
+                    maxWidth: 'none'
                   }}
                 >
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
@@ -3524,79 +3660,80 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.98 }}
                   transition={{ duration: 0.2 }}
-                  className="space-y-6"
+                  className="space-y-6 h-full flex flex-col"
                 >
                   <AtsOptimizationStudio 
-                    isDarkMode={isDarkMode}
-                    targetRole={targetRole}
-                    setTargetRole={setTargetRole}
-                    companyName={companyName}
-                    setCompanyName={setCompanyName}
-                    targetCompany={targetCompany}
-                    setTargetCompany={setTargetCompany}
-                    jobUrl={jobUrl}
-                    setJobUrl={setJobUrl}
-                    jobDescription={jobDescription}
-                    setJobDescription={setJobDescription}
-                    resumeText={resumeText}
-                    clearInputs={clearInputs}
-                    selectedAudiences={selectedAudiences}
-                    setSelectedAudiences={setSelectedAudiences}
-                    customAudience={customAudience}
-                    setCustomAudience={setCustomAudience}
-                    isAutoSelectingAudiences={isAutoSelectingAudiences}
-                    handleAutoSelectAudiences={handleAutoSelectAudiences}
-                    isAudienceDropdownOpen={isAudienceDropdownOpen}
-                    setIsAudienceDropdownOpen={setIsAudienceDropdownOpen}
-                    audienceDropdownRef={audienceDropdownRef}
-                    toggleAudience={toggleAudience}
-                    AUDIENCES={AUDIENCES}
-                    customPrompt={customPrompt}
-                    setCustomPrompt={setCustomPrompt}
-                    isOptimizing={isOptimizing}
-                    handleStop={handleStop}
-                    isExtracting={isExtracting}
-                    handleOptimize={handleOptimize}
-                    optimizationProgress={optimizationProgress}
-                    showOptimizeSuccess={showOptimizeSuccess}
-                    tokenUsage={tokenUsage}
-                    fetchTokenUsage={fetchTokenUsage}
-                    isRefreshingTokens={isRefreshingTokens}
-                    generateTokenReport={generateTokenReport}
-                    isDownloading={isDownloading}
-                    deepResearchReport={deepResearchReport}
-                    setDeepResearchReport={setDeepResearchReport}
-                    selectedEngine={selectedEngine}
-                    setSelectedEngine={setSelectedEngine}
-                    engineConfig={engineConfig}
-                    setEngineConfig={setEngineConfig}
-                    suitabilityResult={suitabilityResult}
-                    setSuitabilityResult={setSuitabilityResult}
-                    isCheckingSuitability={isCheckingSuitability}
-                    handleCheckSuitability={handleCheckSuitability}
-                    multiSuitabilityResults={multiSuitabilityResults}
-                    masterResumes={masterResumes}
-                    selectedResumeId={selectedResumeId}
-                    recruiterSimulationMode={recruiterSimulationMode}
-                    setRecruiterSimulationMode={setRecruiterSimulationMode}
-                    fastMode={fastMode}
-                    setFastMode={setFastMode}
-                    mode={mode}
-                    setMode={setMode}
-                    showModeInfo={showModeInfo}
-                    setShowModeInfo={setShowModeInfo}
-                    results={results}
-                    activeAudience={activeAudience}
-                    usePremiumLoader={usePremiumLoader}
-                    setUsePremiumLoader={setUsePremiumLoader}
-                    isFetchingJob={isFetchingJob}
-                    jdTextareaRef={jdTextareaRef}
-                    isCompanyDropdownOpen={isCompanyDropdownOpen}
-                    setIsCompanyDropdownOpen={setIsCompanyDropdownOpen}
-                    companyDropdownRef={companyDropdownRef}
-                    TARGET_COMPANIES={TARGET_COMPANIES}
-                    MODE_DESCRIPTIONS={MODE_DESCRIPTIONS}
-                  />
+                      isDarkMode={isDarkMode}
+                      targetRole={targetRole}
+                      setTargetRole={setTargetRole}
+                      companyName={companyName}
+                      setCompanyName={setCompanyName}
+                      targetCompany={targetCompany}
+                      setTargetCompany={setTargetCompany}
+                      jobUrl={jobUrl}
+                      setJobUrl={setJobUrl}
+                      jobDescription={jobDescription}
+                      setJobDescription={setJobDescription}
+                      resumeText={resumeText}
+                      clearInputs={clearInputs}
+                      selectedAudiences={selectedAudiences}
+                      setSelectedAudiences={setSelectedAudiences}
+                      customAudience={customAudience}
+                      setCustomAudience={setCustomAudience}
+                      isAutoSelectingAudiences={isAutoSelectingAudiences}
+                      handleAutoSelectAudiences={handleAutoSelectAudiences}
+                      isAudienceDropdownOpen={isAudienceDropdownOpen}
+                      setIsAudienceDropdownOpen={setIsAudienceDropdownOpen}
+                      audienceDropdownRef={audienceDropdownRef}
+                      toggleAudience={toggleAudience}
+                      AUDIENCES={AUDIENCES}
+                      customPrompt={customPrompt}
+                      setCustomPrompt={setCustomPrompt}
+                      isOptimizing={isOptimizing}
+                      handleStop={handleStop}
+                      isExtracting={isExtracting}
+                      handleOptimize={handleOptimize}
+                      optimizationProgress={optimizationProgress}
+                      showOptimizeSuccess={showOptimizeSuccess}
+                      tokenUsage={tokenUsage}
+                      fetchTokenUsage={fetchTokenUsage}
+                      isRefreshingTokens={isRefreshingTokens}
+                      generateTokenReport={generateTokenReport}
+                      isDownloading={isDownloading}
+                      deepResearchReport={deepResearchReport}
+                      setDeepResearchReport={setDeepResearchReport}
+                      selectedEngine={selectedEngine}
+                      setSelectedEngine={setSelectedEngine}
+                      engineConfig={engineConfig}
+                      setEngineConfig={setEngineConfig}
+                      suitabilityResult={suitabilityResult}
+                      setSuitabilityResult={setSuitabilityResult}
+                      isCheckingSuitability={isCheckingSuitability}
+                      handleCheckSuitability={handleCheckSuitability}
+                      multiSuitabilityResults={multiSuitabilityResults}
+                      masterResumes={masterResumes}
+                      selectedResumeId={selectedResumeId}
+                      recruiterSimulationMode={recruiterSimulationMode}
+                      setRecruiterSimulationMode={setRecruiterSimulationMode}
+                      fastMode={fastMode}
+                      setFastMode={setFastMode}
+                      mode={mode as any}
+                      setMode={setMode as any}
+                      showModeInfo={showModeInfo}
+                      setShowModeInfo={setShowModeInfo}
+                      results={results}
+                      activeAudience={activeAudience}
+                      usePremiumLoader={usePremiumLoader}
+                      setUsePremiumLoader={setUsePremiumLoader}
+                      isFetchingJob={isFetchingJob}
+                      jdTextareaRef={jdTextareaRef}
+                      isCompanyDropdownOpen={isCompanyDropdownOpen}
+                      setIsCompanyDropdownOpen={setIsCompanyDropdownOpen}
+                      companyDropdownRef={companyDropdownRef}
+                      TARGET_COMPANIES={TARGET_COMPANIES}
+                      MODE_DESCRIPTIONS={MODE_DESCRIPTIONS}
+                      onOpenWorkspace={() => setShowResultWorkspace(true)}
+                    />
                 </motion.div>
               )}
 
@@ -3881,7 +4018,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       )}
 
         {/* Vertical Resize Handle (Left/Right) */}
-          {!isFocusMode && activeTab !== 'tools' && activeTab !== 'dashboard' && (
+          {!isFocusMode && activeTab !== 'tools' && activeTab !== 'dashboard' && activeTab !== 'build' && activeTab !== 'profile' && (
             <div 
               onMouseDown={handleMouseDownDivider}
               onDoubleClick={resetLayout}
@@ -3892,7 +4029,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           )}
 
           {/* Result Section */}
-          <div className={`flex-1 min-w-0 flex flex-col h-full overflow-hidden border-l border-black/5 dark:border-white/10 shadow-2xl relative z-20 ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel ${isMobile ? (isFocusMode ? 'h-full flex-1' : 'h-1/2 sm:h-full') : 'flex'}`}>
+          {(activeTab === 'tools' || activeTab === 'dashboard') && (
+            <div className={`flex-1 min-w-0 flex flex-col h-full overflow-hidden border-l border-black/5 dark:border-white/10 shadow-2xl relative z-20 ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel ${isMobile ? (isFocusMode ? 'h-full flex-1' : 'h-1/2 sm:h-full') : 'flex'}`}>
             <AnimatePresence mode="wait">
               {activeTab === 'tools' ? (
                 <motion.div 
@@ -4002,28 +4140,18 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     isDownloading={isDownloading}
                     results={results}
                     activeAudience={activeAudience}
-                    mode={mode === 'hybrid' ? 'hybrid' : (mode === 'editorial' ? 'openai' : 'gemini')}
+                    mode={((mode as any) === 'hybrid' ? 'hybrid' : ((mode as any) === 'editorial' ? 'openai' : 'gemini')) as any}
                     isDriveConnected={isDriveConnected}
                     user={user}
+                    onOpenResultWorkspace={handleOpenResultWorkspace}
+                    onDownloadPDF={handleDownloadPDFForArtifact}
+                    onDownloadDOCX={handleDownloadDOCXForArtifact}
+                    onDownloadJSON={handleDownloadJSONForArtifact}
+                    onSaveToDrive={handleSaveToDriveForArtifact}
+                    onOpenOptimization={handleOpenOptimizationInSession}
                   />
                 </motion.div>
-              ) : isOptimizing ? (
-                <div className="w-full h-full overflow-y-auto custom-scrollbar rounded-2xl flex flex-col">
-                  {usePremiumLoader ? (
-                    <PremiumEnterpriseLoader 
-                      isLoading={isOptimizing}
-                      progress={optimizationProgress}
-                      currentStage={optimizationStatus}
-                    />
-                  ) : (
-                    <CloudArchitectureLoader 
-                      isLoading={isOptimizing}
-                      progress={optimizationProgress}
-                      currentStage={optimizationStatus}
-                    />
-                  )}
-                </div>
-              ) : (Object.keys(results).length === 0) ? (
+              ) : (Object.keys(results).length === 0 && !isOptimizing && activeTab !== 'build') ? (
                 <motion.div 
                   key="empty-state"
                   initial={{ opacity: 0, scale: 0.95 }}
@@ -4329,9 +4457,24 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               {renderSection('skills')}
                               {renderSection('certifications')}
                               {/* Pass the FULL array, do not slice. Let the print engine handle pagination */}
-                              {renderSection('experience', results[activeAudience!]?.experience || data.experience)}
-                              {renderSection('projects')}
-                              {renderSection('education')}
+                              {renderSection('experience', (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.experience : results[activeAudience!]?.experience) || data.experience)}
+                              
+                              {/* CRITICAL FIX: Pass the project array variables correctly */}
+                              {renderSection(
+                                'projects', 
+                                undefined, 
+                                false, 
+                                (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.projects : results[activeAudience!]?.projects) || data.projects
+                               )}
+                              
+                              {/* CRITICAL FIX: Pass the education array variables correctly */}
+                              {renderSection(
+                                'education', 
+                                undefined, 
+                                false, 
+                                undefined, 
+                                (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.education : results[activeAudience!]?.education) || data.education || []
+                              )}
                             </div>
                           ) : (
                             renderSimplifiedResume()
@@ -4449,7 +4592,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               )}
             </AnimatePresence>
           </div>
+          )}
         </main>
+      )}
 
         <AnimatePresence>
           {/* Mobile toggle removed to keep panels together */}

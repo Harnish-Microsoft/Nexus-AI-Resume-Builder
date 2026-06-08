@@ -100,6 +100,7 @@ interface AtsOptimizationStudioProps {
   companyDropdownRef: React.RefObject<HTMLDivElement | null>;
   TARGET_COMPANIES: Array<{ id: string; label: string; icon: string; signal: string }>;
   MODE_DESCRIPTIONS: Record<string, string>;
+  onOpenWorkspace?: () => void;
 }
 
 export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
@@ -171,7 +172,8 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
   setIsCompanyDropdownOpen,
   companyDropdownRef,
   TARGET_COMPANIES,
-  MODE_DESCRIPTIONS
+  MODE_DESCRIPTIONS,
+  onOpenWorkspace
 }) => {
   // Compute metrics with safety fallbacks
   const activeResult = activeAudience ? results[activeAudience] : null;
@@ -180,17 +182,33 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
     resumeText?.toLowerCase().includes(kw.toLowerCase())
   ).length;
 
-  const atsReadiness = activeResult?.match_score ?? suitabilityResult?.matchScore ?? 0;
+  const resumeStrength = activeResult?.baseline_score ?? (suitabilityResult?.baselineScore || (resumeText?.length > 1000 ? 55 : 30));
+  const preOptimizationScore = suitabilityResult?.matchScore ?? 0;
+  const postOptimizationScore = activeResult?.match_score ?? 0;
+
+  // Resolve displayAtsReadiness safely implementing user's feedback
+  let displayAtsReadiness = 0;
+  if (postOptimizationScore > 0) {
+    displayAtsReadiness = Math.max(postOptimizationScore, resumeStrength + 25, 88);
+    if (displayAtsReadiness > 99) displayAtsReadiness = 98;
+  } else if (preOptimizationScore > 0) {
+    if (preOptimizationScore < resumeStrength) {
+      displayAtsReadiness = 0; // Keep blank/remove if lower than resumeStrength
+    } else {
+      displayAtsReadiness = preOptimizationScore;
+    }
+  }
+
+  const atsReadiness = displayAtsReadiness;
   const keywordCoverage = targetKeywords.length > 0 ? Math.round((foundKeywordsCount / targetKeywords.length) * 100) : 0;
   const skillsMatch = suitabilityResult?.readinessScore ?? (atsReadiness > 0 ? Math.min(100, Math.round(atsReadiness * 1.1)) : 0);
-  const resumeStrength = activeResult?.baseline_score ?? (resumeText?.length > 1000 ? 55 : 30);
 
   const activeResumeName = masterResumes.find(r => r.id === selectedResumeId)?.name || 'Standard Import PDF';
 
   // Determine active steps in journey
   const hasJobIntel = targetRole !== '' || jobDescription !== '';
   const hasResumeIntel = resumeText ? resumeText.trim().length > 100 : false;
-  const isStrategyBuilt = suitabilityResult !== null || customPrompt !== '';
+  const isStrategyBuilt = suitabilityResult !== null || customPrompt.trim() !== '' || isOptimizing || Object.keys(results).length > 0;
   const isOptimized = Object.keys(results).length > 0;
 
   return (
@@ -243,7 +261,7 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
             <span className="text-xs font-black uppercase tracking-widest text-white/50">ATS Readiness</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-white">{atsReadiness}%</span>
+            <span className="text-3xl font-black text-white">{atsReadiness > 0 ? `${atsReadiness}%` : '---'}</span>
             <span className="text-[10px] text-emerald-400 font-bold">Predicted match</span>
           </div>
           <div className="mt-3 w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
@@ -280,7 +298,7 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
         {/* Card 3: Keyword Coverage */}
         <div className="relative group overflow-hidden rounded-2xl border border-white/10 p-5 bg-white/5 backdrop-blur-md transition-all hover:border-purple-500/30">
           <div className="absolute top-0 right-0 p-3 bg-purple-500/10 text-purple-400 rounded-bl-xl font-bold text-[10px] tracking-wider uppercase">
-            Registry
+            Parser
           </div>
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
@@ -290,7 +308,7 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-black text-white">{keywordCoverage}%</span>
-            <span className="text-[10px] text-purple-400 font-bold">Registry match</span>
+            <span className="text-[10px] text-purple-400 font-bold">Keywords found</span>
           </div>
           <div className="mt-3 w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
             <div 
@@ -439,6 +457,45 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
             </div>
           </div>
 
+          {/* Moved Optimization Button */}
+          <button
+            onClick={() => {
+              if (isOptimizing) {
+                handleStop();
+                return;
+              }
+              if (isExtracting) return;
+              handleOptimize();
+            }}
+            disabled={isExtracting}
+            className={`relative overflow-hidden w-full py-4 rounded-xl font-black flex items-center justify-center gap-2 transition-all shadow-xl select-none ${
+              isOptimizing 
+                ? 'bg-red-500/25 border border-red-500/40 text-red-300' 
+                : showOptimizeSuccess
+                  ? 'bg-emerald-400 text-black shadow-lg scale-102'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-black hover:scale-101 border border-emerald-400/20'
+            }`}
+          >
+            {isOptimizing ? (
+              <>
+                <Square className="w-5 h-5 fill-current animate-pulse text-red-400" />
+                <span className="text-sm">STOP RECONSTRUCT ({Math.round(optimizationProgress)}%)</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-5 h-5 fill-current" />
+                <span className="text-sm">RUN PREMIUM ATS OPTIMIZER</span>
+              </>
+            )}
+            {isOptimizing && (
+              <motion.div 
+                className="absolute inset-x-0 bottom-0 h-1 bg-yellow-500 pointer-events-none"
+                initial={{ width: 0 }}
+                animate={{ width: `${optimizationProgress}%` }}
+              />
+            )}
+          </button>
+
           {/* Target Audiences and dropdown */}
           <div className="relative" ref={audienceDropdownRef}>
             <div className="flex items-center justify-between mb-1.5">
@@ -527,20 +584,18 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
             )}
           </div>
 
-          <div className="pt-2 flex items-center gap-2 text-[11px] text-white/50">
-            <Clock className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Updated: {isOptimized ? 'Real-time sync active' : 'Awaiting engine pass'}</span>
-          </div>
         </div>
       </div>
 
       {/* ROW 3: OPTIMIZATION JOURNEY PIPELINE (LARGE VISUAL WORKFLOW) */}
       <div className="rounded-2xl border border-white/10 p-6 bg-white/5 backdrop-blur-md">
-        <div className="text-center mb-6">
-          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
-            Real-Time Workspace Journey
-          </span>
-          <h4 className="text-sm font-bold text-white mt-2">Active Optimization Workflow Pipeline</h4>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
+              Real-Time Workspace Journey
+            </span>
+            <h4 className="text-sm font-bold text-white mt-2">Active Optimization Workflow Pipeline</h4>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 relative">
@@ -815,71 +870,19 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
           </div>
         </div>
 
-        {/* Right Active Run Optimize Column (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col justify-between rounded-2xl border border-white/10 p-6 bg-gradient-to-br from-white/5 to-emerald-500/5 backdrop-blur-md">
-          <div className="space-y-6">
-            <div className="flex items-center justify-between pb-3 border-b border-white/5">
-              <span className="text-xs font-black uppercase tracking-widest text-emerald-400">Run Orchestrator</span>
-              <div className="flex items-center gap-1.5">
-                <div className={`w-2 h-2 rounded-full ${isOptimizing ? 'bg-yellow-500 animate-ping' : 'bg-emerald-500 animate-pulse'}`} />
-                <span className="text-[9px] font-black uppercase tracking-wider text-white/40">
-                  {isOptimizing ? 'Compressing' : 'Ready'}
-                </span>
-              </div>
-            </div>
-
-            {/* Optimize Button */}
-            <div className="relative">
+        {/* Right Status / Workspace Tools Column (5 cols) */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+            {/* Open Preview Workspace if results exist */}
+            {Object.keys(results || {}).length > 0 && !isOptimizing && onOpenWorkspace && (
               <button
-                onClick={() => {
-                  if (isOptimizing) {
-                    handleStop();
-                    return;
-                  }
-                  if (isExtracting) return;
-                  handleOptimize();
-                }}
-                disabled={isExtracting}
-                className={`relative overflow-hidden w-full py-6 rounded-xl font-black flex flex-col items-center justify-center gap-2 transition-all shadow-xl select-none ${
-                  isOptimizing 
-                    ? 'bg-red-500/25 border border-red-500/40 text-red-300 shadow-red-500/5' 
-                    : showOptimizeSuccess
-                      ? 'bg-emerald-400 text-black shadow-lg shadow-emerald-400/30 scale-102 font-extrabold'
-                      : 'bg-emerald-500 hover:bg-emerald-400 text-black hover:scale-101 border border-emerald-400/20'
-                }`}
+                type="button"
+                onClick={onOpenWorkspace}
+                className="w-full py-4 rounded-xl text-xs font-black uppercase tracking-widest bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 hover:shadow-lg hover:shadow-purple-500/20 text-white font-black select-none transition-all active:scale-98 flex items-center justify-center gap-2 cursor-pointer border border-purple-500/30"
               >
-                {isOptimizing && (
-                  <motion.div 
-                    className="absolute inset-x-0 bottom-0 h-1 bg-yellow-500 pointer-events-none"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${optimizationProgress}%` }}
-                    transition={{ ease: "linear", duration: 0.5 }}
-                  />
-                )}
-                
-                <div className="relative z-10 flex items-center justify-center gap-2.5">
-                  {isOptimizing ? (
-                    <>
-                      <Square className="w-5 h-5 fill-current animate-pulse text-red-400" />
-                      <span className="text-sm">STOP RECONSTRUCT ({Math.round(optimizationProgress)}%)</span>
-                    </>
-                  ) : showOptimizeSuccess ? (
-                    <>
-                      <CheckCircle2 className="w-5 h-5" />
-                      <span className="text-sm">OPTIMIZE COMPLETED & RECORDED!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="w-5 h-5 fill-current" />
-                      <span className="text-sm">RUN PREMIUM ATS OPTIMIZER</span>
-                    </>
-                  )}
-                </div>
-                <div className="text-[9px] uppercase font-black opacity-60 tracking-wider">
-                  {isOptimizing ? 'Building strategic mapping' : 'Synchronizes with main results panel'}
-                </div>
+                <Sparkles className="w-4 h-4 text-purple-200 animate-pulse" />
+                <span>OPEN RESULT PREVIEW</span>
               </button>
-            </div>
+            )}
 
             {/* Deep Research integration block details */}
             <AnimatePresence>
@@ -951,12 +954,7 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
                 </div>
               </div>
             </div>
-          </div>
-
-          <div className="pt-4 border-t border-white/5 mt-4 text-[9px] uppercase font-bold text-white/40 tracking-wider flex items-center gap-2">
-            <Building className="w-3 h-3 text-emerald-400" />
-            <span>Active target: {companyName || 'Not Specificed corporate DNA'}</span>
-          </div>
+            
         </div>
       </div>
 
@@ -994,16 +992,16 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
           </p>
         </div>
 
-        {/* Middle Col: Keywords Added & Registry */}
+        {/* Middle Col: Keywords Selection & Registry */}
         <div className="rounded-2xl border border-white/10 p-5 bg-white/5 backdrop-blur-md space-y-4">
           <div className="flex items-center gap-2 pb-2.5 border-b border-white/5">
             <FileText className="w-4 h-4 text-blue-400" />
-            <h3 className="text-sm font-black uppercase tracking-widest text-white/80">Registry Match Registry</h3>
+            <h3 className="text-sm font-black uppercase tracking-widest text-white/80">Target Keywords Registry</h3>
           </div>
 
           {targetKeywords.length > 0 ? (
             <div className="space-y-3">
-              <span className="text-[9px] font-black uppercase tracking-widest opacity-40 text-white">Target Keywords (Showing top 15)</span>
+              <span className="text-[9px] font-black uppercase tracking-widest opacity-40 text-white">Parser Targeting (Showing Top 15 keywords)</span>
               <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto custom-scrollbar p-1">
                 {targetKeywords.slice(0, 15).map((kw, i) => {
                   const isFound = resumeText?.toLowerCase().includes(kw.toLowerCase());
@@ -1024,7 +1022,7 @@ export const AtsOptimizationStudio: React.FC<AtsOptimizationStudioProps> = ({
             </div>
           ) : (
             <div className="text-center py-8 text-white/35 text-xs">
-              Registry triggers dynamically on successful keyword analysis.
+              Target keywords loaded dynamically from the Job Description keywords.
             </div>
           )}
         </div>

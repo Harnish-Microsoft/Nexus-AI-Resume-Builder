@@ -52,6 +52,12 @@ interface DashboardHomeProps {
   mode: 'gemini' | 'openai' | 'hybrid';
   isDriveConnected: boolean;
   user: FirebaseUser | null;
+  onOpenResultWorkspace?: (artifact: any) => void;
+  onDownloadPDF?: (artifact: any) => void;
+  onDownloadDOCX?: (artifact: any) => void;
+  onDownloadJSON?: (artifact: any) => void;
+  onSaveToDrive?: (artifact: any) => void;
+  onOpenOptimization?: (artifact: any) => void;
 }
 
 interface ActivityItem {
@@ -74,11 +80,46 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
   activeAudience,
   mode,
   isDriveConnected,
-  user
+  user,
+  onOpenResultWorkspace,
+  onDownloadPDF,
+  onDownloadDOCX,
+  onDownloadJSON,
+  onSaveToDrive,
+  onOpenOptimization
 }) => {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [recentOptimizations, setRecentOptimizations] = useState<any[]>([]);
+
+  // 1.5. Load Recent Optimized Resumes from localStorage (last 48 hours)
+  useEffect(() => {
+    const fetchRecent = () => {
+      try {
+        const data = localStorage.getItem('nexus_optimized_resumes');
+        if (data) {
+          const parsed = JSON.parse(data);
+          const fortyEightHoursAgo = Date.now() - 48 * 60 * 60 * 1000;
+          const filtered = parsed.filter((item: any) => item.timestamp >= fortyEightHoursAgo);
+          setRecentOptimizations(filtered);
+        } else {
+          setRecentOptimizations([]);
+        }
+      } catch (e) {
+        console.error("Error loading optimizations", e);
+      }
+    };
+    
+    fetchRecent();
+    window.addEventListener('storage', fetchRecent);
+    window.addEventListener('nexus_optimization_complete', fetchRecent);
+    
+    return () => {
+      window.removeEventListener('storage', fetchRecent);
+      window.removeEventListener('nexus_optimization_complete', fetchRecent);
+    };
+  }, []);
 
   // 1. Fetch tracked jobs count and items dynamically from Firestore
   useEffect(() => {
@@ -141,7 +182,7 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
         id: `resume-${resume.id}`,
         type: 'master_updated',
         title: `Master Profile Indexed`,
-        subtitle: `${resume.name} (${resume.experience?.length || 0} exp. nodes)`,
+        subtitle: `${resume.name} (${(resume as any).experience?.length || (resume as any).data?.experience?.length || 0} exp. nodes)`,
         timestamp: 'Synced Profile'
       });
     });
@@ -356,6 +397,146 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
                 </p>
               </div>
             )}
+          </div>
+
+          {/* Feature 1: Persistent Optimization Artifact Center */}
+          <div id="optimization-artifact-center" className={`p-6 rounded-3xl border transition-all duration-300 backdrop-blur-xl relative overflow-hidden ${
+            isDarkMode 
+              ? 'glass-card-dark border-white/10 text-white shadow-2xl' 
+              : 'glass-card border-black/10 text-slate-800 shadow-lg'
+          }`}>
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4.5 h-4.5 text-emerald-400" />
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-[0.2em] text-emerald-400">
+                    Recent Optimized Resumes
+                  </h3>
+                  <p className="text-[9px] opacity-50 font-medium">Persistent optimization portfolio ledger (Last 48 Hours)</p>
+                </div>
+              </div>
+              <span className="text-[9px] font-mono font-black uppercase bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 text-emerald-400">
+                Active Registry
+              </span>
+            </div>
+
+            <div className="overflow-x-auto custom-scrollbar -mx-6 px-6">
+              {recentOptimizations.length > 0 ? (
+                <table className="w-full text-left border-collapse font-sans min-w-[650px]">
+                  <thead>
+                    <tr className="border-b border-white/5 text-[9px] font-mono uppercase tracking-wider text-slate-400 font-bold">
+                      <th className="py-2.5 pb-3">Resume Name</th>
+                      <th className="py-2.5 pb-3">Target Details</th>
+                      <th className="py-2.5 pb-3 text-center">ATS Score</th>
+                      <th className="py-2.5 pb-3">Date</th>
+                      <th className="py-2.5 pb-3">Status</th>
+                      <th className="py-2.5 pb-3 text-right">Actions Matrix</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 text-[11px] text-slate-200">
+                    {recentOptimizations.map((opt) => {
+                      const optDate = new Date(opt.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                      const scoreClass = opt.atsScore >= 80 ? 'text-emerald-400 border-emerald-500/10 bg-emerald-500/10' : 'text-amber-400 border-amber-500/10 bg-amber-500/5';
+                      
+                      return (
+                        <tr key={opt.id} className="hover:bg-white/[0.01] transition-all text-xs">
+                          {/* Resume Name */}
+                          <td className="py-3 pr-2">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                              <span className="font-bold text-white truncate max-w-[120px]" title={opt.resumeName}>
+                                {opt.resumeName}
+                              </span>
+                            </div>
+                          </td>
+                          {/* Target Details */}
+                          <td className="py-3 pr-2 text-left">
+                            <div>
+                              <div className="font-bold text-white truncate max-w-[150px]">{opt.targetRole}</div>
+                              <div className="text-[9px] text-slate-400 font-mono font-semibold truncate max-w-[150px] uppercase">@ {opt.targetCompany}</div>
+                            </div>
+                          </td>
+                          {/* Score Badge */}
+                          <td className="py-3 text-center pr-2">
+                            <span className={`px-2 py-0.5 rounded-full font-mono font-black text-[10px] border ${scoreClass}`}>
+                              {opt.atsScore}%
+                            </span>
+                          </td>
+                          {/* Stamp Date */}
+                          <td className="py-3 text-slate-400 font-mono text-[10px] pr-2">
+                            {optDate}
+                          </td>
+                          {/* Completed Badge */}
+                          <td className="py-3 pr-2">
+                            <span className="inline-flex items-center gap-1 text-[9px] font-mono text-emerald-400 font-bold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              Synced
+                            </span>
+                          </td>
+                          {/* Action Clustered Row */}
+                          <td className="py-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Preview */}
+                              <button
+                                onClick={() => onOpenResultWorkspace?.(opt)}
+                                className="p-1 px-2 text-[9px] font-mono font-bold uppercase tracking-wider rounded border border-white/10 hover:bg-white/5 text-slate-300 hover:text-white cursor-pointer active:scale-95 transition-all"
+                                title="Open visual preview"
+                              >
+                                Preview
+                              </button>
+                              
+                              {/* Open Optimization */}
+                              <button
+                                onClick={() => onOpenOptimization?.(opt)}
+                                className="p-1 px-2 text-[9px] font-mono font-bold uppercase tracking-wider rounded border border-cyan-500/20 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 cursor-pointer active:scale-95 transition-all"
+                                title="Load as active session"
+                              >
+                                Edit
+                              </button>
+
+                              {/* Save To Drive */}
+                              <button
+                                onClick={() => onSaveToDrive?.(opt)}
+                                className="p-1 px-1.5 text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/5 rounded transition-all cursor-pointer"
+                                title="Save to Google Drive"
+                              >
+                                <HardDrive className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Download PDF */}
+                              <button
+                                onClick={() => onDownloadPDF?.(opt)}
+                                className="p-1 px-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5 rounded transition-all cursor-pointer"
+                                title="Download PDF"
+                              >
+                                <FileDown className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Download DOCX */}
+                              <button
+                                onClick={() => onDownloadDOCX?.(opt)}
+                                className="p-1 px-1.5 text-slate-400 hover:text-purple-400 hover:bg-purple-500/5 rounded transition-all cursor-pointer"
+                                title="Download DOCX"
+                              >
+                                <FileDown className="w-3.5 h-3.5 opacity-75" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="py-8 text-center bg-white/[0.01] rounded-2xl border border-dashed border-white/5 py-10">
+                  <FileText className="w-8 h-8 text-white/10 mx-auto mb-2" />
+                  <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">No Recent Optimizations</p>
+                  <p className="text-[9px] text-slate-500 max-w-[280px] mx-auto mt-1 leading-relaxed font-mono">
+                    Your persistent outputs of last 48 hours will appear here. Build or update a resume to index a new artifact.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Bottom Section: Recent Workspace Activity */}
