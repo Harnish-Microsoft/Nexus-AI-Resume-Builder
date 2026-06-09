@@ -1253,7 +1253,8 @@ export async function selectBestMasterResume(
     });
     
     const text = response.text || "";
-    const parsed = JSON.parse(text);
+    const cleanedText = extractJson(text);
+    const parsed = JSON.parse(cleanedText);
     
     // Validate that the returned ID actually exists in the masters list
     const found = masters.find(m => m.id === parsed.selectedId);

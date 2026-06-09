@@ -3050,6 +3050,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         <div className="mb-4">
           <h2 className="font-bold border-b border-black mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Summary</h2>
           <p className="leading-normal text-justify" style={{ fontSize: '10.5pt' }}>{(res as any).summary || (res as any).personal_info?.summary || ""}</p>
+          <div style={{ height: '1.25em' }} /> {/* Skip one line after summary has been completed */}
         </div>
 
         {/* Skills */}
@@ -3211,6 +3212,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               Summary
             </h2>
             <p className="leading-normal" style={{ fontSize: '10.5pt' }}>{results[activeAudience!]?.summary || data.personal_info.summary}</p>
+            <div style={{ height: '1.25em' }} /> {/* Skip one line after summary has been completed */}
           </div>
         );
       case 'skills':

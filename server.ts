@@ -902,15 +902,20 @@ async function startServer() {
            - Length: 50-80 words. Maximum: 4 lines.
            - Must include: Years of experience, Core expertise, Business value, Leadership scope (if applicable). Never use AI slop words.
 
-        5. BULLET POINT RULES & TIMELINE-BASED CONSTRAINTS (STRICT):
-           - Current role: 6-8 bullets
-           - Previous role: 5-6 bullets
-           - Third role: 4-5 bullets
-           - Older roles (Sterling, AGILUS, Galaxy, Aegis): 1-3 bullets (or strictly 1 brief bullet point maximum as required by page limitations).
-           - Maximum bullet length: 30 words. Target range: 18-25 words.
-           - Every single bullet point MUST be strictly ONE SINGLE LINE. MAXIMUM 95 CHARACTERS per bullet point. This is a hard technical limit. NEVER wrap a bullet point to a second line.
-           - Preferred structure: Action Verb + Technology + Business Outcome + Metric
-             Example: Migrated 120+ workloads to Azure, reducing infrastructure costs by 32% while improving deployment consistency across enterprise environments.
+        3. TIMELINE-BASED BULLET CONSTRAINTS & COMPRESSION (STRICT):
+           - Concentrix & M&M Software: Strictly 5 to 6 high-impact bullet points. Focus heavily on senior architecture and leadership scale.
+           - ARCHER Transnational Systems: Strictly 3 to 4 bullet points.
+           - Casepoint LLC: Compress heavily. Strictly 3 to 4 concise bullet points max. Shorten sentences to direct impact statements (e.g., "Executed hybrid migrations to Azure Landing Zones, lowering infrastructure footprint").
+           - HCLTech: Strictly 2 brief single-line bullet point.
+           - Sterling Accuris Diagnostics: Reduce to exactly 2 concise, single-line bullet points focusing purely on healthcare data availability.
+           - AGILUS Diagnostics: Reduce to exactly 1 concise, single-line bullet point focusing on system admin updates.
+           - Galaxy Office Automation Pvt. Ltd.: Reduce to exactly 1 brief one-liner bullet point.
+           - Aegis Global: Reduce to exactly 1 brief one-liner bullet point.
+
+        4. STRICT CHAR-COUNT AND ONE-LINE ENFORCEMENT (CRITICAL):
+           - Every single bullet point across the entire resume MUST be exactly one single line. 
+           - Hard cap of 90 characters maximum per bullet point. This ensures sentences are short and cannot break into a second line under any screen scaling.
+           - Strip out descriptive filler words and focus purely on "Action verb + Specific metric + Tool used".
 
         6. STAR METHOD TRANSFORMATION:
            - Convert weak bullets into compressed STAR format.
@@ -1676,14 +1681,25 @@ async function startServer() {
                 border: none !important;
               }
 
-              /* 3. Perfect ATS Typography & Vertical Compression */
+              /* 3. Professional Typography & Alignment */
               p, li, span, div, .resume-bullet-text { 
-                font-size: 9.5pt !important; /* Optimal ATS parsing size */
-                line-height: 1.25 !important; 
+                font-size: 9.5pt !important; 
+                line-height: 1.35 !important; /* Increased for readability */
               }
 
-              h1 { font-size: 15pt !important; margin-bottom: 1px !important; }
-              h2 { font-size: 11pt !important; margin-top: 4px !important; margin-bottom: 2px !important; padding-bottom: 1px !important; }
+              h1 { font-size: 16pt !important; margin-bottom: 4px !important; text-align: center !important; }
+              
+              /* CENTER ALL SECTION HEADINGS */
+              h2 { 
+                font-size: 11pt !important; 
+                margin-top: 8px !important; 
+                margin-bottom: 6px !important; 
+                padding-bottom: 2px !important; 
+                text-align: center !important; /* Centers Summary, Experience, etc. */
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+              }
+              
               .experience-item .font-bold, .project-item .font-bold { font-size: 10pt !important; }
 
               p, li, .resume-bullet-text, .experience-item div {
@@ -1691,15 +1707,15 @@ async function startServer() {
                 text-justify: auto !important;
               }
 
-              /* 4. Aggressive Section Compression & Strict Pagination */
+              /* 4. Balanced Section Spacing & Strict Pagination */
               .resume-section { 
-                margin-bottom: 6px !important; /* Reclaimed vertical space */
+                margin-bottom: 10px !important; /* Added breathing room between sections */
                 padding: 0 !important; 
               }
 
               /* Ensure roles are grouped and don't split across pages */
               .experience-item, .project-item { 
-                margin-bottom: 4px !important; /* Reclaimed inter-job space */
+                margin-bottom: 8px !important; /* Added breathing room between jobs */
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
                 display: inline-block !important; 
@@ -1709,11 +1725,11 @@ async function startServer() {
 
               /* Flatten bullet padding to maximize line length */
               ul {
-                padding-left: 10px !important; 
+                padding-left: 12px !important; 
                 margin-left: 0 !important;
               }
               li { 
-                margin-bottom: 1px !important; 
+                margin-bottom: 3px !important; /* Added space between bullets */
               }
 
               /* Prevent titles from separating from their content */

@@ -233,7 +233,7 @@ export function generateProfessionalHTML(data: ResumeData): string {
 
   const header = `
     <header style="text-align: center; margin-bottom: 14pt; border-bottom: 1px solid #e5e7eb; padding-bottom: 10pt;">
-      <h1 style="font-size: 22pt; font-weight: 700; letter-spacing: -0.5px; text-transform: uppercase; margin: 0 0 4pt 0; color: #111827;">
+      <h1 style="font-size: 22pt; font-weight: 700; letter-spacing: -0.5px; text-transform: uppercase; margin: 0 0 4pt 0; color: #111827; text-align: center;">
         ${personal_info.name}
       </h1>
       <div style="font-size: 9.5pt; color: #4b5563; display: flex; justify-content: center; gap: 12pt; flex-wrap: wrap;">
@@ -290,6 +290,7 @@ export function generateProfessionalHTML(data: ResumeData): string {
       <section style="break-inside: avoid;">
         <div class="section-header">Summary</div>
         <div style="font-size: 9.5pt; line-height: 1.5; color: #374151;">${summary}</div>
+        <div style="height: 1.25em;"></div> <!-- skip one line after summary completed -->
       </section>
       ` : ''}
 
