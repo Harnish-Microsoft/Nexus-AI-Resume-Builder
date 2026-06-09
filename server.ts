@@ -1663,13 +1663,11 @@ async function startServer() {
                 width: 100% !important;
                 max-width: 100% !important;
                 margin: 0 auto !important;
-                /* Overrides the massive 25mm internal padding from React to use the full page width */
-                padding: 0mm 5mm !important; 
+                padding: 0mm 4mm !important; /* Maximized horizontal space */
                 box-shadow: none !important;
                 border: none !important;
               }
 
-              /* Reliable scaling */
               #resume-container {
                 transform: scale(${printScale}) !important;
                 transform-origin: top left !important;
@@ -1678,30 +1676,30 @@ async function startServer() {
                 border: none !important;
               }
 
-              /* 3. Readable Typography & Vertical Compression */
+              /* 3. Perfect ATS Typography & Vertical Compression */
               p, li, span, div, .resume-bullet-text { 
-                font-size: 9.5pt !important; /* The perfect balance for ATS and readability */
-                line-height: 1.35 !important; 
+                font-size: 9.5pt !important; /* Optimal ATS parsing size */
+                line-height: 1.25 !important; 
               }
 
-              h1 { font-size: 16pt !important; margin-bottom: 2px !important; }
-              h2 { font-size: 12pt !important; margin-bottom: 2px !important; padding-bottom: 2px !important; }
-              .experience-item .font-bold, .project-item .font-bold { font-size: 10.5pt !important; }
+              h1 { font-size: 15pt !important; margin-bottom: 1px !important; }
+              h2 { font-size: 11pt !important; margin-top: 4px !important; margin-bottom: 2px !important; padding-bottom: 1px !important; }
+              .experience-item .font-bold, .project-item .font-bold { font-size: 10pt !important; }
 
               p, li, .resume-bullet-text, .experience-item div {
                 text-align: left !important;
                 text-justify: auto !important;
               }
 
-              /* 4. Clean Section Spacing & Strict Pagination */
+              /* 4. Aggressive Section Compression & Strict Pagination */
               .resume-section { 
-                margin-bottom: 10px !important; 
+                margin-bottom: 6px !important; /* Reclaimed vertical space */
                 padding: 0 !important; 
               }
 
               /* Ensure roles are grouped and don't split across pages */
               .experience-item, .project-item { 
-                margin-bottom: 8px !important; 
+                margin-bottom: 4px !important; /* Reclaimed inter-job space */
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
                 display: inline-block !important; 
@@ -1709,13 +1707,13 @@ async function startServer() {
                 vertical-align: top;
               }
 
-              /* Force 1-line behavior by removing excess padding */
+              /* Flatten bullet padding to maximize line length */
               ul {
-                padding-left: 14px !important;
+                padding-left: 10px !important; 
                 margin-left: 0 !important;
               }
               li { 
-                margin-bottom: 3px !important; 
+                margin-bottom: 1px !important; 
               }
 
               /* Prevent titles from separating from their content */

@@ -62,6 +62,70 @@ export const OptimizationResultWorkspace: React.FC<OptimizationResultWorkspacePr
   const [viewMode, setViewMode] = useState<'resume' | 'json'>('resume');
   const [copied, setCopied] = useState(false);
 
+  // Dynamic horizontal panel drag resize
+  const [leftWidth, setLeftWidth] = useState(() => {
+    const saved = localStorage.getItem('resultWorkspaceLeftWidth');
+    return saved ? parseInt(saved, 10) : 420;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const workspaceContainerRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const checkViewport = () => {
+      setIsMobile(window.innerWidth < 1024);
+    };
+    checkViewport();
+    window.addEventListener('resize', checkViewport);
+    return () => window.removeEventListener('resize', checkViewport);
+  }, []);
+
+  React.useEffect(() => {
+    let animationFrameId: number;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !workspaceContainerRef.current) return;
+
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
+      animationFrameId = requestAnimationFrame(() => {
+        if (isResizing) {
+          const rect = workspaceContainerRef.current!.getBoundingClientRect();
+          const newWidthPx = e.clientX - rect.left;
+          // Constraints: min 280px, max 60% of container width
+          const allowedWidth = Math.max(280, Math.min(rect.width * 0.6, newWidthPx));
+          setLeftWidth(allowedWidth);
+        }
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      localStorage.setItem('resultWorkspaceLeftWidth', leftWidth.toString());
+    };
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp, { capture: true });
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp, { capture: true });
+      if (!isResizing) {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+  }, [isResizing, leftWidth]);
+
   // Resolve active result data
   const currentAudience = artifact ? artifact.activeAudience : activeAudience;
   const activeResult = artifact 
@@ -149,10 +213,15 @@ export const OptimizationResultWorkspace: React.FC<OptimizationResultWorkspacePr
       </header>
 
       {/* THREE-COLUMN WORKSPACE CANVAS FLOOR */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative" ref={workspaceContainerRef}>
         
-        {/* LEFT COLUMN: CRITICAL METRIC SCORECARDS (1/3 Width) */}
-        <div className="w-full lg:w-[400px] xl:w-[450px] shrink-0 border-r border-white/5 flex flex-col overflow-y-auto custom-scrollbar bg-[#0b0e14]/50">
+        {/* LEFT COLUMN: CRITICAL METRIC SCORECARDS (resizable) */}
+        <div 
+          className="w-full lg:shrink-0 border-r border-white/5 flex flex-col overflow-y-auto custom-scrollbar bg-[#0b0e14]/50"
+          style={{
+            width: isMobile ? '100%' : `${leftWidth}px`
+          }}
+        >
           
           {/* SECTION 2 & 3 CONTAINER */}
           <div className="p-6 space-y-6">
@@ -327,6 +396,26 @@ export const OptimizationResultWorkspace: React.FC<OptimizationResultWorkspacePr
           </div>
 
         </div>
+
+        {/* Vertical Resize Handle Divider */}
+        {!isMobile && (
+          <div
+            onMouseDown={(e) => {
+              setIsResizing(true);
+              e.preventDefault();
+            }}
+            onDoubleClick={() => {
+              setLeftWidth(420);
+              localStorage.setItem('resultWorkspaceLeftWidth', '420');
+            }}
+            className={`hidden lg:flex w-[4px] cursor-col-resize justify-center items-center group z-30 transition-all ${
+              isResizing ? 'bg-[#00E5FF] w-[6px]' : 'bg-transparent border-r border-white/5 hover:bg-white/10 hover:w-[6px]'
+            }`}
+            title="Drag to resize panel (Double-click to reset)"
+          >
+            <div className={`w-[2px] h-16 rounded-full transition-colors ${isResizing ? 'bg-white' : 'bg-[#ffffff30] group-hover:bg-[#00E5FF]'}`} />
+          </div>
+        )}
 
         {/* RIGHT COLUMN: REUSED LIVE PREVIEW WINDOW (SECTION 4) */}
         <div className="flex-1 flex flex-col overflow-hidden relative bg-[#090b0e]">
