@@ -84,6 +84,7 @@ import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
 import { AtsOptimizationStudio } from './components/AtsOptimizationStudio';
 import { OptimizationResultWorkspace } from './components/OptimizationResultWorkspace';
+import { AIOptimizationOverlay } from './components/AIOptimizationOverlay';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
 const LinkedInImporter = lazy(() => import('./components/LinkedInImporter').then(m => ({ default: m.LinkedInImporter })));
@@ -3520,6 +3521,16 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div className="liquid-blob liquid-blob-secondary w-[100vw] h-[100vh] -bottom-1/4 left-1/3" style={{ animationDelay: '-18s' }} />
         </div>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        
+        {/* Futuristic Premium FAANG-Level AI Scanning Animation Overlay */}
+        <AIOptimizationOverlay
+          isOptimizing={isOptimizing}
+          onStop={handleStop}
+          progress={optimizationProgress}
+          statusText={optimizationStatus}
+          targetRole={targetRole}
+          targetCompany={companyName}
+        />
         <DriveFolderPicker 
             isOpen={isSelectingFolder}
             onClose={() => setIsSelectingFolder(false)}
