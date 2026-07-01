@@ -1,17 +1,5 @@
 import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
-import { DashboardShell } from './components/Dashboard/DashboardShell';
-import { DashboardHeader } from './components/Dashboard/DashboardHeader';
-import { NavigationRail } from './components/Dashboard/NavigationRail';
-import { StatusFooter } from './components/Dashboard/StatusFooter';
-import { ResumeIntelligencePanel } from './components/Dashboard/ResumeIntelligencePanel';
-import { OptimizationPipelinePanel } from './components/Dashboard/OptimizationPipelinePanel';
-import { MasterResumeIntelligencePanel } from './components/Dashboard/MasterResumeIntelligencePanel';
-import { OptimizationResultsPanel } from './components/Dashboard/OptimizationResultsPanel';
-import { AIInsightsPanel } from './components/Dashboard/AIInsightsPanel';
-import { ActivityFeed } from './components/Dashboard/ActivityFeed';
-import { RecommendationFeed } from './components/Dashboard/RecommendationFeed';
-import { DashboardHome } from './components/Dashboard/DashboardHome';
 import { 
   FileText, 
   Briefcase, 
@@ -82,9 +70,6 @@ import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
 import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
-import { AtsOptimizationStudio } from './components/AtsOptimizationStudio';
-import { OptimizationResultWorkspace } from './components/OptimizationResultWorkspace';
-import { AIOptimizationOverlay } from './components/AIOptimizationOverlay';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
 const LinkedInImporter = lazy(() => import('./components/LinkedInImporter').then(m => ({ default: m.LinkedInImporter })));
@@ -117,7 +102,6 @@ import CloudArchitectureLoader from './components/CloudArchitectureLoader';
 import PremiumEnterpriseLoader from './components/PremiumEnterpriseLoader';
 import { AuthModal } from './components/AuthModal';
 import { TermsModal } from './components/TermsModal';
-import { AINeuralNetworkBackground } from './components/AINeuralNetworkBackground';
 
 import defaultMasterResume from './services/master_resume.json';
 
@@ -435,16 +419,14 @@ export default function App() {
   const [jobDescription, setJobDescription] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
-  const activeTabOrigin = location.pathname.substring(1).split('/')[0] || 'dashboard';
-  const activeTab = activeTabOrigin as 'dashboard' | 'build' | 'profile' | 'tools';
+  const activeTabOrigin = location.pathname.substring(1).split('/')[0] || 'build';
+  const activeTab = activeTabOrigin as 'build' | 'profile' | 'tools';
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [targetRole, setTargetRole] = useState('');
   const [targetCompany, setTargetCompany] = useState('none');
   const [brainDump, setBrainDump] = useState('');
   const [companyName, setCompanyName] = useState('');
-  const [showResultWorkspace, setShowResultWorkspace] = useState(false);
-  const [currentResultWorkspaceArtifact, setCurrentResultWorkspaceArtifact] = useState<any | null>(null);
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [fastMode, setFastMode] = useState(false);
   const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
@@ -626,13 +608,20 @@ export default function App() {
       const data = await response.json();
       if (data.success) {
         setDriveFiles(data.files);
-      } else if (data.error && data.error.includes('AUTH_EXPIRED')) {
+      } else if (data.error && (data.error.includes('AUTH_EXPIRED') || data.error.includes('invalid authentication credentials'))) {
         setDriveAccessToken(null);
+        localStorage.removeItem('driveAccessToken');
+        setIsDriveConnected(false);
+        localStorage.setItem('isDriveConnected', 'false');
+        showToast("Your Google Drive session has expired. Please reconnect.", "error");
       }
     } catch (err: any) {
       console.error('Failed to fetch Drive files:', err);
       if (err.message.includes('401') || err.message.includes('403')) {
         setDriveAccessToken(null);
+        localStorage.removeItem('driveAccessToken');
+        setIsDriveConnected(false);
+        localStorage.setItem('isDriveConnected', 'false');
       }
     } finally {
       setIsFetchingDriveFiles(false);
@@ -701,7 +690,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (driveAccessToken || process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+    if (driveAccessToken) {
       fetchDriveFiles();
     }
   }, [driveAccessToken]);
@@ -1550,31 +1539,35 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [printScale, setPrintScale] = useState(1);
 
-  // Pure visual layout scaling engine - completely removes aggressive text-slicing
+  // Add this effect to calculate the 2-page fit
   useEffect(() => {
     const calculateFit = () => {
       const resumeEl = document.getElementById('resume-container');
       if (!resumeEl) return;
 
-      // Reset scale to measure baseline layout parameters accurately
+      // Temporarily remove any scale to measure true physical height
       resumeEl.style.transform = 'none';
       resumeEl.style.width = '100%';
 
-      const MAX_SAFE_HEIGHT = 2050; // Strict 2-page structural boundary box
+      // A4 height at 96 DPI is ~1123px. Two pages = 2246px.
+      // Subtract 12mm margins top/bottom per page (~180px total).
+      // Safe max height for exactly 2 pages is roughly 2050px.
+      const MAX_SAFE_HEIGHT = 2050;
       const actualHeight = resumeEl.scrollHeight;
 
       if (actualHeight > MAX_SAFE_HEIGHT) {
-        // Apply smooth scaling, but CAP IT at 0.92 so fonts never become unreadable
-        const newScale = Math.max(0.92, MAX_SAFE_HEIGHT / actualHeight);
+        // Calculate how much we need to shrink it to fit
+        const newScale = MAX_SAFE_HEIGHT / actualHeight;
         setPrintScale(newScale);
       } else {
         setPrintScale(1);
       }
     };
 
-    const timeoutId = setTimeout(calculateFit, 500);
+    // Run calculation after DOM updates
+    const timeoutId = setTimeout(calculateFit, 1000); // 1s to be safer
     return () => clearTimeout(timeoutId);
-  }, [resumeText, results, activeAudience, previewMode, zoom, data]);
+  }, [resumeText, results, activeAudience, previewMode, zoom]);
   const [contentHeight, setContentHeight] = useState(1123);
   const [isPiiMasked, setIsPiiMasked] = useState(false);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
@@ -1609,8 +1602,9 @@ export default function App() {
 
       const scaleCSS = `
         #resume-container {
-          transform: scale(${printScale}) !important;
-          transform-origin: top left !important;
+          transform: scale(${printScale});
+          transform-origin: top left;
+          /* Increase width to compensate for the scale down, ensuring it fills the page */
           width: calc(100% / ${printScale}) !important;
         }
       `;
@@ -2121,9 +2115,8 @@ export default function App() {
     }
   };
 
-  const handleOptimize = async (overrideResumeText?: string) => {
+  const handleOptimize = async () => {
     console.log("[Nexus AI] handleOptimize started. Engine:", selectedEngine);
-    if (isExtracting) return;
     setError(null);
     setOptimizationStatus("Initializing Nexus Pipeline...");
     
@@ -2144,37 +2137,27 @@ export default function App() {
     const hasOKey = !!openaiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
 
     if (isGeminiNeeded && !hasGKey) {
-      const msg = "At least 1 API key needed. Please insert your Gemini API key.";
-      setError(msg);
-      showToast(msg, "error");
+      setError("At least 1 API key needed. Please insert your Gemini API key.");
       return;
     }
     if (isOpenAINeeded && !hasOKey) {
-      const msg = "At least 1 API key needed. Please insert your OpenAI API key.";
-      setError(msg);
-      showToast(msg, "error");
+      setError("At least 1 API key needed. Please insert your OpenAI API key.");
       return;
     }
     if (!hasGKey && !hasOKey) {
-      const msg = "At least 1 API key needed. Please insert your API key in the Profile tab.";
-      setError(msg);
-      showToast(msg, "error");
+      setError("At least 1 API key needed. Please insert your API key in the Profile tab.");
       return;
     }
 
     if (!targetRole.trim() || !companyName.trim()) {
       console.warn("[Nexus AI] Mandatory fields missing");
-      const msg = 'Target Role and Company Name are mandatory.';
-      setError(msg);
-      showToast(msg, "error");
+      setError('Target Role and Company Name are mandatory.');
       return;
     }
 
     if (!jobDescription && !jobUrl) {
       console.warn("[Nexus AI] Job description/URL missing");
-      const msg = 'Please provide a job description or job URL to optimize against.';
-      setError(msg);
-      showToast(msg, "error");
+      setError('Please provide a job description or job URL to optimize against.');
       return;
     }
 
@@ -2238,7 +2221,7 @@ export default function App() {
     const controller = new AbortController();
     setAbortController(controller);
     
-    let finalResumeText = overrideResumeText || resumeText || "";
+    let finalResumeText = resumeText || "";
 
     // SMART MASTER SELECTION STRATEGY
     // If there are multiple resumes in Nexus Master, help the user pick the right base
@@ -2407,59 +2390,9 @@ export default function App() {
 
       const optimizationResults = await Promise.all(optimizationPromises);
       const matchScore = optimizationResults[0]?.match_score || 0;
-
-      // Construct a full results mapping
-      const compiledResults: Record<string, any> = {};
-      currentAudiences.forEach((audId, idx) => {
-        if (optimizationResults[idx]) {
-          compiledResults[audId] = {
-            ...optimizationResults[idx],
-            _engine: selectedEngine,
-            _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
-          };
-        }
-      });
       
       // Save version immediately after optimization
       saveResumeVersion(`Optimized - ${companyName} - ${new Date().toLocaleString()}`);
-
-      // Feature 1: Build and save the persistent artifact
-      const artifactId = `artifact-${Date.now()}`;
-      const activeAud = activeAudience || currentAudiences[0] || 'Default';
-      const activeResumeName = masterResumes.find(r => r.id === selectedResumeId)?.name || 'Master Profile';
-      
-      const newArtifact = {
-        id: artifactId,
-        resumeId: selectedResumeId,
-        resumeName: activeResumeName,
-        targetRole: targetRole || 'Professional Candidate',
-        targetCompany: companyName || 'Unknown Company',
-        atsScore: matchScore,
-        timestamp: Date.now(),
-        status: 'Complete',
-        results: compiledResults,
-        activeAudience: activeAud,
-        mode: mode,
-        jobDescription: jobDescription,
-        customPrompt: customPrompt
-      };
-
-      try {
-        const storedStr = localStorage.getItem('nexus_optimized_resumes');
-        const existingArtifacts = storedStr ? JSON.parse(storedStr) : [];
-        const fortyEightHoursAgo = Date.now() - 48 * 60 * 60 * 1000;
-        const freshArtifacts = existingArtifacts.filter((item: any) => item.timestamp >= fortyEightHoursAgo);
-        const updatedArtifacts = [newArtifact, ...freshArtifacts];
-        localStorage.setItem('nexus_optimized_resumes', JSON.stringify(updatedArtifacts));
-        
-        window.dispatchEvent(new Event('nexus_optimization_complete'));
-      } catch (e) {
-        console.error("Error saving to local optimization artifact center", e);
-      }
-
-      // Feature 2: Set Result Workspace Trigger active
-      setCurrentResultWorkspaceArtifact(null);
-      setShowResultWorkspace(true);
 
       // Sync to Job Tracker (Firestore)
       if (user) {
@@ -2804,8 +2737,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       const scaleCSS = `
         #resume-container {
-          transform: scale(${printScale}) !important;
-          transform-origin: top left !important;
+          transform: scale(${printScale});
+          transform-origin: top left;
+          /* Increase width to compensate for the scale down, ensuring it fills the page */
           width: calc(100% / ${printScale}) !important;
         }
       `;
@@ -2935,80 +2869,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     syncJobTrackerApplied();
   };
 
-  const handleOpenResultWorkspace = (artifact: any) => {
-    setResults(artifact.results);
-    setActiveAudience(artifact.activeAudience);
-    setTargetRole(artifact.targetRole);
-    setCompanyName(artifact.targetCompany);
-    setJobDescription(artifact.jobDescription);
-    if (artifact.customPrompt) setCustomPrompt(artifact.customPrompt);
-    
-    setCurrentResultWorkspaceArtifact(artifact);
-    setShowResultWorkspace(true);
-    navigate('/build');
-  };
-
-  const handleDownloadPDFForArtifact = async (artifact: any) => {
-    setResults(artifact.results);
-    setActiveAudience(artifact.activeAudience);
-    setTargetRole(artifact.targetRole);
-    setCompanyName(artifact.targetCompany);
-    setJobDescription(artifact.jobDescription);
-    
-    showToast("Preparing PDF compiling pipeline...", "info");
-    setTimeout(() => {
-      downloadPDF();
-    }, 500);
-  };
-
-  const handleDownloadDOCXForArtifact = (artifact: any) => {
-    const activeAud = artifact.activeAudience || Object.keys(artifact.results)[0];
-    const resultsData = artifact.results[activeAud];
-    if (resultsData) {
-      downloadDOCX(resultsData, artifact.targetRole, artifact.targetCompany, showToast);
-      syncJobTrackerApplied();
-    } else {
-      showToast("No optimization data found inside this artifact", "error");
-    }
-  };
-
-  const handleDownloadJSONForArtifact = (artifact: any) => {
-    const activeAud = artifact.activeAudience || Object.keys(artifact.results)[0];
-    const resultsData = artifact.results[activeAud];
-    if (resultsData) {
-      downloadJSON(resultsData, artifact.targetRole, artifact.targetCompany, showToast);
-    } else {
-      showToast("No optimization data found", "error");
-    }
-  };
-
-  const handleSaveToDriveForArtifact = async (artifact: any) => {
-    setResults(artifact.results);
-    setActiveAudience(artifact.activeAudience);
-    setTargetRole(artifact.targetRole);
-    setCompanyName(artifact.targetCompany);
-    setJobDescription(artifact.jobDescription);
-    
-    showToast("Synching compiled PDF artifact to Google Drive...", "info");
-    setTimeout(() => {
-      downloadPDF();
-    }, 500);
-  };
-
-  const handleOpenOptimizationInSession = (artifact: any) => {
-    setResults(artifact.results);
-    setActiveAudience(artifact.activeAudience);
-    setTargetRole(artifact.targetRole);
-    setCompanyName(artifact.targetCompany);
-    setJobDescription(artifact.jobDescription);
-    if (artifact.customPrompt) setCustomPrompt(artifact.customPrompt);
-    
-    showToast(`Loaded Optimization for ${artifact.targetCompany}`, "success");
-    setShowResultWorkspace(false);
-    setCurrentResultWorkspaceArtifact(null);
-    navigate('/build');
-  };
-
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
   };
@@ -3050,7 +2910,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         <div className="mb-4">
           <h2 className="font-bold border-b border-black mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Summary</h2>
           <p className="leading-normal text-justify" style={{ fontSize: '10.5pt' }}>{(res as any).summary || (res as any).personal_info?.summary || ""}</p>
-          <div style={{ height: '1.25em' }} /> {/* Skip one line after summary has been completed */}
         </div>
 
         {/* Skills */}
@@ -3139,13 +2998,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     );
   };
 
-  const renderSection = (
-    sectionId: string, 
-    customExp?: any[], 
-    isContinuation?: boolean,
-    customProj?: any[],
-    customEdu?: any[]
-  ) => {
+  const renderSection = (sectionId: string, customExp?: any[], isContinuation?: boolean) => {
     switch (sectionId) {
       case 'header':
         const personalInfo = {
@@ -3212,7 +3065,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               Summary
             </h2>
             <p className="leading-normal" style={{ fontSize: '10.5pt' }}>{results[activeAudience!]?.summary || data.personal_info.summary}</p>
-            <div style={{ height: '1.25em' }} /> {/* Skip one line after summary has been completed */}
           </div>
         );
       case 'skills':
@@ -3336,11 +3188,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'projects':
-        const allProjects = customProj || (
-          (Array.isArray(results[activeAudience!]?.projects) && results[activeAudience!]?.projects.length > 0) 
-            ? results[activeAudience!]?.projects 
-            : data.projects
-        );
+        const allProjects = (Array.isArray(results[activeAudience!]?.projects) && results[activeAudience!]?.projects.length > 0) 
+          ? results[activeAudience!]?.projects 
+          : data.projects;
         if (!Array.isArray(allProjects) || allProjects.length === 0) return null;
         return (
           <div 
@@ -3380,11 +3230,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'education':
-        const allEdu = customEdu || (
-          (Array.isArray(results[activeAudience!]?.education) && results[activeAudience!]?.education.length > 0) 
-            ? results[activeAudience!]?.education 
-            : data.education || []
-        );
+        const allEdu = (Array.isArray(results[activeAudience!]?.education) && results[activeAudience!]?.education.length > 0) 
+          ? results[activeAudience!]?.education 
+          : data.education || [];
         if (!Array.isArray(allEdu) || allEdu.length === 0) return null;
         return (
           <div 
@@ -3465,203 +3313,248 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   }
 
   return (
-    <DashboardShell
-      isDarkMode={isDarkMode}
-      header={
-        <DashboardHeader
-          user={user}
-          onAuthTrigger={() => setIsAuthModalOpen(true)}
-          onLogout={handleLogout}
-          isDarkMode={isDarkMode}
-          setIsDarkMode={setIsDarkMode}
-          onCommandPaletteOpen={() => setIsCommandPaletteOpen(true)}
-          geminiApiKey={geminiApiKey || ""}
-          openaiApiKey={openaiApiKey || ""}
-          encryptedApiKey={encryptedApiKey || ""}
-          isFetchingKeys={isFetchingKeys}
-          onSyncKeys={() => fetchKeysFromFirebase(true)}
-        />
-      }
-      navigationRail={
-        <NavigationRail
-          activeTab={activeTab}
-          isDarkMode={isDarkMode}
-        />
-      }
-      footer={
-        <StatusFooter
-          isDarkMode={isDarkMode}
-          syncStatus={isSyncing ? 'syncing' : 'synced'}
-          currentEngine={mode}
-          isDriveConnected={isDriveConnected}
-          isExporting={isDownloading}
-          exportType="pdf"
-          activeAudience={activeAudience}
-          optimizationProgress={isOptimizing ? Math.round(optimizationProgress) : 100}
-        />
-      }
+    <div 
+      className={`h-screen flex flex-col overflow-hidden transition-colors duration-300 ${isDarkMode ? 'text-white' : 'text-slate-900'} font-sans selection:bg-emerald-500/30 relative z-0`}
+      style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
     >
-      <div 
-        className="w-full h-full relative overflow-hidden"
-        style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-      >
-        <div className={`absolute inset-0 transition-colors duration-1000 ${user ? 'bg-black/40' : 'bg-black/10 dark:bg-black/30'} pointer-events-none -z-10`} />
-        <div className="workspace-overlay -z-5" />
-        <GeminiOmniAurora />
-        <AINeuralNetworkBackground isDarkMode={isDarkMode} opacity={0.25} />
-        {activeTheme.id === 'infogeneus' && (
-          <>
-            <GeminiAurora />
-            <DataStream />
-            <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/5 via-transparent to-indigo-500/5 pointer-events-none z-[-1]" />
-          </>
-        )}
-        <div className="liquid-container z-10 opacity-30">
-          <div className="liquid-blob w-[110vw] h-[110vh] -top-1/2 -left-1/4" style={{ animationDelay: '-2s' }} />
-          <div className="liquid-blob liquid-blob-secondary w-[80vw] h-[80vh] top-1/2 right-1/4" style={{ animationDelay: '-5s' }} />
-          <div className="liquid-blob w-[90vw] h-[90vh] top-1/2 -right-1/4" style={{ animationDelay: '-12s' }} />
-          <div className="liquid-blob liquid-blob-secondary w-[100vw] h-[100vh] -bottom-1/4 left-1/3" style={{ animationDelay: '-18s' }} />
-        </div>
-        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-        
-        {/* Futuristic Premium FAANG-Level AI Scanning Animation Overlay */}
-        <AIOptimizationOverlay
-          isOptimizing={isOptimizing}
-          onStop={handleStop}
-          progress={optimizationProgress}
-          statusText={optimizationStatus}
-          targetRole={targetRole}
-          targetCompany={companyName}
+      <div className={`absolute inset-0 transition-colors duration-1000 ${user ? 'bg-black/40' : 'bg-black/10 dark:bg-black/30'} pointer-events-none -z-10`} />
+      <div className="workspace-overlay -z-5" />
+      <GeminiOmniAurora />
+      {activeTheme.id === 'infogeneus' && (
+        <>
+          <GeminiAurora />
+          <DataStream />
+          <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/5 via-transparent to-indigo-500/5 pointer-events-none z-[-1]" />
+        </>
+      )}
+      <div className="liquid-container z-10 opacity-30">
+        <div className="liquid-blob w-[110vw] h-[110vh] -top-1/2 -left-1/4" style={{ animationDelay: '-2s' }} />
+        <div className="liquid-blob liquid-blob-secondary w-[80vw] h-[80vh] top-1/2 right-1/4" style={{ animationDelay: '-5s' }} />
+        <div className="liquid-blob w-[90vw] h-[90vh] top-1/2 -right-1/4" style={{ animationDelay: '-12s' }} />
+        <div className="liquid-blob liquid-blob-secondary w-[100vw] h-[100vh] -bottom-1/4 left-1/3" style={{ animationDelay: '-18s' }} />
+      </div>
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      <DriveFolderPicker 
+          isOpen={isSelectingFolder}
+          onClose={() => setIsSelectingFolder(false)}
+          onSelect={(folder) => {
+            setSelectedDriveFolder(folder);
+            setIsSelectingFolder(false);
+            showToast(`Target folder set to: ${folder.name}`, 'success');
+          }}
+          accessToken={driveAccessToken}
+          isDarkMode={isDarkMode}
         />
-        <DriveFolderPicker 
-            isOpen={isSelectingFolder}
-            onClose={() => setIsSelectingFolder(false)}
-            onSelect={(folder) => {
-              setSelectedDriveFolder(folder);
-              setIsSelectingFolder(false);
-              showToast(`Target folder set to: ${folder.name}`, 'success');
-            }}
-            accessToken={driveAccessToken}
-            isDarkMode={isDarkMode}
+        {confirmDialog && (
+          <ConfirmDialog 
+            message={confirmDialog.message} 
+            onConfirm={confirmDialog.onConfirm} 
+            onCancel={confirmDialog.onCancel} 
+            isDarkMode={isDarkMode} 
           />
-          {confirmDialog && (
-            <ConfirmDialog 
-              message={confirmDialog.message} 
-              onConfirm={confirmDialog.onConfirm} 
-              onCancel={confirmDialog.onCancel} 
-              isDarkMode={isDarkMode} 
-            />
-          )}
+        )}
 
-          {/* Main Workspace Area with Feature 2 overlay condition */}
-          {showResultWorkspace && activeTab === 'build' ? (
-            <OptimizationResultWorkspace
-              isDarkMode={isDarkMode}
-              artifact={currentResultWorkspaceArtifact}
-              activeAudience={activeAudience}
-              results={results}
-              previewMode={previewMode}
-              setPreviewMode={setPreviewMode}
-              onClose={() => {
-                setShowResultWorkspace(false);
-                setCurrentResultWorkspaceArtifact(null);
-                setZoom(0.85); // Reset to optimal workspace zoom
-              }}
-              onDownloadPDF={() => {
-                if (currentResultWorkspaceArtifact) {
-                  handleDownloadPDFForArtifact(currentResultWorkspaceArtifact);
-                } else {
-                  downloadPDF();
-                }
-              }}
-              onDownloadDOCX={() => {
-                if (currentResultWorkspaceArtifact) {
-                  handleDownloadDOCXForArtifact(currentResultWorkspaceArtifact);
-                } else {
-                  handleDownloadDOCX();
-                }
-              }}
-              onDownloadJSON={() => {
-                if (currentResultWorkspaceArtifact) {
-                  handleDownloadJSONForArtifact(currentResultWorkspaceArtifact);
-                } else {
-                  downloadJSON(activeAudience ? results[activeAudience] : data, targetRole, companyName, showToast);
-                }
-              }}
-              onSaveToDrive={() => {
-                if (currentResultWorkspaceArtifact) {
-                  handleSaveToDriveForArtifact(currentResultWorkspaceArtifact);
-                } else {
-                  downloadPDF();
-                }
-              }}
-              onOpenResumeBuilder={() => {
-                setShowResultWorkspace(false);
-                setCurrentResultWorkspaceArtifact(null);
-                setIsFocusMode(true);
-                showToast("Resume Builder inline editing mode active.", "info");
-              }}
-            >
-              {/* Section 4 Preview Window Re-integration */}
-              <div 
-                className="mx-auto relative overflow-hidden bg-white text-black p-4 rounded-xl shadow-2xl"
-                style={{
-                  width: `${794 * zoom}px`, // Approx width of A4 210mm
-                  height: `${contentHeight * zoom}px`,
-                  transition: 'width 0.3s ease, height 0.3s ease'
-                }}
-              >
-                <div 
-                  style={{
-                    transform: `scale(${zoom})`,
-                    transformOrigin: 'top left',
-                    width: 'max-content'
-                  }}
-                >
-                  <div 
-                    id="resume-container"
-                    className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
-                  >
-                    {previewMode === 'standard' ? (
-                      <div className="resume-page" style={{ paddingBottom: isDownloading ? '0' : '2rem' }}>
-                        {renderSection('header')}
-                        {renderSection('summary')}
-                        {renderSection('skills')}
-                        {renderSection('certifications')}
-                        {renderSection('experience', (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.experience : results[activeAudience!]?.experience) || data.experience)}
-                        {renderSection(
-                          'projects', 
-                          undefined, 
-                          false, 
-                          (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.projects : results[activeAudience!]?.projects) || data.projects
-                        )}
-                        {renderSection(
-                          'education', 
-                          undefined, 
-                          false, 
-                          undefined, 
-                          (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.education : results[activeAudience!]?.education) || data.education
-                        )}
-                      </div>
-                    ) : (
-                      renderSimplifiedResume()
-                    )}
-                  </div>
+      {/* Main Container */}
+      <div className="flex-1 flex flex-col relative w-full h-full min-w-0">
+          <header className={`shrink-0 border-b z-30 transition-colors w-full h-16 flex items-center justify-between px-4 md:px-8 ${isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/5'}`}>
+              <div className="flex items-center gap-2 sm:gap-6">
+                <div className="font-bold text-xl tracking-tight flex items-center gap-2 sm:gap-3">
+                    <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex shrink-0 items-center justify-center transition-colors shadow-sm ${isDarkMode ? 'bg-emerald-500/20 border border-emerald-500/50' : 'bg-neutral-900 border border-black'}`}>
+                        <Cpu className={`w-3 h-3 sm:w-4 sm:h-4 text-emerald-400`} />
+                    </div>
+                    <span className={`tracking-tight text-[13px] sm:text-[15px] hidden md:inline-block ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>NEXUS AI</span>
                 </div>
+
+                <nav className="flex items-center gap-0.5 sm:gap-1">
+                  {(['build', 'tools', 'profile'] as const).map(tab => (
+                    <Link
+                      key={tab}
+                      to={`/${tab}`}
+                      className={`px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg text-[9px] sm:text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-1.5 ${
+                        activeTab === tab 
+                          ? (isDarkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-black text-white px-3 sm:px-5') 
+                          : (isDarkMode ? 'hover:bg-white/5 opacity-40 hover:opacity-100' : 'hover:bg-black/5 opacity-50 hover:opacity-100')
+                      }`}
+                      title={tab}
+                    >
+                      {tab === 'build' ? <Zap className="w-3.5 h-3.5 sm:hidden" /> : tab === 'tools' ? <LayoutGrid className="w-3.5 h-3.5 sm:hidden" /> : <UserCircle className="w-3.5 h-3.5 sm:hidden" />}
+                      <span className="hidden sm:inline">{tab === 'build' ? 'Optimizer' : tab}</span>
+                    </Link>
+                  ))}
+                </nav>
               </div>
-            </OptimizationResultWorkspace>
-          ) : (
-            <main className="flex-1 flex flex-col sm:flex-row overflow-hidden relative w-full h-full bg-transparent" ref={containerRef}>
+              <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
+                  <div className="flex items-center gap-1.5 sm:gap-3 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 shrink-0">
+                    <div className="flex items-center gap-1 sm:gap-1.5" title={geminiApiKey ? "Gemini Ready" : encryptedApiKey ? "Gemini Encrypted" : "Gemini Missing"}>
+                      <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${geminiApiKey ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : encryptedApiKey ? 'bg-amber-500' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'}`} />
+                      <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60 hidden xs:inline">Gemini</span>
+                    </div>
+                    <div className="w-px h-3 bg-black/10 dark:bg-white/10" />
+                    <div className="flex items-center gap-1 sm:gap-1.5" title={openaiApiKey ? "OpenAI Ready" : encryptedApiKey ? "OpenAI Encrypted" : "OpenAI Missing"}>
+                      <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${openaiApiKey ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : encryptedApiKey ? 'bg-amber-500' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'}`} />
+                      <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60 hidden xs:inline">OpenAI</span>
+                    </div>
+                    <button 
+                      onClick={() => fetchKeysFromFirebase(true)}
+                      disabled={isFetchingKeys}
+                      className={`ml-0.5 sm:ml-1 p-0.5 sm:p-1 rounded-lg transition-all ${isFetchingKeys ? 'animate-spin opacity-50' : 'hover:bg-black/10 dark:hover:bg-white/10 opacity-60 hover:opacity-100'}`}
+                      title="Sync Keys"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => isOptimizing ? handleStop() : handleOptimize()}
+                    className={`relative overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all ${
+                        isOptimizing 
+                            ? 'bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500/20 shadow-red-500/5' 
+                            : showOptimizeSuccess
+                                ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 animate-bounce'
+                                : (isDarkMode 
+                                    ? 'bg-emerald-500 hover:bg-emerald-400 text-black' 
+                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white')
+                    }`}
+                  >
+                    {isOptimizing && (
+                      <motion.div 
+                        className="absolute inset-0 bg-white/20 dark:bg-black/20 pointer-events-none"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${optimizationProgress}%` }}
+                        transition={{ ease: "linear", duration: 0.5 }}
+                      />
+                    )}
+                    <div className="relative z-10 flex items-center gap-1.5">
+                      {isOptimizing ? (
+                        <>
+                          <Square className="w-3 h-3 fill-current animate-pulse" />
+                          <span className="hidden sm:inline">Stop ({Math.round(optimizationProgress)}%)</span>
+                          <span className="sm:hidden">{Math.round(optimizationProgress)}%</span>
+                        </>
+                      ) : showOptimizeSuccess ? (
+                        <>
+                          <CheckCircle2 className="w-3 h-3 text-black" />
+                          <span>Done</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-3 h-3" />
+                          <span className="hidden sm:inline">Optimize</span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                  {user && (
+                    <button onClick={() => syncAllData(false)} className={`p-1.5 sm:p-2 rounded-full transition-colors relative ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${hasUnsavedChanges ? 'bg-amber-500/10' : ''}`} title="Sync to Cloud">
+                        <Cloud className={`w-4 h-4 sm:w-[18px] sm:h-[18px] transition-colors ${isSyncing ? 'animate-pulse text-blue-500' : hasUnsavedChanges ? 'text-amber-500' : ''}`} />
+                        {hasUnsavedChanges && !isSyncing && <span className="absolute top-1 right-1 sm:top-1.5 sm:right-1.5 w-1.5 h-1.5 rounded-full bg-amber-500"></span>}
+                    </button>
+                  )}
+                  <button onClick={() => setIsFocusMode(!isFocusMode)} className={`p-1.5 sm:p-2 hidden sm:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${isFocusMode ? 'bg-emerald-500/20' : ''}`} title={isFocusMode ? "Exit Focus Mode" : "Focus Mode"}>
+                      {isFocusMode ? <EyeOff className="w-4 h-4 sm:w-[18px] sm:h-[18px]" /> : <Eye className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />}
+                  </button>
+                  <button onClick={resetLayout} className={`p-2 hidden md:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Reset Layout">
+                      <Maximize className="w-[18px] h-[18px]" />
+                  </button>
+                  {(user?.email === 'param_jariwala@yahoo.com' || user?.email === 'hackerharnish@gmail.com') && (
+                      <button onClick={() => setShowAdminDashboard(true)} className={`p-1.5 sm:p-2 hidden sm:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Admin Dashboard">
+                          <BarChart3 className="w-[18px] h-[18px]" />
+                      </button>
+                  )}
+                  <button onClick={() => setIsPiiMasked(!isPiiMasked)} className={`p-1.5 sm:p-2 hidden sm:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${isPiiMasked ? 'bg-emerald-500/20 text-emerald-500' : ''}`} title={isPiiMasked ? "Show PII" : "Mask PII for Security"}>
+                      {isPiiMasked ? <ShieldCheck className="w-[18px] h-[18px]" /> : <ShieldAlert className="w-[18px] h-[18px]" />}
+                  </button>
+                  <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 sm:p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-amber-400' : 'hover:bg-black/5 text-blue-600'}`}>
+                      {isDarkMode ? <Sun className="w-5 h-5 sm:w-[18px] sm:h-[18px]" /> : <Moon className="w-5 h-5 sm:w-[18px] sm:h-[18px]" />}
+                  </button>
+                  <div className="relative">
+                    <button 
+                      onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)} 
+                      className={`p-2 sm:p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-rose-400' : 'hover:bg-black/5 text-rose-600'} ${isThemeMenuOpen ? (isDarkMode ? 'bg-rose-500/20 shadow-inner' : 'bg-rose-50 shadow-inner') : ''}`}
+                      title="Change Theme"
+                    >
+                        <Palette className="w-5 h-5 sm:w-[18px] sm:h-[18px]" />
+                    </button>
+                    <AnimatePresence>
+                      {isThemeMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setIsThemeMenuOpen(false)} />
+                          <motion.div
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            className={`fixed top-16 right-4 sm:right-8 md:right-8 w-48 p-2 rounded-2xl border shadow-2xl z-50 ${isDarkMode ? 'glass-panel border-white/20' : 'glass-panel-light border-black/10'}`}
+                          >
+                            <div className="space-y-1">
+                              {BACKGROUND_THEMES.map(theme => (
+                                <button
+                                  key={theme.id}
+                                  onClick={() => {
+                                    setActiveTheme(theme);
+                                    localStorage.setItem('activeThemeId', theme.id);
+                                    setIsThemeMenuOpen(false);
+                                  }}
+                                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                                    activeTheme.id === theme.id
+                                      ? (isDarkMode ? `bg-${activeTheme.id === 'infogeneus' ? 'cyan' : 'emerald'}-500/20 text-${activeTheme.id === 'infogeneus' ? 'cyan' : 'emerald'}-400` : 'bg-black text-white')
+                                      : (isDarkMode ? 'hover:bg-white/5 text-white/70' : 'hover:bg-black/5 text-black/70')
+                                  }`}
+                                >
+                                  {theme.label}
+                                  {activeTheme.id === theme.id && <Check className="w-3 h-3" />}
+                                </button>
+                              ))}
+                              
+                              <div className="pt-1 mt-1 border-t border-white/10">
+                                <input 
+                                  type="file" 
+                                  ref={themeInputRef} 
+                                  onChange={handleCustomTheme} 
+                                  accept="image/*" 
+                                  className="hidden" 
+                                />
+                                <button
+                                  onClick={() => themeInputRef.current?.click()}
+                                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                                    isDarkMode ? 'hover:bg-white/5 text-rose-400' : 'hover:bg-black/5 text-rose-600'
+                                  }`}
+                                >
+                                  <ImagePlus className="w-3.5 h-3.5" />
+                                  Custom Wallpaper
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0</span>
+                  <div className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-500 animate-pulse`}>
+                      <Cpu className="w-3 h-3" />
+                      <span>{engineConfig.gemini.model === 'gemini-3.1-pro-preview' ? 'GEMINI 3.1 PRO (MULTI-FALLBACK)' : 'GEMINI 3.5 FLASH (MULTI-FALLBACK)'}</span>
+                  </div>
+                  <Link to="/profile" className={`flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full border transition-colors ${isDarkMode ? 'border-white/20 hover:border-emerald-500/50 bg-neutral-900' : 'border-black/10 hover:border-emerald-500/50 bg-white'}`}>
+                    {user ? (
+                      <span className="text-[9px] sm:text-[10px] font-bold uppercase text-emerald-600 dark:text-emerald-400">{user.email?.[0]}</span>
+                    ) : (
+                      <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 opacity-50" />
+                    )}
+                  </Link>
+              </div>
+          </header>
+
+          {/* Main Workspace Area */}
+          <main className="flex-1 flex flex-col sm:flex-row overflow-hidden relative w-full min-h-0 bg-transparent" ref={containerRef}>
               
-              {/* Only show Config Pane if NOT on tools or dashboard */}
-              {activeTab !== 'tools' && activeTab !== 'dashboard' && (
+              {/* Only show Config Pane if NOT on tools or jobs */}
+              {activeTab !== 'tools' && (
                 <div 
                   ref={leftPanelRef}
-                  className={`flex flex-col h-full relative transition-all duration-200 ease-in-out ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel z-10 w-full`}
+                  className={`flex flex-col h-full relative transition-all duration-200 ease-in-out ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel z-10 ${isFocusMode ? 'w-0 opacity-0 pointer-events-none border-none hidden sm:flex' : ''} ${isMobile ? 'h-1/2 sm:h-full w-full' : ''}`}
                   style={{ 
-                    width: '100%',
-                    minWidth: '100%',
-                    maxWidth: 'none'
+                    width: isFocusMode ? '0' : (isMobile ? '100%' : `${configWidth}%`),
+                    minWidth: isFocusMode ? '0' : (isMobile ? '100%' : '320px'),
+                    maxWidth: isFocusMode ? '0' : (isMobile ? '100%' : '800px')
                   }}
                 >
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
@@ -3673,82 +3566,939 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.98 }}
                   transition={{ duration: 0.2 }}
-                  className="space-y-6 h-full flex flex-col"
+                  className="space-y-6"
                 >
-                  <AtsOptimizationStudio 
-                      isDarkMode={isDarkMode}
-                      targetRole={targetRole}
-                      setTargetRole={setTargetRole}
-                      companyName={companyName}
-                      setCompanyName={setCompanyName}
-                      targetCompany={targetCompany}
-                      setTargetCompany={setTargetCompany}
-                      jobUrl={jobUrl}
-                      setJobUrl={setJobUrl}
-                      jobDescription={jobDescription}
-                      setJobDescription={setJobDescription}
-                      resumeText={resumeText}
-                      clearInputs={clearInputs}
-                      selectedAudiences={selectedAudiences}
-                      setSelectedAudiences={setSelectedAudiences}
-                      customAudience={customAudience}
-                      setCustomAudience={setCustomAudience}
-                      isAutoSelectingAudiences={isAutoSelectingAudiences}
-                      handleAutoSelectAudiences={handleAutoSelectAudiences}
-                      isAudienceDropdownOpen={isAudienceDropdownOpen}
-                      setIsAudienceDropdownOpen={setIsAudienceDropdownOpen}
-                      audienceDropdownRef={audienceDropdownRef}
-                      toggleAudience={toggleAudience}
-                      AUDIENCES={AUDIENCES}
-                      customPrompt={customPrompt}
-                      setCustomPrompt={setCustomPrompt}
-                      isOptimizing={isOptimizing}
-                      handleStop={handleStop}
-                      isExtracting={isExtracting}
-                      handleOptimize={handleOptimize}
-                      optimizationProgress={optimizationProgress}
-                      showOptimizeSuccess={showOptimizeSuccess}
-                      tokenUsage={tokenUsage}
-                      fetchTokenUsage={fetchTokenUsage}
-                      isRefreshingTokens={isRefreshingTokens}
-                      generateTokenReport={generateTokenReport}
-                      isDownloading={isDownloading}
-                      deepResearchReport={deepResearchReport}
-                      setDeepResearchReport={setDeepResearchReport}
-                      selectedEngine={selectedEngine}
-                      setSelectedEngine={setSelectedEngine}
-                      engineConfig={engineConfig}
-                      setEngineConfig={setEngineConfig}
-                      suitabilityResult={suitabilityResult}
-                      setSuitabilityResult={setSuitabilityResult}
-                      isCheckingSuitability={isCheckingSuitability}
-                      handleCheckSuitability={handleCheckSuitability}
-                      multiSuitabilityResults={multiSuitabilityResults}
-                      masterResumes={masterResumes}
-                      selectedResumeId={selectedResumeId}
-                      recruiterSimulationMode={recruiterSimulationMode}
-                      setRecruiterSimulationMode={setRecruiterSimulationMode}
-                      fastMode={fastMode}
-                      setFastMode={setFastMode}
-                      mode={mode as any}
-                      setMode={setMode as any}
-                      showModeInfo={showModeInfo}
-                      setShowModeInfo={setShowModeInfo}
-                      results={results}
-                      activeAudience={activeAudience}
-                      usePremiumLoader={usePremiumLoader}
-                      setUsePremiumLoader={setUsePremiumLoader}
-                      isFetchingJob={isFetchingJob}
-                      jdTextareaRef={jdTextareaRef}
-                      isCompanyDropdownOpen={isCompanyDropdownOpen}
-                      setIsCompanyDropdownOpen={setIsCompanyDropdownOpen}
-                      companyDropdownRef={companyDropdownRef}
-                      TARGET_COMPANIES={TARGET_COMPANIES}
-                      MODE_DESCRIPTIONS={MODE_DESCRIPTIONS}
-                      onOpenWorkspace={() => setShowResultWorkspace(true)}
-                    />
-                </motion.div>
-              )}
+                  <section className={`rounded-3xl p-6 shadow-2xl transition-all duration-500 ${isDarkMode ? 'glass-card-dark' : 'glass-card'}`}>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className={`p-2 rounded-xl ${isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50'}`}>
+                          <Zap className="w-5 h-5 text-emerald-500" />
+                        </div>
+                        <div>
+                          <h2 className="font-bold text-lg tracking-tight text-white">Resume Optimizer</h2>
+                          <p className="text-[10px] opacity-70 uppercase font-black tracking-widest text-emerald-400">Tailored Content Engine</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={clearInputs}
+                          className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-white/5 text-white/40 hover:text-red-400' : 'hover:bg-black/5 text-black/40 hover:text-red-600'}`}
+                          title="Clear all inputs"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                      <div className="space-y-8">
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="space-y-8"
+                        >
+                          {/* Targeting Content */}
+                          <div className="space-y-4">
+                            <h3 className="text-xs font-bold uppercase tracking-widest text-white/80">1. Targeting</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Role *</label>
+                                <div className="relative">
+                                  <Target className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-60 text-white`} />
+                                  <input 
+                                    type="text"
+                                    placeholder="e.g. Senior Azure Cloud Architect"
+                                    className={`w-full pl-10 pr-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                                      isDarkMode ? 'bg-white/10 border-white/20 text-white placeholder:text-white/40' : 'bg-white/50 border-black/10 text-black placeholder:text-black/40'
+                                    } backdrop-blur-sm shadow-inner`}
+                                    value={targetRole}
+                                    onChange={(e) => setTargetRole(e.target.value)}
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Company Name *</label>
+                                <div className="relative">
+                                  <Building className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-60 text-white`} />
+                                  <input 
+                                    type="text"
+                                    placeholder="e.g. Microsoft"
+                                    className={`w-full pl-10 pr-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                                      isDarkMode ? 'bg-white/10 border-white/20 text-white placeholder:text-white/40' : 'bg-white/50 border-black/10 text-black placeholder:text-black/40'
+                                    } backdrop-blur-sm shadow-inner`}
+                                    value={companyName}
+                                    onChange={(e) => setCompanyName(e.target.value)}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Analysis Content */}
+                          <div className="space-y-4">
+                            <h3 className="text-xs font-bold uppercase tracking-widest text-white/80">2. Job Analysis</h3>
+                            {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (
+                              <div className={`p-4 rounded-xl border flex items-center justify-between ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                <div>
+                                  <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                                  <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>Based on current JD</p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  {results[activeAudience].baseline_score !== undefined && (
+                                    <div className="text-right">
+                                      <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
+                                      <span className={`font-bold text-lg opacity-60 line-through`}>{results[activeAudience].baseline_score}%</span>
+                                    </div>
+                                  )}
+                                  <div className="text-right">
+                                    <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
+                                    <span className={`font-bold text-2xl text-emerald-500`}>{results[activeAudience].match_score}%</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            <div className="relative" ref={audienceDropdownRef}>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Audiences (Multi-select)</label>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAutoSelectAudiences();
+                                  }}
+                                  disabled={isAutoSelectingAudiences}
+                                  className="py-1 px-2 text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-500 rounded hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                                >
+                                  {isAutoSelectingAudiences ? 'Selecting...' : 'Auto-Select'}
+                                </button>
+                              </div>
+                              <button
+                                onClick={() => setIsAudienceDropdownOpen(!isAudienceDropdownOpen)}
+                                className={`w-full px-3 py-2 text-xs border rounded-lg flex items-center justify-between transition-all ${
+                                  isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/10'
+                                }`}
+                              >
+                                <span className="truncate flex items-center gap-2">
+                                  {selectedAudiences.length > 0
+                                    ? (
+                                      <>
+                                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">Auto</span>
+                                        {selectedAudiences.map(id => id === 'custom' ? (customAudience || 'Custom Persona') : (AUDIENCES.find(a => a.id === id)?.label || id)).join(', ')}
+                                      </>
+                                    )
+                                    : 'Select audiences...'}
+                                </span>
+                                <ChevronDown className="w-4 h-4 opacity-50" />
+                              </button>
+                              {isAudienceDropdownOpen && (
+                                <div className={`absolute z-50 w-full mt-1 border rounded-lg shadow-lg max-h-60 overflow-y-auto ${
+                                  isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/5'
+                                }`}>
+                                  <div className="p-2 border-b border-white/10 flex gap-2">
+                                    <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedAudiences(['microsoft']);
+                                      }}
+                                      className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-500 rounded hover:bg-emerald-500/20 transition-colors"
+                >
+                                      Reset
+                                    </button>
+                                    <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedAudiences([]);
+                                      }}
+                                      className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-red-500/10 text-red-500 rounded hover:bg-red-500/20 transition-colors"
+                                    >
+                                      Clear
+                                    </button>
+                                  </div>
+                                  {AUDIENCES.map((audience) => (
+                                    <button
+                                      key={audience.id}
+                                      onClick={() => toggleAudience(audience.id)}
+                                      className={`w-full px-3 py-2 text-xs flex items-center gap-2 ${
+                                        selectedAudiences.includes(audience.id)
+                                          ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
+                                          : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
+                                      }`}
+                                    >
+                                      <span>{audience.icon}</span>
+                                      {audience.label}
+                                      {selectedAudiences.includes(audience.id) && <CheckCircle2 className="w-4 h-4 ml-auto" />}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {selectedAudiences.includes('custom') && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: -10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="mt-3"
+                                >
+                                  <input 
+                                    type="text"
+                                    placeholder="Enter custom persona/audience (e.g., Frontend Lead)..."
+                                    value={customAudience}
+                                    onChange={(e) => setCustomAudience(e.target.value)}
+                                    className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                                      isDarkMode ? 'bg-white/5 border-white/10 text-white placeholder:text-white/40' : 'bg-[#F9F9F9] border-black/10 text-black'
+                                    }`}
+                                  />
+                                </motion.div>
+                              )}
+                            </div>
+                            
+                            <div>
+                              <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Job Description / URL</label>
+                              <div className="space-y-3">
+                                <div className="relative group">
+                                  <input 
+                                    type="url"
+                                    placeholder="Paste Job Posting URL here"
+                                    className={`w-full px-4 py-3 text-sm border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all pr-12 ${
+                                      isDarkMode ? 'bg-white/10 border-white/20 text-white placeholder:text-white/40' : 'bg-[#F9F9F9] border-black/10 text-black'
+                                    }`}
+                                    value={jobUrl}
+                                    onChange={(e) => setJobUrl(e.target.value)}
+                                  />
+                                  {isFetchingJob && (
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                      <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                                    </div>
+                                  )}
+                                </div>
+                                <textarea 
+                                  ref={jdTextareaRef}
+                                  placeholder="Or paste the full job description text here..."
+                                  className={`w-full h-32 p-4 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-y text-sm leading-relaxed ${
+                                    isDarkMode ? 'bg-white/10 border-white/20 text-white placeholder:text-white/40' : 'bg-[#F9F9F9] border-black/10 text-black'
+                                  }`}
+                                  value={jobDescription}
+                                  onChange={(e) => setJobDescription(e.target.value)}
+                                />
+                                
+                                <div
+                                role="button"
+                                tabIndex={isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText ? -1 : 0}
+                                onClick={() => {
+                                  if (isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText) return;
+                                  handleCheckSuitability();
+                                }}
+                                className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border ${
+                                  isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText
+                                    ? (isDarkMode ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed' : 'bg-black/5 border-black/10 text-black/30 cursor-not-allowed')
+                                    : (isDarkMode ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/40 shadow-lg shadow-indigo-500/20' : 'bg-white border-blue-200 text-blue-600 hover:bg-blue-50 shadow-md shadow-blue-500/10')
+                                }`}
+                              >
+                                  {isCheckingSuitability ? (
+                                    <div className="flex items-center gap-2">
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          isSuitabilityCancelledRef.current = true;
+                                          setIsCheckingSuitability(false);
+                                        }}
+                                        className="px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded text-[9px] font-black uppercase transition-colors"
+                                      >
+                                        Stop
+                                      </button>
+                                      <div className="flex items-center gap-1.5">
+                                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                        Evaluating Fit...
+                                      </div>
+                                    </div>
+                                  ) : suitabilityResult ? (
+                                    <>
+                                      <div className={`px-1.5 py-0.5 rounded text-[10px] font-black mr-1 ${
+                                        suitabilityResult.matchScore >= 80 ? 'bg-emerald-500 text-white' :
+                                        suitabilityResult.matchScore >= 60 ? 'bg-amber-500 text-white' :
+                                        'bg-red-500 text-white'
+                                      }`}>
+                                        {suitabilityResult.matchScore}%
+                                      </div>
+                                      Check All Resumes
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ShieldCheck className="w-4 h-4" />
+                                      Check All Resumes for Fit
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Nexus Pro Advanced Features */}
+                          <div className={`rounded-xl border p-5 transition-all shadow-sm ${isDarkMode ? 'bg-purple-500/5 border-purple-500/20' : 'bg-purple-50/50 border-purple-200'}`}>
+                            <div className="flex items-center gap-2 mb-4">
+                              <Sparkles className="w-4 h-4 text-purple-500" />
+                              <span className="text-[10px] font-black uppercase tracking-widest text-purple-600 dark:text-purple-400">Advanced "Nexus Pro" Intelligence</span>
+                            </div>
+
+                            <div className="space-y-6">
+                              {/* Corporate DNA Selector */}
+                              <div className="relative" ref={companyDropdownRef}>
+                                <label className={`block text-[10px] font-black uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Corporate DNA Tailoring</label>
+                                <button
+                                  onClick={() => setIsCompanyDropdownOpen(!isCompanyDropdownOpen)}
+                                  className={`w-full px-4 py-3 text-xs border rounded-xl flex items-center justify-between transition-all ${
+                                    isDarkMode ? 'bg-black border-white/10 text-white hover:bg-black/80' : 'bg-white border-black/5 text-black hover:bg-white/90'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-lg">{TARGET_COMPANIES.find(c => c.id === targetCompany)?.icon}</span>
+                                    <div className="text-left">
+                                      <div className="font-bold">{TARGET_COMPANIES.find(c => c.id === targetCompany)?.label}</div>
+                                      <div className="text-[9px] opacity-40 font-medium tracking-tight">Signal: {TARGET_COMPANIES.find(c => c.id === targetCompany)?.signal}</div>
+                                    </div>
+                                  </div>
+                                  <ChevronDown className={`w-4 h-4 transition-transform ${isCompanyDropdownOpen ? 'rotate-180' : ''}`} />
+                                </button>
+                                
+                                <AnimatePresence>
+                                  {isCompanyDropdownOpen && (
+                                    <motion.div
+                                      initial={{ opacity: 0, y: -10 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      exit={{ opacity: 0, y: -10 }}
+                                      className={`absolute left-0 right-0 mt-2 p-2 rounded-xl border shadow-2xl z-50 max-h-72 overflow-y-auto custom-scrollbar ${
+                                        isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/5'
+                                      }`}
+                                    >
+                                      {TARGET_COMPANIES.map((company) => (
+                                        <button
+                                          key={company.id}
+                                          onClick={() => {
+                                            setTargetCompany(company.id);
+                                            setIsCompanyDropdownOpen(false);
+                                          }}
+                                          className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all text-left ${
+                                            targetCompany === company.id 
+                                              ? (isDarkMode ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600')
+                                              : (isDarkMode ? 'bg-black hover:bg-white/5 text-white/70' : 'bg-white hover:bg-black/5 text-black/70')
+                                          }`}
+                                        >
+                                          <span className="text-xl shrink-0">{company.icon}</span>
+                                          <div>
+                                            <div className="text-xs font-bold">{company.label}</div>
+                                            <div className="text-[9px] opacity-50 font-medium">Signal: {company.signal}</div>
+                                          </div>
+                                          {targetCompany === company.id && <Check className="w-3.5 h-3.5 ml-auto" />}
+                                        </button>
+                                      ))}
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </div>
+
+                              {/* Brain Dump Input - Hidden for now */}
+                              <div className="space-y-2 hidden">
+                                <div className="flex items-center justify-between">
+                                  <label className={`block text-[10px] font-black uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>The "Brain Dump" Context</label>
+                                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+                                    <span className="text-[8px] font-black uppercase text-purple-500">Long Context Mode</span>
+                                  </div>
+                                </div>
+                                <p className="text-[9px] opacity-40 font-medium leading-tight mb-2 italic">Paste raw annual reviews, GitHub logs, or unstructured notes here. AI will sift for gold.</p>
+                                <textarea
+                                  placeholder="Dump unstructured data (reviews, wikis, logs)..."
+                                  className={`w-full h-28 p-4 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all resize-none leading-relaxed ${
+                                    isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                                  }`}
+                                  value={brainDump}
+                                  onChange={(e) => setBrainDump(e.target.value)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Settings Content */}
+                          <div className="space-y-4">
+                            <h3 className="text-xs font-bold uppercase tracking-widest opacity-50">3. Optimization Settings</h3>
+                            
+                            <div className="flex items-center justify-between mb-4 border-b border-black/5 dark:border-white/5 pb-4">
+                              <label className={`block text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Loader Visualization</label>
+                              <div className="flex rounded-md overflow-hidden border border-black/10 dark:border-white/10 text-xs font-bold uppercase tracking-widest">
+                                <button
+                                  type="button"
+                                  onClick={() => setUsePremiumLoader(true)}
+                                  className={`px-3 py-1 transition-colors ${usePremiumLoader ? 'bg-primary text-primary-foreground' : (isDarkMode ? 'bg-black text-white/50' : 'bg-white text-black/50')}`}
+                                >
+                                  Enterprise
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setUsePremiumLoader(false)}
+                                  className={`px-3 py-1 transition-colors ${!usePremiumLoader ? 'bg-primary text-primary-foreground' : (isDarkMode ? 'bg-black text-white/50' : 'bg-white text-black/50')}`}
+                                >
+                                  Cloud
+                                </button>
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className={`block text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Optimization Mode</label>
+                                <button 
+                                  onMouseEnter={() => setShowModeInfo(true)}
+                                  onMouseLeave={() => setShowModeInfo(false)}
+                                  className="text-emerald-500 hover:text-emerald-400 transition-colors"
+                                >
+                                  <Info className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <AnimatePresence>
+                                {showModeInfo && (
+                                  <motion.div 
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    className={`mb-3 p-3 rounded-lg text-xs leading-relaxed border ${
+                                      isDarkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-200' : 'bg-emerald-50 border-emerald-100 text-emerald-800'
+                                    }`}
+                                  >
+                                    <p className="font-bold mb-1">Mode Details:</p>
+                                    <ul className="space-y-1">
+                                      <li><span className="font-semibold">Conservative:</span> {MODE_DESCRIPTIONS.conservative}</li>
+                                      <li><span className="font-semibold">Balanced:</span> {MODE_DESCRIPTIONS.balanced}</li>
+                                      <li><span className="font-semibold">Aggressive:</span> {MODE_DESCRIPTIONS.aggressive}</li>
+                                    </ul>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                              <div className="grid grid-cols-3 gap-2">
+                                {(['conservative', 'balanced', 'aggressive'] as const).map((m) => (
+                                  <button
+                                    key={m}
+                                    onClick={() => setMode(m)}
+                                    className={`py-2 text-[11px] font-bold rounded-lg border transition-all capitalize tracking-tight ${
+                                      mode === m 
+                                        ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500' : 'bg-black text-white border-black')
+                                        : (isDarkMode ? 'bg-white/5 text-white/60 border-white/10 hover:border-white/30' : 'bg-white text-black/60 border-black/5 hover:border-black/20')
+                                    }`}
+                                  >
+                                    {m}
+                                  </button>
+                                ))}
+                              </div>
+                              
+                              <div className="mt-4 space-y-2">
+                                <button
+                                  onClick={() => setRecruiterSimulationMode(!recruiterSimulationMode)}
+                                  className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-between border transition-all ${
+                                    recruiterSimulationMode
+                                      ? (isDarkMode ? 'bg-red-500/20 border-red-500 text-red-200' : 'bg-red-50 border-red-500 text-red-800')
+                                      : (isDarkMode ? 'glass-panel border-white/10 text-white/60' : 'glass-panel-light border-black/5 text-black/60')
+                                  }`}
+                                >
+                                  Recruiter Simulation Mode
+                                  <div className={`w-3 h-3 rounded-full ${recruiterSimulationMode ? 'bg-red-500' : 'bg-gray-400'}`} />
+                                </button>
+                                
+                                <label className="flex items-center gap-2 mt-4 cursor-pointer">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={fastMode} 
+                                    onChange={(e) => setFastMode(e.target.checked)}
+                                    className="accent-emerald-500"
+                                  />
+                                  <span className="text-[11px] font-bold">Fast Mode (Use Flash Model)</span>
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* AI Engine Settings */}
+                          <div className={`rounded-xl border p-5 transition-all shadow-sm ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                            <div className="flex items-center gap-2 mb-4">
+                              <Cpu className="w-4 h-4 text-emerald-500" />
+                              <span className="text-[10px] font-black uppercase tracking-widest">AI Engine Configuration</span>
+                            </div>
+                            
+                            <div className="space-y-6">
+                              <div>
+                                <label className="block text-[10px] font-black uppercase tracking-widest mb-3 opacity-50">Select Engine</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {(['gemini', 'openai', 'hybrid-gemini', 'hybrid-openai'] as const).map((eng) => (
+                                    <button
+                                      key={eng}
+                                      onClick={() => setSelectedEngine(eng)}
+                                      className={`py-2 text-[9px] font-black rounded-lg border transition-all capitalize tracking-widest ${
+                                        selectedEngine === eng 
+                                          ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500' : 'bg-black text-white border-black')
+                                          : (isDarkMode ? 'bg-white/5 text-white/40 border-white/10' : 'bg-white text-black/40 border-black/5')
+                                      }`}
+                                    >
+                                      {eng.replace('hybrid-', 'Hybrid ')}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="space-y-4">
+                                {!selectedEngine.startsWith('hybrid') ? (
+                                  <div className="relative">
+                                    <select 
+                                      className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 appearance-none ${
+                                        isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/10'
+                                      }`}
+                                      value={engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'].model}
+                                      onChange={(e) => setEngineConfig({
+                                        ...engineConfig,
+                                        [selectedEngine === 'gemini' ? 'gemini' : 'openai']: { ...engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'], model: e.target.value }
+                                      })}
+                                    >
+                                      {selectedEngine === 'gemini' && (
+                                        <>
+                                          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                                          <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                                          <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                                        </>
+                                      )}
+                                      {selectedEngine === 'openai' && (
+                                        <>
+                                          <option value="gpt-4o">GPT-4o</option>
+                                          <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                          <option value="o3-mini">OpenAI o3-mini</option>
+                                        </>
+                                      )}
+                                    </select>
+                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 opacity-40 pointer-events-none" />
+                                  </div>
+                                ) : (
+                                  <div className={`p-3 rounded-xl border flex items-center gap-3 ${isDarkMode ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}>
+                                    <Zap className="w-4 h-4 text-emerald-500 shrink-0" />
+                                    <p className="text-[10px] opacity-70 leading-relaxed font-medium">Smart routing enabled: Using Gemini for analysis and OpenAI for tone optimization.</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+
+                        </motion.div>
+                      </div>
+                          
+                          {Object.keys(multiSuitabilityResults).length > 1 && (
+                            <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
+                              {masterResumes.map(resume => {
+                                const result = multiSuitabilityResults[resume.id];
+                                if (!result) return null;
+                                const isSelected = selectedResumeId === resume.id;
+                                return (
+                                  <button
+                                    key={resume.id}
+                                    onClick={() => setSuitabilityResult(result)}
+                                    className={`p-2 rounded-lg border text-left transition-all ${
+                                      suitabilityResult === result
+                                        ? (isDarkMode ? 'bg-blue-500/20 border-blue-500/50' : 'bg-blue-50 border-blue-200')
+                                        : (isDarkMode ? 'bg-black/20 border-white/5 hover:border-white/10' : 'bg-slate-50 border-slate-200 hover:border-slate-300')
+                                    }`}
+                                  >
+                                    <p className={`text-[9px] font-black uppercase truncate ${isDarkMode ? 'text-white/40' : 'text-slate-500'}`}>
+                                      {resume.name}
+                                    </p>
+                                    <div className="flex items-center justify-between mt-0.5">
+                                      <span className={`text-xs font-bold ${
+                                        result.matchScore >= 80 ? 'text-emerald-500' :
+                                        result.matchScore >= 60 ? 'text-amber-500' :
+                                        'text-red-500'
+                                      }`}>
+                                        {result.matchScore}%
+                                      </span>
+                                      {suitabilityResult === result && (
+                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                      )}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {suitabilityResult && (
+                              <div className={`mt-3 p-4 rounded-xl border ${
+                                suitabilityResult.verdict === 'Strong Match' 
+                                  ? (isDarkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200')
+                                  : suitabilityResult.verdict === 'Stretch Role'
+                                    ? (isDarkMode ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200')
+                                    : (isDarkMode ? 'bg-red-500/10 border-red-500/20' : 'bg-red-50 border-red-200')
+                              }`}>
+                                <div className="flex items-center justify-between mb-3">
+                                  <div className="flex items-center gap-2">
+                                    {suitabilityResult.verdict === 'Strong Match' && <CheckCircle2 className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />}
+                                    {suitabilityResult.verdict === 'Stretch Role' && <AlertCircle className={`w-5 h-5 ${isDarkMode ? 'text-amber-400' : 'text-amber-600'}`} />}
+                                    {suitabilityResult.verdict === 'Not Recommended' && <AlertCircle className={`w-5 h-5 ${isDarkMode ? 'text-red-400' : 'text-red-600'}`} />}
+                                    <span className={`font-bold ${
+                                      suitabilityResult.verdict === 'Strong Match' ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-700') :
+                                      suitabilityResult.verdict === 'Stretch Role' ? (isDarkMode ? 'text-amber-400' : 'text-amber-700') :
+                                      (isDarkMode ? 'text-red-400' : 'text-red-700')
+                                    }`}>
+                                      {suitabilityResult.verdict}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <div className={`text-sm font-bold px-2 py-1 rounded-md ${
+                                      suitabilityResult.matchScore >= 80 ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' :
+                                      suitabilityResult.matchScore >= 60 ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' :
+                                      'bg-red-500/20 text-red-600 dark:text-red-400'
+                                    }`}>
+                                      {suitabilityResult.matchScore}% Match
+                                    </div>
+                                    {suitabilityResult.matchScore >= 85 && (
+                                      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white text-[9px] font-black px-2 py-1 rounded-md shadow-lg animate-pulse flex items-center gap-1">
+                                        <Zap className="w-2.5 h-2.5 fill-current" />
+                                        FAANG READY
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                
+                                <p className={`text-sm mb-3 ${isDarkMode ? 'text-white/80' : 'text-black/80'}`}>
+                                  {suitabilityResult.reasoning}
+                                </p>
+
+                                {suitabilityResult.dealbreakers.length > 0 && (
+                                  <div className="mb-3">
+                                    <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>Dealbreakers</span>
+                                    <ul className="mt-1 space-y-1">
+                                      {suitabilityResult.dealbreakers.map((db, i) => (
+                                        <li key={i} className={`text-xs flex items-start gap-1.5 ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
+                                          <span className="text-red-500 mt-0.5"></span> {db}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {suitabilityResult.strengths.length > 0 && (
+                                  <div className="mb-4">
+                                    <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>Key Strengths</span>
+                                    <ul className="mt-1 space-y-1">
+                                      {suitabilityResult.strengths.map((str, i) => (
+                                        <li key={i} className={`text-xs flex items-start gap-1.5 ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
+                                          <span className="text-emerald-500 mt-0.5"></span> {str}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {suitabilityResult.critique && suitabilityResult.critique.length > 0 && (
+                                  <div className="border-t border-black/10 dark:border-white/10 pt-4 mt-2">
+                                    <div className="flex items-center gap-2 mb-3">
+                                      <ShieldAlert className="w-4 h-4 text-red-500" />
+                                      <span className="text-xs font-black uppercase tracking-widest text-red-500">Expert Audit (Red Team)</span>
+                                      {suitabilityResult.readinessScore !== undefined && (
+                                         <span className="ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded">
+                                           Ready: {suitabilityResult.readinessScore}%
+                                         </span>
+                                      )}
+                                    </div>
+                                    <div className="space-y-3">
+                                      {suitabilityResult.critique.map((item, i) => (
+                                        <div key={i} className="flex gap-2">
+                                          <div className={`w-1 shrink-0 rounded-full mt-1.5 h-1.5 ${
+                                            item.severity === 'high' ? 'bg-red-500' :
+                                            item.severity === 'medium' ? 'bg-orange-500' :
+                                            'bg-blue-50'
+                                          }`} />
+                                          <div>
+                                            <div className="flex items-center gap-1.5 mb-0.5">
+                                               <span className="text-[9px] font-bold uppercase opacity-50">{item.category}</span>
+                                            </div>
+                                            <p className={`text-[10px] leading-relaxed ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
+                                              {item.feedback}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                          {/* Custom AI Optimization Prompt */}
+                          <div className="mt-4">
+                            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Custom AI Optimization Prompt (Optional)</label>
+                            <textarea 
+                              placeholder="Add your own instructions for the AI (e.g., 'Focus more on my cloud architecture experience' or 'Use a more formal British English tone')"
+                              value={customPrompt}
+                              onChange={(e) => setCustomPrompt(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && e.ctrlKey) {
+                                  e.preventDefault();
+                                  setCustomPrompt(prev => prev + '\n');
+                                }
+                              }}
+                              rows={3}
+                              className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none text-sm ${
+                                isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                              }`}
+                            />
+                            <p className="text-[10px] opacity-40 mt-1">These instructions will be given high priority during the resume optimization process.</p>
+                          </div>
+                        
+                        {/* Optimize Button Section */}
+                          <div className="pt-4 border-t border-black/5 dark:border-white/10">
+                            <div className="flex gap-3">
+
+                              <button
+                                onClick={() => {
+                                  console.log("[Nexus AI] Optimize Button Clicked");
+                                  if (isOptimizing) {
+                                    handleStop();
+                                    return;
+                                  }
+                                  if (isExtracting) return;
+                                  handleOptimize();
+                                }}
+                                disabled={isExtracting}
+                                className={`relative overflow-hidden flex-1 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                                  isOptimizing 
+                                    ? 'bg-red-500/10 border border-red-500/20 text-red-500 shadow-red-500/5' 
+                                    : showOptimizeSuccess
+                                      ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 transition-all scale-105'
+                                      : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20'
+                                }`}
+                              >
+                                {isOptimizing && (
+                                  <motion.div 
+                                    className="absolute inset-x-0 bottom-0 h-1 omni-progress-bar pointer-events-none"
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${optimizationProgress}%` }}
+                                    transition={{ ease: "linear", duration: 0.5 }}
+                                  />
+                                )}
+                                <div className="relative z-10 flex items-center justify-center gap-2">
+                                  {isOptimizing ? (
+                                    <>
+                                      <Square className="w-5 h-5 fill-current animate-pulse" />
+                                      Stop Optimization ({Math.round(optimizationProgress)}%)
+                                    </>
+                                  ) : showOptimizeSuccess ? (
+                                    <>
+                                      <CheckCircle2 className="w-5 h-5" />
+                                      Optimization Ready!
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Zap className="w-5 h-5" />
+                                      Optimize Resume
+                                    </>
+                                  )}
+                                </div>
+                              </button>
+                            </div>
+
+                            {/* Token Usage Display */}
+                            <div className={`mt-4 p-3 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
+                              <div className="flex justify-between items-center mb-3">
+                                <div className="flex items-center gap-2 w-full">
+                                  <Cpu className="w-3 h-3 opacity-50" />
+                                  <div className="flex items-center justify-between w-full">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Monitor</span>
+                                      <button 
+                                        onClick={fetchTokenUsage}
+                                        disabled={isRefreshingTokens}
+                                        className={`p-1 rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors ${isRefreshingTokens ? 'animate-spin opacity-50' : 'opacity-50 hover:opacity-100'}`}
+                                        title="Refresh Token Usage"
+                                      >
+                                        <RefreshCw className="w-2.5 h-2.5" />
+                                      </button>
+                                    </div>
+                                    <button 
+                                      onClick={generateTokenReport}
+                                      disabled={isDownloading}
+                                      className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 transition-colors"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                      Generate Report
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Deep Research Report */}
+                              <AnimatePresence>
+                                {deepResearchReport && (
+                                  <motion.div 
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    className="mt-4"
+                                  >
+                                    <div className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-purple-900/10 border-purple-500/20' : 'bg-purple-50 border-purple-200'}`}>
+                                      <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-2">
+                                          <Sparkles className="w-4 h-4 text-purple-500" />
+                                          <h4 className="text-xs font-black uppercase tracking-widest text-purple-600 dark:text-purple-400">Deep Research Intelligence Report</h4>
+                                        </div>
+                                        <button 
+                                          onClick={() => setDeepResearchReport(null)}
+                                          className="text-[10px] font-bold uppercase opacity-40 hover:opacity-100"
+                                        >
+                                          Dismiss
+                                        </button>
+                                      </div>
+                                      <div className={`text-xs leading-relaxed space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2 ${isDarkMode ? 'text-white/80' : 'text-black/80'}`}>
+                                        <div className="markdown-body">
+                                          <Markdown>{deepResearchReport}</Markdown>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                              <div className="flex justify-end mb-2">
+                                <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest text-right">
+                                  {selectedEngine.includes('hybrid') ? 'Hybrid Mode' : `Active Engine: ${engineConfig.gemini.model}`}
+                                  <br />
+                                  <span className="opacity-40 text-[7px]">
+                                    {engineConfig.gemini.model === 'gemini-3.1-pro-preview' && 'Fallback Chain: 3.5 Flash → 3.1 Flash Lite'}
+                                    {engineConfig.gemini.model === 'gemini-3.5-flash' && 'Fallback Chain: 3.1 Flash Lite'}
+                                    {engineConfig.gemini.model === 'gemini-3.1-flash-lite' && 'Fallback Chain: 3.5 Flash'}
+                                  </span>
+                                </span>
+                              </div>
+                              
+                              <div className="space-y-3">
+                                {(selectedEngine === 'gemini' || selectedEngine.startsWith('hybrid')) && (
+                                  <div className={selectedEngine.startsWith('hybrid') ? 'pb-2 border-b border-black/5 dark:border-white/5' : ''}>
+                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 block mb-1">Stage 1: Gemini Analysis</span>}
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.gemini.input / 1000).toFixed(1)}k</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.gemini.output / 1000).toFixed(1)}k</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {(selectedEngine === 'openai' || selectedEngine === 'hybrid-openai') && (
+                                  <div className="pt-2">
+                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest text-blue-500 block mb-1">Stage 3: OpenAI Generation</span>}
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.input / 1000).toFixed(1)}k</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.output / 1000).toFixed(1)}k</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Strategic Insights - Moved inside the build section for direct feedback */}
+                          {Object.keys(results).length > 0 && activeAudience && results[activeAudience] && (
+                            <div className="mt-6 rounded-xl border overflow-hidden transition-all duration-300 bg-emerald-500/5 border-emerald-500/10">
+                              <div className="p-4 border-b border-white/10 flex items-center gap-3">
+                                <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-500">
+                                  <Zap className="w-5 h-5" />
+                                </div>
+                                <h3 className="font-bold text-sm">Optimization Insights</h3>
+                              </div>
+                              <div className="p-4 text-xs leading-relaxed opacity-80 space-y-4">
+                                {results[activeAudience].match_score !== undefined && (
+                                  <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
+                                    <span className="font-bold">Match Score</span>
+                                    <span className={`font-bold text-sm ${results[activeAudience].match_score >= 80 ? 'text-emerald-500' : results[activeAudience].match_score >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
+                                      {results[activeAudience].match_score}%
+                                    </span>
+                                  </div>
+                                )}
+                                
+                                {Array.isArray(results[activeAudience].rejection_reasons) && results[activeAudience].rejection_reasons!.length > 0 && (
+                                  <div className="space-y-2">
+                                    <h4 className="font-bold text-red-500 flex items-center gap-2">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                                      Rejection Risks
+                                    </h4>
+                                    <ul className="list-disc pl-5 space-y-1 text-red-400">
+                                      {results[activeAudience].rejection_reasons!.map((reason, i) => (
+                                        <li key={i}>{reason}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {Array.isArray(results[activeAudience].improvement_notes) && results[activeAudience].improvement_notes!.length > 0 && (
+                                  <div className="space-y-2">
+                                    <h4 className="font-bold text-emerald-500 flex items-center gap-2">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                      Improvements
+                                    </h4>
+                                    <ul className="list-disc pl-5 space-y-1">
+                                      {results[activeAudience].improvement_notes!.map((note, i) => (
+                                        <li key={i}>{note}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {results[activeAudience]._intermediateData?.jdKeywords && (
+                                  <div className="space-y-3 mt-4 pt-4 border-t border-black/10 dark:border-white/10">
+                                    <h4 className="font-bold text-[10px] uppercase tracking-widest opacity-60">Target Keyword Registry</h4>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {results[activeAudience]._intermediateData.jdKeywords.slice(0, 15).map((kw: string, i: number) => {
+                                        const isFound = resumeText.toLowerCase().includes(kw.toLowerCase());
+                                        return (
+                                          <span 
+                                            key={i} 
+                                            className={`text-[9px] px-2 py-0.5 rounded-full border font-bold transition-all ${
+                                              isFound 
+                                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500' 
+                                                : 'bg-white/5 border-white/5 text-white/30'
+                                            }`}
+                                          >
+                                            {kw}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                      </section>
+
+                      {/* Power User Tips */}
+                      <div className={`mt-6 p-4 rounded-xl border border-dashed flex items-start gap-3 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/10'}`}>
+                        <div className={`p-2 rounded-lg shrink-0 ${isDarkMode ? 'bg-purple-500/10 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-[10px] font-black uppercase tracking-widest mb-1">Nexus Pro-Tip</h4>
+                          <p className="text-[11px] opacity-60 leading-relaxed font-medium">
+                            {(() => {
+                              const tips = [
+                                "Use the Google XYZ formula: 'Accomplished [X] as measured by [Y], by doing [Z]'.",
+                                "FAANG recruiters spend ~6 seconds on the first pass. Keep bullets punchy and metric-heavy.",
+                                "Ensure your 'Skills' section matches the JD keywords in our Registry exactly for high ATS score.",
+                                "Leadership is not just for managers. Show how you mentored peers or led cross-functional efforts.",
+                                "Cloud projects? Always include specific scale metrics (e.g., 'Serving 5M+ DAU' or 'Reduced latency by 40%')."
+                              ];
+                              return tips[Math.floor((Date.now() / 86400000) % tips.length)]; // Daily rotation
+                            })()}
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
 
                 {activeTab === 'profile' && (
                 <motion.div 
@@ -4031,7 +4781,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       )}
 
         {/* Vertical Resize Handle (Left/Right) */}
-          {!isFocusMode && activeTab !== 'tools' && activeTab !== 'dashboard' && activeTab !== 'build' && activeTab !== 'profile' && (
+          {!isFocusMode && activeTab !== 'tools' && (
             <div 
               onMouseDown={handleMouseDownDivider}
               onDoubleClick={resetLayout}
@@ -4042,8 +4792,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           )}
 
           {/* Result Section */}
-          {(activeTab === 'tools' || activeTab === 'dashboard') && (
-            <div className={`flex-1 min-w-0 flex flex-col h-full overflow-hidden border-l border-black/5 dark:border-white/10 shadow-2xl relative z-20 ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel ${isMobile ? (isFocusMode ? 'h-full flex-1' : 'h-1/2 sm:h-full') : 'flex'}`}>
+          <div className={`flex-1 min-w-0 flex flex-col h-full overflow-hidden border-l border-black/5 dark:border-white/10 shadow-2xl relative z-20 ${isDarkMode ? 'glass-panel' : 'glass-panel-light'} gemini-glow-panel ${isMobile ? (isFocusMode ? 'h-full flex-1' : 'h-1/2 sm:h-full') : 'flex'}`}>
             <AnimatePresence mode="wait">
               {activeTab === 'tools' ? (
                 <motion.div 
@@ -4136,35 +4885,23 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     )}
                   </div>
                 </motion.div>
-              ) : activeTab === 'dashboard' ? (
-                <motion.div
-                  key="dashboard-pane"
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 1.02 }}
-                  className="h-full flex flex-col overflow-hidden"
-                >
-                  <DashboardHome 
-                    isDarkMode={isDarkMode}
-                    masterResumes={masterResumes}
-                    selectedResumeId={selectedResumeId}
-                    onSelectResume={handleSetActiveResume}
-                    isSyncing={isSavingProfile}
-                    isDownloading={isDownloading}
-                    results={results}
-                    activeAudience={activeAudience}
-                    mode={((mode as any) === 'hybrid' ? 'hybrid' : ((mode as any) === 'editorial' ? 'openai' : 'gemini')) as any}
-                    isDriveConnected={isDriveConnected}
-                    user={user}
-                    onOpenResultWorkspace={handleOpenResultWorkspace}
-                    onDownloadPDF={handleDownloadPDFForArtifact}
-                    onDownloadDOCX={handleDownloadDOCXForArtifact}
-                    onDownloadJSON={handleDownloadJSONForArtifact}
-                    onSaveToDrive={handleSaveToDriveForArtifact}
-                    onOpenOptimization={handleOpenOptimizationInSession}
-                  />
-                </motion.div>
-              ) : (Object.keys(results).length === 0 && !isOptimizing && activeTab !== 'build') ? (
+              ) : isOptimizing ? (
+                <div className="w-full h-full overflow-y-auto custom-scrollbar rounded-2xl flex flex-col">
+                  {usePremiumLoader ? (
+                    <PremiumEnterpriseLoader 
+                      isLoading={isOptimizing}
+                      progress={optimizationProgress}
+                      currentStage={optimizationStatus}
+                    />
+                  ) : (
+                    <CloudArchitectureLoader 
+                      isLoading={isOptimizing}
+                      progress={optimizationProgress}
+                      currentStage={optimizationStatus}
+                    />
+                  )}
+                </div>
+              ) : (Object.keys(results).length === 0) ? (
                 <motion.div 
                   key="empty-state"
                   initial={{ opacity: 0, scale: 0.95 }}
@@ -4223,16 +4960,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         </div>
                       </button>
                       <button 
-                        onClick={() => {
-                          if (isOptimizing) {
-                            handleStop();
-                            return;
-                          }
-                          if (isExtracting) return;
-                          handleOptimize();
-                        }}
-                        disabled={isExtracting}
-                        className={`space-y-2 md:space-y-4 group text-center focus:outline-none ${isExtracting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        onClick={() => handleOptimize()}
+                        className="space-y-2 md:space-y-4 group text-center focus:outline-none"
                       >
                         <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
                           <Zap className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
@@ -4470,24 +5199,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               {renderSection('skills')}
                               {renderSection('certifications')}
                               {/* Pass the FULL array, do not slice. Let the print engine handle pagination */}
-                              {renderSection('experience', (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.experience : results[activeAudience!]?.experience) || data.experience)}
-                              
-                              {/* CRITICAL FIX: Pass the project array variables correctly */}
-                              {renderSection(
-                                'projects', 
-                                undefined, 
-                                false, 
-                                (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.projects : results[activeAudience!]?.projects) || data.projects
-                               )}
-                              
-                              {/* CRITICAL FIX: Pass the education array variables correctly */}
-                              {renderSection(
-                                'education', 
-                                undefined, 
-                                false, 
-                                undefined, 
-                                (currentResultWorkspaceArtifact?.activeAudience ? currentResultWorkspaceArtifact.results[currentResultWorkspaceArtifact.activeAudience]?.education : results[activeAudience!]?.education) || data.education || []
-                              )}
+                              {renderSection('experience', results[activeAudience!]?.experience || data.experience)}
+                              {renderSection('projects')}
+                              {renderSection('education')}
                             </div>
                           ) : (
                             renderSimplifiedResume()
@@ -4496,88 +5210,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           </div>
                         </div>
                       ) : (
-                        <div className="w-full max-w-7xl mx-auto h-full p-4 md:p-8 overflow-y-auto custom-scrollbar">
-                          {/* Grid layout containing left main workspace and right board panel */}
-                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                            
-                            {/* Main Workspace Structure (Left Column - Cols: 7) */}
-                            <div className="lg:col-span-7 flex flex-col gap-6">
-                              <ResumeIntelligencePanel 
-                                isDarkMode={isDarkMode} 
-                                results={results} 
-                                activeAudience={activeAudience} 
-                                data={data}
-                                jobDescription={jobDescription}
-                                targetRole={targetRole}
-                                companyName={companyName}
-                              />
-                              <OptimizationPipelinePanel 
-                                isDarkMode={isDarkMode} 
-                                jobDescription={jobDescription}
-                                isFetchingJob={isFetchingJob}
-                                isCheckingSuitability={isCheckingSuitability}
-                                selectedResumeId={selectedResumeId}
-                                isOptimizing={isOptimizing}
-                                results={results}
-                                isDownloading={isDownloading}
-                              />
-                              <MasterResumeIntelligencePanel 
-                                isDarkMode={isDarkMode} 
-                                masterResumes={masterResumes} 
-                                selectedResumeId={selectedResumeId} 
-                                onSelectResume={handleSetActiveResume} 
-                                results={results}
-                                activeAudience={activeAudience}
-                              />
-                              <OptimizationResultsPanel 
-                                isDarkMode={isDarkMode} 
-                                results={results} 
-                                activeAudience={activeAudience} 
-                              />
-                            </div>
-
-                            {/* Right Panel Structure (Right Column - Cols: 5) */}
-                            <div className="lg:col-span-5 flex flex-col gap-6">
-                              <AIInsightsPanel 
-                                isDarkMode={isDarkMode} 
-                                isOptimizing={isOptimizing}
-                                isFetchingJob={isFetchingJob}
-                                isCheckingSuitability={isCheckingSuitability}
-                                isDownloading={isDownloading}
-                              />
-                              <ActivityFeed 
-                                isDarkMode={isDarkMode} 
-                                selectedResumeId={selectedResumeId} 
-                                masterResumes={masterResumes} 
-                                isOptimizing={isOptimizing} 
-                                isSyncing={isSavingProfile} 
-                                isDownloading={isDownloading} 
-                                results={results} 
-                                activeAudience={activeAudience} 
-                              />
-                              <RecommendationFeed 
-                                isDarkMode={isDarkMode} 
-                                results={results} 
-                                activeAudience={activeAudience} 
-                              />
-                              
-                              <Suspense fallback={<div className="text-white/40 text-[10px] uppercase font-mono tracking-widest text-center py-4">Loading critical scenarios...</div>}>
-                                <div className={`p-6 rounded-3xl border select-none transition-all duration-300 relative overflow-hidden backdrop-blur-xl text-left ${
-                                  isDarkMode 
-                                    ? 'glass-card-dark border-white/10 text-white shadow-[0_12px_40px_rgba(0,0,0,0.5)]' 
-                                    : 'glass-card border-black/10 text-slate-800 shadow-[0_12px_30px_rgba(0,0,0,0.05)]'
-                                }`}>
-                                  <span className="text-[9px] font-black uppercase tracking-[0.2em] mb-4 block text-emerald-400">Deep Behavioral Star Scenarios & Auditing</span>
-                                  <NexusProInsights 
-                                     isDarkMode={isDarkMode} 
-                                     starStories={activeAudience ? results[activeAudience]?.star_stories : undefined}
-                                     auditReport={activeAudience ? results[activeAudience]?.audit_report : undefined}
-                                  />
-                                </div>
-                              </Suspense>
-                            </div>
-
-                          </div>
+                        <div className="w-full max-w-5xl mx-auto h-full p-4 md:p-8">
+                          <Suspense fallback={<LoadingSpinner />}>
+                            <NexusProInsights 
+                               isDarkMode={isDarkMode} 
+                               starStories={activeAudience ? results[activeAudience]?.star_stories : undefined}
+                               auditReport={activeAudience ? results[activeAudience]?.audit_report : undefined}
+                            />
+                          </Suspense>
                         </div>
                       )}
                     </div>
@@ -4605,14 +5245,25 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               )}
             </AnimatePresence>
           </div>
-          )}
         </main>
-      )}
 
         <AnimatePresence>
           {/* Mobile toggle removed to keep panels together */}
         </AnimatePresence>
 
+      {/* Bottom Panel / Footer */}
+      <footer className={`shrink-0 w-full px-4 md:px-8 py-4 border-t transition-colors ${isDarkMode ? 'bg-neutral-950 border-white/10' : 'bg-white border-black/5'}`}>
+        <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 opacity-20" />
+            <span className="text-[10px] font-bold opacity-20 uppercase tracking-widest">ATS Optimizer Engine</span>
+          </div>
+          <div className="flex gap-8">
+            <button onClick={() => setShowTermsModal(true)} className="text-[10px] font-bold opacity-40 hover:opacity-100 transition-opacity uppercase tracking-widest">Privacy</button>
+            <button onClick={() => setShowTermsModal(true)} className="text-[10px] font-bold opacity-40 hover:opacity-100 transition-opacity uppercase tracking-widest">Terms</button>
+            <a href="mailto:param_jariwala@yahoo.com" className="text-[10px] font-bold opacity-40 hover:opacity-100 transition-opacity uppercase tracking-widest">Contact</a>
+          </div>
+        </div>
         <AuthModal 
           isOpen={isAuthModalOpen} 
           onClose={() => setIsAuthModalOpen(false)} 
@@ -4646,7 +5297,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           isDarkMode={isDarkMode}
           resumeData={data}
         />
+      </footer>
       </div>
-    </DashboardShell>
+    </div>
   );
 }

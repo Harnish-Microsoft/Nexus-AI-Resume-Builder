@@ -4,7 +4,7 @@ import puppeteer from "puppeteer";
 import bodyParser from "body-parser";
 import cors from "cors";
 import crypto from "crypto";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
 import dotenv from "dotenv";
 import { v4 as uuidv4 } from 'uuid';
@@ -844,21 +844,9 @@ async function startServer() {
       // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
       const roleCount = optimizedInput.experience.length;
       const finalPrompt = `
-        ROLE:
-        You are an elite FAANG Resume Architect, Executive Recruiter, ATS Specialist, and Career Strategist.
-        Your responsibility is to transform resumes into recruiter-optimized, ATS-friendly, achievement-focused resumes that maximize interview conversion rates.
-
-        You think like a FAANG Recruiter, Microsoft Hiring Manager, Amazon Bar Raiser, Google Technical Recruiter, ATS Parsing Engine, and Executive Resume Writer.
-
-        PRIMARY OBJECTIVE:
-        Optimize the provided resume for:
-        1. ATS Compatibility
-        2. Recruiter Readability
-        3. Hiring Manager Appeal
-        4. STAR Method Compliance (Convert weak bullets into compressed STAR format: Action Verb + Technology + Business Outcome + Metric)
-        5. Quantified Achievements
-        6. Keyword Relevance
-        7. Executive-Level Professional Branding
+        ACT AS:
+        You are a Principal Resume Intelligence Architect, FAANG Technical Recruiter, and Enterprise ATS Strategist.
+        Your objective is to transform resumes into recruiter-safe, ATS-optimized, technically mature documents that reflect factual realism and believable operational ownership.
 
         Optimize this structured resume data for the target role: ${targetRole}.
         Audience: ${audience}. Mode: ${mode}.
@@ -870,7 +858,7 @@ async function startServer() {
         You ARE REQUIRED to output exactly ${roleCount} items in the "experience" array.
         
         CORPORATE DNA TAILORING:
-        ${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership", "Bias for Action", and "Data-driven results" (Amazon Leadership Principles).' : ''}
+        ${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership", "Bias for Action", and "Data-driven results". Use terminology from Amazon Leadership Principles.' : ''}
         ${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale", "Cloud Transformation", and "Collaborative Ecosystems".' : ''}
         ${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design", "Extreme Scale", "Algorithmic Efficiency", and "Google XYZ Formula".' : ''}
         ${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast", "Shipping End-to-End Impact", and "Performance Optimization".' : ''}
@@ -883,80 +871,48 @@ async function startServer() {
           - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". Focus entirely on Azure Infrastructure.
         ` : ''}
 
-        STRICT RULES & CONSTRAINTS:
-        1. OUTPUT RULES (MANDATORY):
-           - Never invent experience. Never create fake metrics.
-           - Only enhance, rewrite, restructure, and optimize existing information.
-           - If metrics are unavailable, use wording that highlights impact without fabricating numbers.
+        STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
+        1. TRUTHFULNESS & GROUNDING (MANDATORY): You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
         
-        2. RESUME LENGTH RULES:
-           - 0-5 years experience: Maximum 1 page.
-           - 5-10 years experience: 1-2 pages.
-           - 10+ years experience: Maximum 2 pages.
-           - 15+ years experience: Strongly prefer 2 pages.
-
-        3. SECTION ORDER:
-           - 1. Header, 2. Professional Summary, 3. Technical Skills, 4. Professional Experience, 5. Projects (optional), 6. Certifications, 7. Education.
-
-        4. SUMMARY RULES:
-           - Length: 50-80 words. Maximum: 4 lines.
-           - Must include: Years of experience, Core expertise, Business value, Leadership scope (if applicable). Never use AI slop words.
-
-        3. TIMELINE-BASED BULLET CONSTRAINTS & COMPRESSION (STRICT):
-           - Concentrix & M&M Software: Strictly 5 to 6 high-impact bullet points. Focus heavily on senior architecture and leadership scale.
-           - ARCHER Transnational Systems: Strictly 3 to 4 bullet points.
-           - Casepoint LLC: Compress heavily. Strictly 3 to 4 concise bullet points max. Shorten sentences to direct impact statements (e.g., "Executed hybrid migrations to Azure Landing Zones, lowering infrastructure footprint").
-           - HCLTech: Strictly 2 brief single-line bullet point.
-           - Sterling Accuris Diagnostics: Reduce to exactly 2 concise, single-line bullet points focusing purely on healthcare data availability.
-           - AGILUS Diagnostics: Reduce to exactly 1 concise, single-line bullet point focusing on system admin updates.
-           - Galaxy Office Automation Pvt. Ltd.: Reduce to exactly 1 brief one-liner bullet point.
-           - Aegis Global: Reduce to exactly 1 brief one-liner bullet point.
-
-        4. STRICT CHAR-COUNT AND ONE-LINE ENFORCEMENT (CRITICAL):
-           - Every single bullet point across the entire resume MUST be exactly one single line. 
-           - Hard cap of 90 characters maximum per bullet point. This ensures sentences are short and cannot break into a second line under any screen scaling.
-           - Strip out descriptive filler words and focus purely on "Action verb + Specific metric + Tool used".
-
-        6. STAR METHOD TRANSFORMATION:
-           - Convert weak bullets into compressed STAR format.
-             BAD: Responsible for Azure VMs.
-             GOOD: Managed and optimized 200+ Azure virtual machines, improving operational stability and reducing support incidents by 25%.
-
-        7. TECHNICAL SKILLS RULES:
-           - Group technologies logically. Example:
-             Cloud Platforms: Azure, Azure Arc, Azure Landing Zone
-             Networking: VNet, VPN Gateway, ExpressRoute, NSG, Azure Firewall
-             Security: Defender for Cloud, Key Vault, RBAC, Conditional Access
-           - Do not create large keyword dumps. Clean categories, Title Case keys.
-
-        8. ATS OPTIMIZATION RULES:
-           - Extract keywords from job descriptions.
-           - Prioritize: Required skills, Certifications, Cloud technologies, Leadership keywords, Architecture keywords.
-           - Maintain natural readability. Avoid keyword stuffing.
-
-        9. DEVOPS BAN:
-           - The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Use "Infrastructure Automation", "Workflow Orchestration", "Release Engineering", or "Infrastructure Provisioning".
-
-        10. AI-GENERATED LANGUAGE BAN:
-            - ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized".
-            - Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
-
-        11. PROJECTS:
-            - Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
-
-        12. FAANG REVIEW CRITERIA (EVALUATE FOR THE AUDIT REPORT):
-            - Evaluate: Business impact, Technical depth, Scale, Ownership, Leadership, Complexity, Innovation. Score each 1-10.
-
-        13. SCORING MODEL (MANDATORY FIELDS IN OUTPUT):
-            - ATS Score: 0-100
-            - Recruiter Score: 0-100
-            - FAANG Readiness Score: 0-100
-            - Interview Probability: "Low" | "Medium" | "High"
-
+        2. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
+        
+        3. TIMELINE-BASED BULLET CONSTRAINTS (STRICT):
+           - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
+           - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
+           - OLDER ROLES (Before 2017): Strictly 1 brief bullet point focusing only on the core outcome.
+           - CASEPOINT: At least 4 bullet points.
+           - HCL: Strictly 2 bullet points, both must be single line.
+           - Sterling Accuris Diagnostics: Strictly 3 bullet points, all must be single line.
+           - AGILUS Diagnostics: Strictly 2 bullet points, both must be single line.
+           - Galaxy Office Automation Pvt. Ltd.: Strictly 1 brief one-liner bullet point.
+        
+        4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
+        4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
+        
+        5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
+        
+        6. NO TRUNCATION: Adhere strictly to the bullet counts above. Do not exceed them, as the goal is to fit everything on 1-2 pages.
+        
+        7. SOURCE ANCHORING: Derive new bullets primarily from that specific role’s context. Do not invent fake projects.
+        
+        8. TRUTHFULNESS & GROUNDING: You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
+        
+        9. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
+        
         INPUT DATA (Optimized):
         ${JSON.stringify(optimizedInput, null, 2)}
         
-        OUTPUT JSON SCHEMA (You MUST output valid, parseable JSON only conforming to this structure):
+        STRICT FINAL RULES:
+        1. TONE & FOCUS: Maintain a professional, detailed, human-written tone. Focus on JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
+        2. PRESERVE TITLES: Do NOT modify job titles.
+        3. TIMELINE ADHERENCE: Strictly follow the bullet counts for RECENT, MID-CAREER, and OLDER roles.
+        4. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative on Azure Infrastructure, HA/DR, and Governance.
+        5. PROJECT FIDELITY: You MUST output EVERY project. Limit descriptions to 2 sentences.
+        6. NO FABRICATION: Do not invent metrics or technologies.
+        7. NO AI SLOP: Ban "Spearheaded", "Leveraged", etc. Use grounded verbs.
+        8. BALANCED IaC: Terraform/IaC references are encouraged for technical roles. Include up to 5-6 bullet points TOTAL across the entire resume if relevant to the JD.
+        
+        OUTPUT JSON SCHEMA:
         {
           "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
           "summary": "string",
@@ -971,25 +927,8 @@ async function startServer() {
           "baseline_score": 60,
           "improvement_notes": ["string"],
           "audience_alignment_notes": "string",
-          "why_this_job": "string",
           "star_stories": [ { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
-          "audit_report": { 
-            "score": 85, 
-            "recruiter_score": 88,
-            "faang_readiness_score": 82,
-            "interview_probability": "High",
-            "criteria_scores": {
-              "business_impact": 8,
-              "technical_depth": 7,
-              "scale": 8,
-              "ownership": 9,
-              "leadership": 7,
-              "complexity": 8,
-              "innovation": 7
-            },
-            "flags": ["string"], 
-            "trajectory": { "stage": "acceleration", "description": "string", "recommendation": "string" } 
-          }
+          "audit_report": { "score": 85, "flags": [], "trajectory": { "stage": "acceleration", "description": "string", "recommendation": "string" } }
         }
       `;
 
@@ -1097,24 +1036,14 @@ async function startServer() {
       } else {
         // GEMINI BRANCH
         try {
-        console.log(`[Pipeline] Step 3: Split Generation (Gemini ${usedModel})...`);
+        console.log(`[Pipeline] Step 3: Split Generation (Gemini ${usedModel} with HIGH thinking)...`);
         const genAI = new GoogleGenAI({ apiKey: geminiKey });
         
         // 1. Generate Meta Data (Summary, Skills, Why This Job, etc.)
         const metaPrompt = `
-          ROLE:
-          You are an elite FAANG Resume Architect, Executive Recruiter, ATS Specialist, and Career Strategist.
-          Optimize the meta-sections of this resume for factual realism and elite recruiter presentation.
-          You think like a FAANG Recruiter, Microsoft Hiring Manager, Amazon Bar Raiser, Google Technical Recruiter, ATS Parsing Engine, and Executive Resume Writer.
-
-          PRIMARY OBJECTIVE:
-          Optimize the provided metadata for:
-          1. ATS Compatibility
-          2. Recruiter Readability
-          3. Hiring Manager Appeal
-          4. Grouping Technical Skills Logically
-          5. High Impact, Non-Slop Professional Summary
-          6. Scoring using the advanced FAANG / ATS scoring metrics.
+          ACT AS:
+          You are a Principal Resume Intelligence Architect and FAANG Recruiter.
+          Optimize the meta-sections of this resume for factual realism and believable operational ownership.
 
           Target Role: ${targetRole}.
           Audience: ${audience}. Mode: ${mode}.
@@ -1133,30 +1062,18 @@ async function startServer() {
           }, null, 2)}
           
           STRICT RULES:
-          1. Professional Summary (STRICT):
-             - Length: 50-80 words. Maximum: 4 lines.
-             - Must include: Years of experience, Core expertise, Business value, Leadership scope (if applicable).
-             - Use NO AI-slop words (spearheaded, pioneered, led, leveraged etc. is design-slop). Provide a concise overview of technical expertise.
-          2. Skills (STRICT):
-             - Group technologies logically. Do not create large keyword dumps. Clean categories, Title Case keys.
-             - Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace any 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
+          1. Summary: 50-100 words, high impact, NO AI-slop words. Use natural, grounded operational verbs. Provide a concise overview of technical expertise and career trajectory.
+          2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
           3. Why This Job: 75-125 words compelling response based on factual alignment.
           4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them. Keep project descriptions to a maximum of 2 sentences or 25 words, focusing strictly on the technical architecture and the business outcome.
           5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it.
           6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
           7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
           8. COMPLETE DATA: You MUST process and include EVERY SINGLE section provided in the INPUT DATA. Do not omit any roles, projects, or certifications.
-          9. FAANG REVIEW CRITERIA (EVALUATE FOR THE AUDIT REPORT):
-             - Evaluate: Business impact, Technical depth, Scale, Ownership, Leadership, Complexity, Innovation. Score each 1-10.
-          10. SCORING MODEL (MANDATORY):
-              - ATS Score: 0-100
-              - Recruiter Score: 0-100
-              - FAANG Readiness Score: 0-100
-              - Interview Probability: "Low" | "Medium" | "High"
           
           OUTPUT JSON SCHEMA:
           {
-            "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
+            "personal_info": { ... },
             "summary": "...",
             "skills": { "Category 1": ["skill1", ...], ... },
             "why_this_job": "...",
@@ -1169,24 +1086,8 @@ async function startServer() {
             "match_score": 85,
             "improvement_notes": [...],
             "audience_alignment_notes": "...",
-            "star_stories": [ { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
-            "audit_report": { 
-              "score": 85, 
-              "recruiter_score": 88,
-              "faang_readiness_score": 82,
-              "interview_probability": "High",
-              "criteria_scores": {
-                "business_impact": 8,
-                "technical_depth": 7,
-                "scale": 8,
-                "ownership": 9,
-                "leadership": 7,
-                "complexity": 8,
-                "innovation": 7
-              },
-              "flags": ["string"], 
-              "trajectory": { "stage": "acceleration", "description": "string", "recommendation": "string" } 
-            }
+            "star_stories": [...],
+            "audit_report": { ... }
           }
         `;
 
@@ -1196,7 +1097,10 @@ async function startServer() {
           genAI.models.generateContent({
             model: usedModel,
             contents: [{ role: 'user', parts: [{ text: metaPrompt }] }],
-            config: { responseMimeType: "application/json" }
+            config: { 
+              responseMimeType: "application/json",
+              thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }
+            }
           }),
           generatePerRole(
             optimizedInput.experience, 
@@ -1605,15 +1509,6 @@ async function startServer() {
       return res.status(400).json({ error: "HTML content is required" });
     }
 
-    // Extract printScale if present, defaulting to 1
-    let printScale = 1;
-    if (css) {
-      const match = css.match(/scale\(([\d.]+)\)/) || css.match(/zoom:\s*([\d.]+)/);
-      if (match) {
-        printScale = parseFloat(match[1]);
-      }
-    }
-
     let browser;
     try {
       const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -1664,89 +1559,38 @@ async function startServer() {
               }
 
               /* 2. STRETCH CONTENT HORIZONTALLY */
-              .resume-page {
+              #resume-container, .resume-page {
                 width: 100% !important;
                 max-width: 100% !important;
                 margin: 0 auto !important;
-                padding: 0mm 4mm !important; /* Maximized horizontal space */
+                /* Overrides the massive 25mm internal padding from React to use the full page width */
+                padding: 0mm 5mm !important; 
                 box-shadow: none !important;
                 border: none !important;
               }
 
-              #resume-container {
-                transform: scale(${printScale}) !important;
-                transform-origin: top left !important;
-                width: calc(100% / ${printScale}) !important;
-                box-shadow: none !important;
-                border: none !important;
+              /* Reduce bullet point indentation to gain more line length */
+              ul {
+                padding-left: 16px !important;
+                margin-left: 0 !important;
               }
 
-              /* 3. Professional Typography & Alignment */
+              /* 3. Beautiful Typography & Vertical Compression */
               p, li, span, div, .resume-bullet-text { 
                 font-size: 9.5pt !important; 
-                line-height: 1.35 !important; /* Increased for readability */
+                line-height: 1.35 !important; 
               }
-
-              h1 { font-size: 16pt !important; margin-bottom: 4px !important; text-align: center !important; }
-              
-              /* CENTER ALL SECTION HEADINGS */
-              h2 { 
-                font-size: 11pt !important; 
-                margin-top: 8px !important; 
-                margin-bottom: 6px !important; 
-                padding-bottom: 2px !important; 
-                text-align: center !important; /* Centers Summary, Experience, etc. */
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-              }
-              
-              .experience-item .font-bold, .project-item .font-bold { font-size: 10pt !important; }
 
               p, li, .resume-bullet-text, .experience-item div {
                 text-align: left !important;
                 text-justify: auto !important;
               }
 
-              /* 4. Balanced Section Spacing & Strict Pagination */
-              .resume-section { 
-                margin-bottom: 10px !important; /* Added breathing room between sections */
-                padding: 0 !important; 
-              }
-
-              /* Ensure roles are grouped and don't split across pages */
-              .experience-item, .project-item { 
-                margin-bottom: 8px !important; /* Added breathing room between jobs */
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
-                display: inline-block !important; 
-                width: 100% !important;
-                vertical-align: top;
-              }
-
-              /* Flatten bullet padding to maximize line length */
-              ul {
-                padding-left: 12px !important; 
-                margin-left: 0 !important;
-              }
-              li { 
-                margin-bottom: 3px !important; /* Added space between bullets */
-              }
-
-              /* Prevent titles from separating from their content */
-              h2,
-              .experience-item > div:first-child, 
-              .experience-item > div:nth-child(2), 
-              .project-item > div:first-child {
-                page-break-after: avoid !important;
-                break-after: avoid !important;
-              }
-
-              .experience-item li, .project-item li, .resume-bullet-item {
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
-              }
-
+              /* 4. Clean Section Spacing */
+              .resume-section { margin-bottom: 8px !important; padding: 0 !important; }
+              .experience-item { margin-bottom: 6px !important; }
               ul.resume-list { margin-top: 4px !important; margin-bottom: 4px !important; }
+              li { margin-bottom: 4px !important; }
 
               /* Dynamic Scale Injection from Frontend */
               ${css || ''}
@@ -1773,8 +1617,7 @@ async function startServer() {
         format: "A4",
         printBackground: true,
         displayHeaderFooter: false,
-        preferCSSPageSize: true,
-        pageRanges: "1-2" // Strictly prevents a 3rd page from rendering
+        preferCSSPageSize: true
       });
 
       res.setHeader("Content-Type", "application/pdf");

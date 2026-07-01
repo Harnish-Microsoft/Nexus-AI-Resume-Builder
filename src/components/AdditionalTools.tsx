@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download, ShieldAlert, Linkedin, Sparkles } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline, generateWhyThisJob, analyzeResumeCritique, selectBestMasterResume, generateWhyLookingNewRole, generateWhyLookingForChange, generateWhyJoinCompany, estimateSalaryIntelligence } from '../services/geminiService';
+import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline, generateWhyThisJob, analyzeResumeCritique, selectBestMasterResume } from '../services/geminiService';
 import { LinkedInImporter } from './LinkedInImporter';
 import { MasterResumeGenerator } from './MasterResumeGenerator';
 import { MasterResumeManager } from './MasterResumeManager';
@@ -61,7 +61,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   onToolActive,
   linkedinProps
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline' | 'whyThisJob' | 'whyLookingNewRole' | 'whyLookingForChange' | 'whyJoinCompany' | 'salaryIntelligence' | 'linkedin' | 'masterResumeGenerator' | 'masterResumeManager' | 'audioFeedback' | 'diagnostics' | null>(null);
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline' | 'whyThisJob' | 'linkedin' | 'masterResumeGenerator' | 'masterResumeManager' | 'audioFeedback' | 'diagnostics' | null>(null);
 
   useEffect(() => {
     if (onToolActive) {
@@ -74,10 +74,6 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   const [coverLetter, setCoverLetter] = useState<string>('');
   const [recruiterMessage, setRecruiterMessage] = useState<string>('');
   const [whyThisJob, setWhyThisJob] = useState<string>('');
-  const [whyLookingNewRole, setWhyLookingNewRole] = useState<string>('');
-  const [whyLookingForChange, setWhyLookingForChange] = useState<string>('');
-  const [whyJoinCompany, setWhyJoinCompany] = useState<string>('');
-  const [salaryIntelligence, setSalaryIntelligence] = useState<string>('');
   const [history, setHistory] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -362,122 +358,6 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     }
   };
 
-  const runWhyLookingNewRole = async () => {
-    if (!resumeText || !jobDescription) {
-      setError("Please ensure both resume and job description are provided.");
-      return;
-    }
-    setError(null);
-    setIsLoading(true);
-    try {
-      const result = await generateWhyLookingNewRole(jobDescription, resumeText, {
-        mode: selectedEngine,
-        geminiConfig: {
-          engine: 'gemini',
-          model: engineConfig.gemini.model,
-          apiKey: engineConfig.gemini.apiKey
-        },
-        openaiConfig: {
-          engine: 'openai',
-          model: engineConfig.openai.model,
-          apiKey: engineConfig.openai.apiKey
-        }
-      });
-      setWhyLookingNewRole(result);
-    } catch (e: any) {
-      console.error(e);
-      setError(e.message || "Failed to generate Seeking New Role explanation.");
-    }
-    setIsLoading(false);
-  };
-
-  const runWhyLookingForChange = async () => {
-    if (!resumeText || !jobDescription) {
-      setError("Please ensure both resume and job description are provided.");
-      return;
-    }
-    setError(null);
-    setIsLoading(true);
-    try {
-      const result = await generateWhyLookingForChange(jobDescription, resumeText, {
-        mode: selectedEngine,
-        geminiConfig: {
-          engine: 'gemini',
-          model: engineConfig.gemini.model,
-          apiKey: engineConfig.gemini.apiKey
-        },
-        openaiConfig: {
-          engine: 'openai',
-          model: engineConfig.openai.model,
-          apiKey: engineConfig.openai.apiKey
-        }
-      });
-      setWhyLookingForChange(result);
-    } catch (e: any) {
-      console.error(e);
-      setError(e.message || "Failed to generate Seeking Change explanation.");
-    }
-    setIsLoading(false);
-  };
-
-  const runWhyJoinCompany = async () => {
-    if (!companyName) {
-      setError("Please provide a Company Name first to run organization analyzer.");
-      return;
-    }
-    setError(null);
-    setIsLoading(true);
-    try {
-      const result = await generateWhyJoinCompany(companyName, targetRole, resumeText, {
-        mode: selectedEngine,
-        geminiConfig: {
-          engine: 'gemini',
-          model: engineConfig.gemini.model,
-          apiKey: engineConfig.gemini.apiKey
-        },
-        openaiConfig: {
-          engine: 'openai',
-          model: engineConfig.openai.model,
-          apiKey: engineConfig.openai.apiKey
-        }
-      });
-      setWhyJoinCompany(result);
-    } catch (e: any) {
-      console.error(e);
-      setError(e.message || "Failed to analyze and suggest company alignment.");
-    }
-    setIsLoading(false);
-  };
-
-  const runSalaryIntelligence = async () => {
-    if (!targetRole) {
-      setError("Please provide a Target Role first to run salary intelligence.");
-      return;
-    }
-    setError(null);
-    setIsLoading(true);
-    try {
-      const result = await estimateSalaryIntelligence(targetRole, companyName || '', resumeText, {
-        mode: selectedEngine,
-        geminiConfig: {
-          engine: 'gemini',
-          model: engineConfig.gemini.model,
-          apiKey: engineConfig.gemini.apiKey
-        },
-        openaiConfig: {
-          engine: 'openai',
-          model: engineConfig.openai.model,
-          apiKey: engineConfig.openai.apiKey
-        }
-      });
-      setSalaryIntelligence(result);
-    } catch (e: any) {
-      console.error(e);
-      setError(e.message || "Failed to generate salary intelligence.");
-    }
-    setIsLoading(false);
-  };
-
   const downloadCoverLetterPDF = async () => {
     if (!coverLetter) return;
     setIsLoading(true);
@@ -496,43 +376,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       }
       saveVersion(generatedName);
 
-      // Generate PDF with professional styling matching resume settings
+      // Generate PDF
       const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="UTF-8">
-          <style>
-            @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap');
-            @page { 
-              size: A4; 
-              margin: 20mm !important; 
-            }
-            body {
-              font-family: 'Open Sans', sans-serif !important;
-              font-size: 11pt;
-              line-height: 1.6;
-              padding: 10px;
-              color: #1f2937;
-              background: white;
-              white-space: pre-wrap;
-            }
-            .cover-letter-wrapper {
-              width: 100%;
-              max-width: 100%;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="cover-letter-wrapper">${coverLetter}</div>
-        </body>
-        </html>
+        <div style="font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.5; white-space: pre-wrap;">
+          ${coverLetter}
+        </div>
       `;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html, css: '', fonts: [], title: `Cover_Letter_${Date.now()}` })
+        body: JSON.stringify({ html, css: '', fonts: [], title: generatedName.replace(/[^a-zA-Z0-9_-]/g, '_') })
       });
 
       if (!sessionResponse.ok) {
@@ -541,13 +395,21 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
 
       const { sessionId } = await sessionResponse.json();
       
-      // Trigger download
-      const downloadUrl = `/api/download-pdf/${sessionId}`;
+      // Trigger download using fetch/blob for safety
+      const pdfResponse = await fetch(`/api/download-pdf/${sessionId}`);
+      if (!pdfResponse.ok) {
+        const errorText = await pdfResponse.text();
+        throw new Error(`PDF generation failed: ${errorText}`);
+      }
+
+      const blob = await pdfResponse.blob();
+      const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = `Cover_Letter_${Date.now()}.pdf`;
+      a.href = url;
+      a.download = `${generatedName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
       document.body.appendChild(a);
       a.click();
+      window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
     } catch (e: any) {
@@ -639,78 +501,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           
           <button 
             onClick={() => setActiveTab('coverLetter')} 
-            className={`flex flex-col items-start gap-3 p-4 rounded-xl transition-all border col-span-2 md:col-span-2 lg:col-span-3 min-h-[90px] shadow-sm relative overflow-hidden bg-gradient-to-br from-emerald-500/5 to-transparent ${
+            className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
               activeTab === 'coverLetter' 
-                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400' 
-                : (isDarkMode ? 'glass-card border-white/10 text-white hover:text-emerald-400 bg-white/5' : 'bg-emerald-55/10 border-black/5 text-black hover:bg-emerald-50/80 hover:text-emerald-600')
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <FileText className="w-5 h-5 text-emerald-500"/>
-              <span className="text-xs font-bold uppercase tracking-wider">Matched Cover Letter Creator</span>
-              <span className="absolute top-2 right-2 bg-emerald-500 text-black text-[8px] font-extrabold px-1.5 py-0.5 rounded-full uppercase">Hero Tool</span>
-            </div>
-            <span className="text-[10px] opacity-80 text-left leading-relaxed">Draft an exceptional, highly-focused cover letter custom-tailored to the requirements of the job description. Generates a beautifully formatted PDF matching the exact aesthetic, layouts, and typography of your professional resume, starting directly without personal header noise.</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('whyLookingNewRole')} 
-            className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
-              activeTab === 'whyLookingNewRole' 
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
-                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white bg-white/5' : 'bg-[#e2f1e8] border-black/5 text-black/60 hover:bg-[#cbe6d5] hover:text-black')
+                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
             }`}
           >
             <div className="flex items-center gap-2">
-              <Brain className="w-4 h-4 text-emerald-400"/>
-              <span className="text-[11px] font-bold">Why Seeking Role?</span>
+              <FileText className="w-4 h-4"/>
+              <span className="text-[11px] font-bold">Cover Letter</span>
             </div>
-            <span className="text-[9px] opacity-70 text-left leading-tight">AI response for role interest</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('whyLookingForChange')} 
-            className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
-              activeTab === 'whyLookingForChange' 
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
-                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white bg-white/5' : 'bg-[#e2f1e8] border-black/5 text-black/60 hover:bg-[#cbe6d5] hover:text-black')
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400"/>
-              <span className="text-[11px] font-bold">Why Seeking Change?</span>
-            </div>
-            <span className="text-[9px] opacity-70 text-left leading-tight">AI response for seeking change</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('whyJoinCompany')} 
-            className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
-              activeTab === 'whyJoinCompany' 
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
-                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white bg-white/5' : 'bg-[#e2f1e8] border-black/5 text-black/60 hover:bg-[#cbe6d5] hover:text-black')
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-emerald-500"/>
-              <span className="text-[11px] font-bold">Company Join Analyzer</span>
-            </div>
-            <span className="text-[9px] opacity-70 text-left leading-tight">Glassdoor & sentiment engine</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('salaryIntelligence')} 
-            className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
-              activeTab === 'salaryIntelligence' 
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
-                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white bg-white/5' : 'bg-[#e2f1e8] border-black/5 text-black/60 hover:bg-[#cbe6d5] hover:text-black')
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-500"/>
-              <span className="text-[11px] font-bold">Salary Intelligence</span>
-            </div>
-            <span className="text-[9px] opacity-70 text-left leading-tight">Estimated ranges & packages</span>
+            <span className="text-[9px] opacity-70 text-left leading-tight">Draft a matching letter</span>
           </button>
           
           <button 
@@ -1038,142 +839,6 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                 >
                   <Copy className="w-3 h-3" />
                   Copy Text
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      {activeTab === 'whyLookingNewRole' && (
-        <div className="space-y-4">
-          <div className={`p-4 rounded-xl border text-[11px] leading-relaxed ${isDarkMode ? 'bg-white/5 border-white/10 text-white/70' : 'bg-gray-100/50 border-black/5 text-gray-700'}`}>
-            💡 <strong>AI Career Brain: Motivation Analyzer</strong><br />
-            This builder helps explain why you are seeking a new role by focusing on your professional development, new technical scales, and strong alignment with the job goals rather than detailing past organizational roadblocks.
-          </div>
-          <button 
-            onClick={runWhyLookingNewRole} 
-            disabled={isLoading} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
-          >
-            {isLoading ? 'Consulting AI Brain...' : 'Generate New Role Explanation'}
-          </button>
-          {whyLookingNewRole && (
-            <div className="space-y-2">
-              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-                {whyLookingNewRole}
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(whyLookingNewRole);
-                  }}
-                  className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
-                >
-                  <Copy className="w-3 h-3" />
-                  Copy Text
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'whyLookingForChange' && (
-        <div className="space-y-4">
-          <div className={`p-4 rounded-xl border text-[11px] leading-relaxed ${isDarkMode ? 'bg-white/5 border-white/10 text-white/70' : 'bg-gray-100/50 border-black/5 text-gray-700'}`}>
-            💡 <strong>AI Career Brain: Transition Advisor</strong><br />
-            Craft a perfectly polished, natural answer to "Why are you looking for a change?". Focuses on scale, translating your experience into the target domain, and leveling up your impact.
-          </div>
-          <button 
-            onClick={runWhyLookingForChange} 
-            disabled={isLoading} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
-          >
-            {isLoading ? 'Consulting AI Brain...' : 'Generate Transition Response'}
-          </button>
-          {whyLookingForChange && (
-            <div className="space-y-2">
-              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-                {whyLookingForChange}
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(whyLookingForChange);
-                  }}
-                  className="flex-1 flex-flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
-                >
-                  <Copy className="w-3 h-3" />
-                  Copy Text
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'whyJoinCompany' && (
-        <div className="space-y-4">
-          <div className={`p-4 rounded-xl border text-[11px] leading-relaxed ${isDarkMode ? 'bg-white/5 border-white/10 text-white/70' : 'bg-gray-100/50 border-black/5 text-gray-700'}`}>
-            🔍 <strong>AI Glassdoor & Culture Sentiment Analyzer</strong><br />
-            Real-time analysis powered by Google Search. Instantly aggregates reviews, culture indexes, glassdoor sentiment, and benefits of joining <strong>{companyName || 'the target company'}</strong> to suggest if and why you should proceed.
-          </div>
-          <button 
-            onClick={runWhyJoinCompany} 
-            disabled={isLoading || !companyName} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
-          >
-            {isLoading ? 'Searching Glassdoor & Analyzing Company Sentiment...' : `Analyze Company Joined Alignment for ${companyName || 'Target Company'}`}
-          </button>
-          {whyJoinCompany && (
-            <div className="space-y-2">
-              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-                {whyJoinCompany}
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(whyJoinCompany);
-                  }}
-                  className="flex-1 flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
-                >
-                  <Copy className="w-3 h-3" />
-                  Copy Text
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      {activeTab === 'salaryIntelligence' && (
-        <div className="space-y-4">
-          <div className={`p-4 rounded-xl border text-[11px] leading-relaxed ${isDarkMode ? 'bg-white/5 border-white/10 text-white/70' : 'bg-gray-100/50 border-black/5 text-gray-700'}`}>
-            💰 <strong>AI Career Intelligence: Salary Estimator</strong><br />
-            Real-time market analysis for <strong>{targetRole || 'Target Role'}</strong> {companyName ? `at ${companyName}` : ''}. This tool estimates base salary, bonuses, and benefits packages by analyzing current market trends and your specific experience level.
-          </div>
-          <button 
-            onClick={runSalaryIntelligence} 
-            disabled={isLoading || !targetRole} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
-          >
-            {isLoading ? 'Researching Market Rates...' : `Estimate Compensation for ${targetRole || 'Target Role'}`}
-          </button>
-          {salaryIntelligence && (
-            <div className="space-y-2">
-              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-                <div className="markdown-content">
-                  {salaryIntelligence}
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(salaryIntelligence);
-                  }}
-                  className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
-                >
-                  <Copy className="w-3 h-3" />
-                  Copy Analysis
                 </button>
               </div>
             </div>

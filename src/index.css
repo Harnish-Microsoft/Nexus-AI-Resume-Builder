@@ -493,22 +493,10 @@
       break-inside: auto;
     }
 
-    /* Allow experience and project items to break naturally across pages to avoid blank gaps */
+    /* Protect individual job roles and projects from splitting across pages */
     .experience-item, .project-item {
-      page-break-inside: auto !important;
-      break-inside: auto !important;
-    }
-
-    /* Protect individual bullet list items, headings, and details from splitting in half */
-    .experience-item li, 
-    .project-item li, 
-    .resume-bullet-item, 
-    .experience-item .flex, 
-    .project-item .flex, 
-    .experience-item h3, 
-    .project-item h3 {
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
   }
 

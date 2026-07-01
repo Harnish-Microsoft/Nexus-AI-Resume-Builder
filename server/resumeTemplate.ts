@@ -25,7 +25,6 @@ export function renderResumeToHTML(): string {
             text-transform: uppercase; 
             letter-spacing: -0.02em;
             color: #000000;
-            text-align: center;
           }
           .contact { 
             text-align: center; 
@@ -64,7 +63,6 @@ export function renderResumeToHTML(): string {
         
         <h2>Summary</h2>
         <div class="summary">${summary}</div>
-        <div style="height: 1.25em;"></div> <!-- skip one line after summary completed -->
         
         <h2>Professional Experience</h2>
         ${experience.map((job: any) => `

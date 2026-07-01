@@ -20,8 +20,6 @@ export interface RouterConfig {
   mode: EngineType | 'production';
   geminiConfig: EngineConfig;
   openaiConfig: EngineConfig;
-  gemini?: any;
-  openai?: any;
 }
 
 export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
@@ -62,11 +60,11 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
 
   const engineConfig = selectedEngine === 'gemini' ? config.geminiConfig : config.openaiConfig;
   
-  // USER REQUIREMENT: Use Gemini 3.5 Flash Lite for all tasks EXCEPT resume optimization (rewrite_resume)
-  if (selectedEngine === 'gemini' && task !== 'rewrite_resume') {
+  // USER REQUIREMENT: Use gemini-3.1-flash-lite for all tasks EXCEPT resume optimization and cover letters
+  if (selectedEngine === 'gemini' && task !== 'rewrite_resume' && task !== 'cover_letter') {
     return {
       ...engineConfig,
-      model: 'gemini-3.5-flash'
+      model: 'gemini-3.1-flash-lite'
     };
   }
 
