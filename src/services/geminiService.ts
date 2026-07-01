@@ -2,7 +2,7 @@ import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
-import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport } from "../types";
+import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport, HeatmapItem } from "../types";
 import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
 
@@ -38,6 +38,7 @@ export interface OptimizationResult {
   baseline_score: number;
   improvement_notes: string[];
   audience_alignment_notes: string;
+  heatmap?: HeatmapItem[];
   why_this_job?: string;
   rejection_reasons?: string[];
   star_stories?: StarStory[];
@@ -377,6 +378,7 @@ CRITICAL INSTRUCTIONS FOR AUDIT:
 4. Dates: A "Present" or "Current" end date in experience is perfectly valid. Do not flag current roles as having date errors.
 5. Scoring: The matchScore represents alignment with the JD. The readinessScore represents overall resume professionality and polish.
 6. Critique: Be specific. Point out exactly which bullets lack impact or are too wordy.
+7. Heatmap Generation: You MUST identify 15-20 key keywords/skills from the Job Description and determine if they are matched in the resume. Categorize them as 'Hard Skill', 'Soft Skill', 'Experience', or 'Tool'. Mark each as 'matched', 'partial', or 'missing' based on the resume content. Assign importance 'high', 'medium', or 'low' based on the JD.
 
 RESUME:
 ${resumeText}
@@ -397,6 +399,14 @@ Return ONLY a JSON object with the following structure:
       "category": "e.g., Metrics/Impact",
       "feedback": "Detailed constructive criticism",
       "severity": "low" | "medium" | "high"
+    }
+  ],
+  "heatmap": [
+    {
+      "skill": "string",
+      "match": "matched" | "partial" | "missing",
+      "importance": "high" | "medium" | "low",
+      "category": "Hard Skill" | "Soft Skill" | "Experience" | "Tool"
     }
   ]
 }
@@ -567,6 +577,7 @@ ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CON
         11. MANDATORY 1-2 PAGE LIMIT: Strictly adhere to these counts to ensure the document fits on 1-2 pages. Priority is technical density and strategic impact within these limits.
         12. SENIOR ARCHITECT PHILOSOPHY (16+ YEARS EXPERTISE): You are representing a high-level technologist. Phrasing must reflect strategic decision-making, stakeholder management, and enterprise-wide impact. Use words like "Architected", "Partnered", "Evaluated", "Defined", and "Governed". Instead of just "using" tools, focus on "Selection Criteria", "Cost Optimization (FinOps)", "Security Posture Improvement", and "Roadmap Alignment". For a 16-year veteran, ensure the technical depth is matched by business value and leadership scale.
         13. SCALE & COMPLEXITY: Use grounded, mature terminology for enterprise contexts: "Zero-Downtime Migration", "High-Availability Configuration", "Multi-Tenant Infrastructure", "DR Orchestration", "Lifecycle Management". Avoid junior descriptions like "Helped out with..." or "Worked on...".
+        14. HEATMAP GENERATION: You MUST identify 15-20 key keywords/skills from the Job Description and determine if they are matched in the resume. Categorize them as 'Hard Skill', 'Soft Skill', 'Experience', or 'Tool'. Mark each as 'matched', 'partial', or 'missing' based on the resume content. Assign importance 'high', 'medium', or 'low' based on the JD.
 
 INPUT:
 RESUME: ${resumeText}
@@ -593,6 +604,14 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
   "baseline_score": 60,
   "improvement_notes": ["string"],
   "audience_alignment_notes": "string",
+  "heatmap": [
+    {
+      "skill": "string",
+      "match": "matched" | "partial" | "missing",
+      "importance": "high" | "medium" | "low",
+      "category": "Hard Skill" | "Soft Skill" | "Experience" | "Tool"
+    }
+  ],
   "rejection_reasons": ["string"],
   "star_stories": [
     { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" }

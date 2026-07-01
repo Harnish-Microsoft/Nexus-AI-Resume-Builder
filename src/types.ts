@@ -91,6 +91,13 @@ export interface ResumeTemplate {
   };
 }
 
+export interface HeatmapItem {
+  skill: string;
+  match: 'matched' | 'partial' | 'missing';
+  importance: 'high' | 'medium' | 'low';
+  category: 'Hard Skill' | 'Soft Skill' | 'Experience' | 'Tool';
+}
+
 export interface SuitabilityResult {
   verdict: "Strong Match" | "Stretch Role" | "Not Recommended";
   matchScore: number;
@@ -103,6 +110,7 @@ export interface SuitabilityResult {
     severity: 'low' | 'medium' | 'high';
   }[];
   readinessScore?: number;
+  heatmap?: HeatmapItem[];
 }
 
 export interface StarStory {
