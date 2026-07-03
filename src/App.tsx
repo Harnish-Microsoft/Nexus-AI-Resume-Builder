@@ -64,8 +64,7 @@ import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
-import { ResumeData, SuitabilityResult, Certification, MasterResume, HeatmapItem } from './types';
-import ATSHeatmap from './components/ATSHeatmap';
+import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
 import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
@@ -4187,10 +4186,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   </div>
                                 )}
 
-                                {suitabilityResult.heatmap && suitabilityResult.heatmap.length > 0 && (
-                                  <ATSHeatmap data={suitabilityResult.heatmap} isDarkMode={isDarkMode} />
-                                )}
-
                                 {suitabilityResult.critique && suitabilityResult.critique.length > 0 && (
                                   <div className="border-t border-black/10 dark:border-white/10 pt-4 mt-2">
                                     <div className="flex items-center gap-2 mb-3">
@@ -4451,12 +4446,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                         <li key={i}>{note}</li>
                                       ))}
                                     </ul>
-                                  </div>
-                                )}
-
-                                {results[activeAudience].heatmap && results[activeAudience].heatmap.length > 0 && (
-                                  <div className="mt-4 pt-4 border-t border-black/10 dark:border-white/10">
-                                    <ATSHeatmap data={results[activeAudience].heatmap} isDarkMode={isDarkMode} />
                                   </div>
                                 )}
 

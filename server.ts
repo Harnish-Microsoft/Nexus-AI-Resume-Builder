@@ -33,16 +33,23 @@ const app = admin.apps.length
       projectId: firebaseConfig.projectId,
     });
 
+let firestoreApp;
+try {
+  firestoreApp = admin.app("firestore");
+} catch {
+  firestoreApp = admin.initializeApp({}, "firestore");
+}
+
 // Robust Firestore initialization: fallback to default database if specific ID fails or is not provided
 let db: admin.firestore.Firestore;
 try {
   const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "") 
     ? firebaseConfig.firestoreDatabaseId 
     : undefined;
-  db = getFirestore(app, dbId);
+  db = getFirestore(firestoreApp, dbId);
 } catch (e) {
-  console.warn("[Server] Failed to initialize Firestore with specified database ID, falling back to default.");
-  db = getFirestore(app);
+  console.warn("[Server] Failed to initialize Firestore with specified database ID, falling back to default.", e);
+  db = getFirestore(firestoreApp);
 }
 
 // Helper to get API keys from Firestore securely
