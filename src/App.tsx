@@ -73,7 +73,7 @@ import { RouterConfig } from './services/aiRouter';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
 const LinkedInImporter = lazy(() => import('./components/LinkedInImporter').then(m => ({ default: m.LinkedInImporter })));
-const ResumeJsonViewer = lazy(() => import('./components/ResumeJsonViewer').then(m => ({ default: m.ResumeJsonViewer })));
+const ResumeJsonModal = lazy(() => import('./components/ResumeJsonModal').then(m => ({ default: m.ResumeJsonModal })));
 const CareerQuiz = lazy(() => import('./components/CareerQuiz').then(m => ({ default: m.CareerQuiz })));
 const JobTracker = lazy(() => import('./components/JobTracker').then(m => ({ default: m.JobTracker })));
 const SkillExtractor = lazy(() => import('./components/SkillExtractor').then(m => ({ default: m.SkillExtractor })));
@@ -489,8 +489,18 @@ export default function App() {
           if (docSnap && docSnap.exists()) {
             const data = docSnap.data();
             setShowTermsModal(false);
-            if (data.masterResumes) {
+            if (data.masterResumes && Array.isArray(data.masterResumes) && data.masterResumes.length > 0) {
               setMasterResumes(data.masterResumes);
+              localStorage.setItem('masterResumes', JSON.stringify(data.masterResumes));
+              
+              // If we just loaded from Firestore, don't trigger an immediate sync back
+              isInitialLoad.current = true; 
+              setHasUnsavedChanges(false);
+              
+              // Re-enable tracking after a short delay
+              setTimeout(() => {
+                isInitialLoad.current = false;
+              }, 1000);
             } else if (data.masterResume) {
               // Backward compatibility
                 setResumeText(data.masterResume);
@@ -1531,6 +1541,35 @@ export default function App() {
       showToast("Failed to generate report", "error");
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const syncResumesFromFirestore = async () => {
+    if (!user) {
+      showToast("Please sign in to sync resumes", "error");
+      return;
+    }
+    
+    setIsSyncing(true);
+    try {
+      const docRef = doc(db, 'users', user.uid);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.masterResumes && Array.isArray(data.masterResumes)) {
+          setMasterResumes(data.masterResumes);
+          localStorage.setItem('masterResumes', JSON.stringify(data.masterResumes));
+          showToast(`Successfully synced ${data.masterResumes.length} resumes from cloud`, "success");
+        } else {
+          showToast("No resumes found in cloud", "info");
+        }
+      }
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+      showToast("Failed to sync from cloud", "error");
+    } finally {
+      setIsSyncing(false);
     }
   };
   
@@ -4866,6 +4905,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           resumeSummary={data?.personal_info?.summary || ""}
                           keySkills={typeof data?.skills === 'object' && !Array.isArray(data?.skills) ? Object.values(data.skills).flat() : (data?.skills as string[]) || []}
                           onToolActive={setIsAdditionalToolActive}
+                          onSyncMasterResumes={syncResumesFromFirestore}
                           linkedinProps={{
                             linkedInUrl,
                             setLinkedInUrl,
@@ -5279,7 +5319,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           }}
           isDarkMode={isDarkMode}
         />
-        <ResumeJsonViewer isOpen={showJsonViewer} onClose={() => setShowJsonViewer(false)} />
+        <ResumeJsonModal isOpen={showJsonViewer} onClose={() => setShowJsonViewer(false)} />
         <DriveFolderPicker
           isOpen={isSelectingFolder}
           onClose={() => setIsSelectingFolder(false)}

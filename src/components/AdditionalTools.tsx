@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download, ShieldAlert, Linkedin, Sparkles } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline, generateWhyThisJob, analyzeResumeCritique, selectBestMasterResume } from '../services/geminiService';
+import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline, generateWhyThisJob, analyzeResumeCritique, selectBestMasterResume, rankMasterResumes } from '../services/geminiService';
 import { LinkedInImporter } from './LinkedInImporter';
 import { MasterResumeGenerator } from './MasterResumeGenerator';
 import { MasterResumeManager } from './MasterResumeManager';
+import { ResumeJsonViewer } from './ResumeJsonViewer';
 import { NexusProInsights } from './NexusProInsights';
 import { ApiDiagnostics } from './ApiDiagnostics';
 import { MasterResume } from '../types';
@@ -32,6 +33,7 @@ interface AdditionalToolsProps {
   resumeSummary?: string;
   keySkills?: string[];
   onToolActive?: (isActive: boolean) => void;
+  onSyncMasterResumes?: () => void;
   linkedinProps?: any;
 }
 
@@ -59,9 +61,13 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   resumeSummary = "",
   keySkills = [],
   onToolActive,
-  linkedinProps
+  linkedinProps,
+  onSyncMasterResumes
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline' | 'whyThisJob' | 'linkedin' | 'masterResumeGenerator' | 'masterResumeManager' | 'audioFeedback' | 'diagnostics' | null>(null);
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline' | 'whyThisJob' | 'linkedin' | 'masterResumeGenerator' | 'masterResumeManager' | 'resumeMatcher' | 'audioFeedback' | 'diagnostics' | null>(null);
+  const [previewResume, setPreviewResume] = useState<MasterResume | null>(null);
+  const [rankedResumes, setRankedResumes] = useState<any[]>([]);
+  const [matcherOptions, setMatcherOptions] = useState({ generateCoverLetter: false });
 
   useEffect(() => {
     if (onToolActive) {
@@ -83,7 +89,56 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   const [saveName, setSaveName] = useState('');
 
   const showToast = (message: string, type: 'success' | 'error' | 'info') => {
-    // Implement or mock or pass as prop
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    if (type === 'error') setError(message);
+  };
+
+  const handleDownload = (id: string) => {
+    const resume = masterResumes.find(r => r.id === id);
+    if (!resume) return;
+    const blob = new Blob([JSON.stringify(resume.data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${resume.name.replace(/\s+/g, '_')}_master.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePreview = (id: string) => {
+    const resume = masterResumes.find(r => r.id === id);
+    if (resume) setPreviewResume(resume);
+  };
+
+  const runRanking = async () => {
+    if (!jobDescription || masterResumes.length === 0) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const results = await rankMasterResumes(jobDescription, masterResumes, {
+        mode: 'gemini',
+        geminiConfig: { engine: 'gemini', model: engineConfig.gemini.model, apiKey: engineConfig.gemini.apiKey },
+        openaiConfig: { engine: 'openai', model: engineConfig.openai.model, apiKey: engineConfig.openai.apiKey }
+      });
+      setRankedResumes(results);
+      
+      if (matcherOptions.generateCoverLetter && results.length > 0) {
+        const best = masterResumes.find(r => r.id === results[0].id);
+        if (best) {
+          const letter = await generateCoverLetter(jobDescription, JSON.stringify(best.data), targetRole, {
+            mode: 'gemini',
+            geminiConfig: { engine: 'gemini', model: engineConfig.gemini.model, apiKey: engineConfig.gemini.apiKey },
+            openaiConfig: { engine: 'openai', model: engineConfig.openai.model, apiKey: engineConfig.openai.apiKey }
+          });
+          setCoverLetter(letter);
+        }
+      }
+    } catch (e: any) {
+      setError("Ranking failed: " + e.message);
+    }
+    setIsLoading(false);
   };
 
   const runOptimizationForJD = async () => {
@@ -439,19 +494,18 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       {!activeTab ? (
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mb-6">
           <button 
-            onClick={runOptimizationForJD}
-            disabled={isLoading || !jobDescription}
+            onClick={() => setActiveTab('resumeMatcher')} 
             className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
-              isLoading 
-                ? 'opacity-50'
-                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
+              activeTab === 'resumeMatcher' 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
+                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
             }`}
           >
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4"/>
-              <span className="text-[11px] font-bold">Auto-Optimize</span>
+              <span className="text-[11px] font-bold">JD-Resume Matcher</span>
             </div>
-            <span className="text-[9px] opacity-70 text-left leading-tight">AI picks best resume + optimize</span>
+            <span className="text-[9px] opacity-70 text-left leading-tight">Rank 8 resumes against JD</span>
           </button>
           
           <button 
@@ -650,10 +704,127 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
             onDelete={(id) => setMasterResumes(masterResumes.filter(m => m.id !== id))}
             onSetActive={onSetActive}
             onDuplicate={onDuplicate}
+            onDownload={handleDownload}
+            onPreview={handlePreview}
+            onSync={onSyncMasterResumes}
             selectedId={selectedResumeId}
             onSelect={setSelectedResumeId}
             isDarkMode={isDarkMode}
           />
+        </div>
+      )}
+
+      {activeTab === 'resumeMatcher' && (
+        <div className="space-y-6">
+           <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
+              <h4 className="text-sm font-bold mb-3">AI Ranking Engine</h4>
+              <div className="space-y-4">
+                 <label className="flex items-center gap-3 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 rounded border-emerald-500/30 accent-emerald-500" 
+                      checked={matcherOptions.generateCoverLetter}
+                      onChange={e => setMatcherOptions({ ...matcherOptions, generateCoverLetter: e.target.checked })}
+                    />
+                    <span className="text-xs font-bold opacity-70">Auto-generate Cover Letter for top match</span>
+                 </label>
+                 
+                 <button 
+                  onClick={runRanking}
+                  disabled={isLoading || !jobDescription}
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
+                 >
+                   <Sparkles className="w-4 h-4" />
+                   {isLoading ? 'Ranking Resumes...' : 'Rank Master Resumes against JD'}
+                 </button>
+              </div>
+           </div>
+
+           {rankedResumes.length > 0 && (
+             <div className="space-y-4">
+                <h4 className="text-xs font-bold uppercase tracking-widest opacity-50">Ranking Results</h4>
+                {rankedResumes.map((res, i) => (
+                  <div key={res.id} className={`p-4 rounded-xl border ${i === 0 ? 'bg-emerald-500/10 border-emerald-500/40' : (isDarkMode ? 'bg-white/5 border-white/5' : 'bg-black/5 border-black/5')}`}>
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold">{res.name}</span>
+                          {i === 0 && <span className="text-[9px] px-2 py-0.5 bg-emerald-500 text-black font-bold rounded-full uppercase">Best Fit</span>}
+                        </div>
+                        <div className="text-[10px] opacity-60 mt-1">{res.reason}</div>
+                      </div>
+                      <div className="text-xl font-black text-emerald-500">{res.score}%</div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/10">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase opacity-40 block mb-2">ATS Analysis</span>
+                        <p className="text-[10px] leading-relaxed opacity-80">{res.ats_analysis}</p>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase opacity-40 block mb-2">Skill Gap</span>
+                        <div className="flex flex-wrap gap-1">
+                          {res.skill_gap.map((s: string, j: number) => (
+                            <span key={j} className="text-[9px] px-2 py-0.5 bg-red-500/10 text-red-500 rounded border border-red-500/20">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {i === 0 && (
+                      <div className="mt-4 flex gap-2">
+                         <button 
+                          onClick={() => {
+                            setSelectedResumeId(res.id);
+                            onSetActive(res.id);
+                            setActiveTab(null);
+                          }}
+                          className="flex-1 bg-emerald-500 text-black font-bold py-2 rounded-lg text-[10px]"
+                         >
+                           Select & Start Optimization
+                         </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+             </div>
+           )}
+        </div>
+      )}
+
+      {/* Preview Modal */}
+      {previewResume && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+           <div className={`w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border flex flex-col ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/10'}`}>
+              <div className="p-6 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold">{previewResume.name}</h3>
+                    <p className="text-xs opacity-50">Master Resume Preview</p>
+                  </div>
+                </div>
+                <button onClick={() => setPreviewResume(null)} className="p-2 hover:bg-white/10 rounded-full">
+                  <ChevronRight className="w-6 h-6 rotate-90" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                <ResumeJsonViewer data={previewResume.data} isDarkMode={isDarkMode} />
+              </div>
+              <div className="p-6 border-t border-white/5 flex justify-end gap-3">
+                 <button onClick={() => setPreviewResume(null)} className="px-6 py-2 rounded-xl font-bold text-sm bg-white/5 hover:bg-white/10">Close</button>
+                 <button 
+                  onClick={() => {
+                    handleDownload(previewResume.id);
+                  }}
+                  className="px-6 py-2 rounded-xl font-bold text-sm bg-emerald-500 text-black hover:bg-emerald-400"
+                 >
+                   Download JSON
+                 </button>
+              </div>
+           </div>
         </div>
       )}
 

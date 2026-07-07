@@ -369,7 +369,7 @@ const PremiumEnterpriseLoader: React.FC<PremiumEnterpriseLoaderProps> = ({
             <div className="w-10 h-10 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center animate-pulse shrink-0">
               <Workflow size={16} className="text-blue-400" />
             </div>
-            <div flex-col>
+            <div className="flex flex-col">
               <span className="text-[9px] uppercase tracking-widest font-black text-slate-500 block mb-1">System Action</span>
               <AnimatePresence mode="wait">
                 <motion.span 

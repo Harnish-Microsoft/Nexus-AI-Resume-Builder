@@ -1167,6 +1167,55 @@ export async function autoSelectPlayerCoachRole(
   }
 }
 
+export async function rankMasterResumes(
+  jd: string,
+  masters: MasterResume[],
+  config: RouterConfig
+): Promise<{ id: string; name: string; score: number; reason: string; ats_analysis: string; skill_gap: string[] }[]> {
+  if (!masters || masters.length === 0) return [];
+
+  const routedConfig = routeTask('rewrite_resume', config);
+  const prompt = `
+    You are an expert recruitment strategist.
+    Analyze the provided Job Description (JD) and the list of available "Master Resumes".
+    Rank all resumes based on their suitability for the JD.
+    
+    FOR EACH RESUME, PROVIDE:
+    1. A match score (0-100).
+    2. A brief reason for the score.
+    3. A quick ATS optimization analysis (keywords, formatting).
+    4. A list of key missing skills (skill gap).
+    
+    JOB DESCRIPTION:
+    ${jd}
+    
+    AVAILABLE MASTER RESUMES:
+    ${masters.map(m => `ID: ${m.id}\nName: ${m.name}\nData: ${JSON.stringify(m.data).substring(0, 2000)}`).join("\n---\n")}
+    
+    RETURN ONLY JSON:
+    [
+      { 
+        "id": "string", 
+        "name": "string", 
+        "score": number, 
+        "reason": "string", 
+        "ats_analysis": "string", 
+        "skill_gap": ["string"] 
+      }
+    ]
+    Order by score descending.
+  `;
+
+  try {
+    const data = await callAI(prompt, "gemini-3.5-flash", "gemini", routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    return JSON.parse(resultText || "[]");
+  } catch (error) {
+    console.error("Error ranking master resumes:", error);
+    return masters.map(m => ({ id: m.id, name: m.name, score: 0, reason: "Error in analysis", ats_analysis: "", skill_gap: [] }));
+  }
+}
+
 export async function selectBestMasterResume(
   jd: string,
   masters: MasterResume[],

@@ -1665,7 +1665,29 @@ async function startServer() {
     });
   }
 
+  app.post("/api/match-resume", express.json(), async (req, res) => {
+    const { resumes, jobDescription, generateCoverLetter } = req.body;
+    try {
+        // AI matching logic using Gemini here
+        // ... (simplified representation of AI logic)
+        res.json({ success: true, bestResume: resumes[0], analysis: "...", coverLetter: generateCoverLetter ? "..." : null });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/generate-cover-letter", express.json(), async (req, res) => {
+    const { resume, jobDescription } = req.body;
+    try {
+        // AI cover letter generation logic
+        res.json({ success: true, coverLetter: "..." });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+  });
+
   app.listen(PORT, "0.0.0.0", () => {
+
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
