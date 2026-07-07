@@ -394,17 +394,19 @@ export default function App() {
   };
 
   const handleDuplicateResume = (id: string) => {
-    if (masterResumes.length >= 5) return;
-    const resumeToDuplicate = masterResumes.find(r => r.id === id);
-    if (!resumeToDuplicate) return;
-    const newResume: MasterResume = {
-      ...resumeToDuplicate,
-      id: Date.now().toString(),
-      name: `${resumeToDuplicate.name} (Copy)`,
-      createdAt: Date.now(),
-      isActive: false
-    };
-    setMasterResumes([...masterResumes, newResume]);
+    setMasterResumes(prev => {
+      if (prev.length >= 25) return prev;
+      const resumeToDuplicate = prev.find(r => r.id === id);
+      if (!resumeToDuplicate) return prev;
+      const newResume: MasterResume = {
+        ...resumeToDuplicate,
+        id: Date.now().toString(),
+        name: `${resumeToDuplicate.name} (Copy)`,
+        createdAt: Date.now(),
+        isActive: false
+      };
+      return [...prev, newResume];
+    });
   };
 
   const [resumeText, setResumeText] = useState(() => {
@@ -415,7 +417,7 @@ export default function App() {
   useEffect(() => {
     if (isInitialLoad.current) return;
     if (user) setHasUnsavedChanges(true);
-  }, [resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user]);
+  }, [resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
   const [jobDescription, setJobDescription] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
@@ -870,7 +872,7 @@ export default function App() {
     }, 2000); // Sync 2 seconds after last change
 
     return () => clearTimeout(timeoutId);
-  }, [hasUnsavedChanges, user, resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken]);
+  }, [hasUnsavedChanges, user, resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {

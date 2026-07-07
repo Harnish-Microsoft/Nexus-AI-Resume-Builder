@@ -25,7 +25,7 @@ export const MasterResumeManager: React.FC<MasterResumeManagerProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAdd = () => {
-    if (!newName || resumes.length >= 8) return;
+    if (!newName || resumes.length >= 25) return;
     const newResume: MasterResume = {
       id: Date.now().toString(),
       name: newName,
@@ -40,7 +40,7 @@ export const MasterResumeManager: React.FC<MasterResumeManagerProps> = ({
   };
 
   const handleImportCurrent = () => {
-    if (resumes.length >= 8) return;
+    if (resumes.length >= 25) return;
     const newResume: MasterResume = {
       id: Date.now().toString(),
       name: `Imported ${new Date().toLocaleDateString()}`,
@@ -54,7 +54,7 @@ export const MasterResumeManager: React.FC<MasterResumeManagerProps> = ({
 
   const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || resumes.length >= 8) return;
+    if (!file || resumes.length >= 25) return;
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -82,7 +82,7 @@ export const MasterResumeManager: React.FC<MasterResumeManagerProps> = ({
       <div className="flex justify-between items-center">
           <div className="flex flex-col">
             <h3 className="text-sm font-bold uppercase tracking-widest opacity-60">Manage Master Resumes</h3>
-            <span className="text-[10px] font-bold text-emerald-500">{resumes.length}/8 Resumes Used</span>
+            <span className="text-[10px] font-bold text-emerald-500">{resumes.length}/25 Resumes Used</span>
           </div>
           {onSync && (
             <button 
@@ -115,10 +115,10 @@ export const MasterResumeManager: React.FC<MasterResumeManagerProps> = ({
         </div>
       ))}
       <div className="flex gap-2">
-           <button onClick={() => fileInputRef.current?.click()} disabled={resumes.length >= 8} className="flex-1 flex items-center justify-center gap-2 text-xs font-bold bg-white/5 py-2 rounded-lg hover:bg-white/10 disabled:opacity-50">
+           <button onClick={() => fileInputRef.current?.click()} disabled={resumes.length >= 25} className="flex-1 flex items-center justify-center gap-2 text-xs font-bold bg-white/5 py-2 rounded-lg hover:bg-white/10 disabled:opacity-50">
              <Upload className="w-4 h-4" /> Import JSON
            </button>
-           <button onClick={handleImportCurrent} disabled={resumes.length >= 8} className="flex-1 flex items-center justify-center gap-2 text-xs font-bold bg-white/5 py-2 rounded-lg hover:bg-white/10 disabled:opacity-50">
+           <button onClick={handleImportCurrent} disabled={resumes.length >= 25} className="flex-1 flex items-center justify-center gap-2 text-xs font-bold bg-white/5 py-2 rounded-lg hover:bg-white/10 disabled:opacity-50">
              <FileText className="w-4 h-4" /> Import Current
            </button>
            <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".json" className="hidden" />
@@ -128,7 +128,7 @@ export const MasterResumeManager: React.FC<MasterResumeManagerProps> = ({
                <button onClick={handleAdd} className="px-3 py-2 bg-emerald-500 text-black font-bold text-xs rounded-lg">Add</button>
              </div>
            ) : (
-             <button onClick={() => setIsAdding(true)} disabled={resumes.length >= 8} className="flex-1 flex items-center justify-center gap-2 text-xs font-bold text-emerald-500 border border-emerald-500/30 py-2 rounded-lg disabled:opacity-50">
+             <button onClick={() => setIsAdding(true)} disabled={resumes.length >= 25} className="flex-1 flex items-center justify-center gap-2 text-xs font-bold text-emerald-500 border border-emerald-500/30 py-2 rounded-lg disabled:opacity-50">
                <Plus className="w-4 h-4" /> Add Empty
              </button>
            )}
