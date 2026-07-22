@@ -61,6 +61,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSo
 import { SortableSection } from './components/SortableSection';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Toast, ConfirmDialog } from './components/UI.tsx';
+import { ResumeHealthScore } from './components/ResumeHealthScore';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
@@ -2264,43 +2265,6 @@ export default function App() {
     
     let finalResumeText = resumeText || "";
 
-    // SMART MASTER SELECTION STRATEGY
-    // If there are multiple resumes in Nexus Master, help the user pick the right base
-    if (masterResumes.length > 0) {
-      setOptimizationStatus("Scanning for best master resume profile...");
-      try {
-        // Add artificial delay to show scanning process as requested by user
-        await new Promise(r => setTimeout(r, 800));
-        setOptimizationStatus("Selecting Best Master Resume profile...");
-        
-        const bestId = await selectBestMasterResume(
-          jobDescription || jobUrl || "",
-          masterResumes,
-          getRouterConfig()
-        );
-        
-        let selectedMasterName = masterResumes.length > 0 ? masterResumes[0].name : "Default Profile";
-        
-        if (bestId) {
-          const selectedMaster = masterResumes.find(r => r.id === bestId);
-          if (selectedMaster) {
-            selectedMasterName = selectedMaster.name;
-            setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === bestId })));
-            
-            const masterData = typeof selectedMaster.data === 'string' 
-              ? selectedMaster.data 
-              : JSON.stringify(selectedMaster.data, null, 2);
-              
-            finalResumeText = masterData;
-            setResumeText(masterData);
-          }
-        }
-        showToast(`Using Profile: ${selectedMasterName}`, 'success');
-      } catch (err) {
-        console.error("[Nexus AI] Master selection failed, proceeding with default base:", err);
-      }
-    }
-
     try {
       const finalTargetRole = targetRole || "Professional Candidate";
       let finalMode = mode;
@@ -3632,6 +3596,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </div>
 
                       <div className="space-y-8">
+                        <ResumeHealthScore resumeText={resumeText} isDarkMode={isDarkMode} />
                         <motion.div 
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, ChevronRight, CheckCircle2, AlertCircle, FileText, Copy, Download, ShieldAlert, Sparkles } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateCoverLetter, generateRecruiterMessage, generateWhyThisJob, selectBestMasterResume, rankMasterResumes } from '../services/geminiService';
+import { EngineConfig, EngineType, analyzeSkillGap, generateCoverLetter, generateLinkedInTopChoiceMessage, generateRecruiterMessage, generateWhyThisJob, selectBestMasterResume, rankMasterResumes } from '../services/geminiService';
 import { MasterResumeManager } from './MasterResumeManager';
 import { ResumeJsonViewer } from './ResumeJsonViewer';
 import { ApiDiagnostics } from './ApiDiagnostics';
@@ -61,7 +61,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   linkedinProps,
   onSyncMasterResumes
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'coverLetter' | 'recruiterMessage' | 'whyThisJob' | 'masterResumeManager' | 'resumeMatcher' | 'diagnostics' | null>(null);
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'coverLetter' | 'recruiterMessage' | 'whyThisJob' | 'masterResumeManager' | 'resumeMatcher' | 'diagnostics' | 'topChoiceMsg' | null>(null);
   const [previewResume, setPreviewResume] = useState<MasterResume | null>(null);
   const [rankedResumes, setRankedResumes] = useState<any[]>([]);
   const [matcherOptions, setMatcherOptions] = useState({ generateCoverLetter: false });
@@ -76,6 +76,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   const [coverLetter, setCoverLetter] = useState<string>('');
   const [recruiterMessage, setRecruiterMessage] = useState<string>('');
   const [whyThisJob, setWhyThisJob] = useState<string>('');
+  const [topChoiceMessage, setTopChoiceMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -283,6 +284,35 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(false);
   };
 
+  const runTopChoiceMessage = async () => {
+    if (!resumeText || !jobDescription) {
+      setError("Please ensure both resume and job description are provided.");
+      return;
+    }
+    setError(null);
+    setIsLoading(true);
+    try {
+      const result = await generateLinkedInTopChoiceMessage(jobDescription, resumeText, targetRole, {
+        mode: selectedEngine,
+        geminiConfig: {
+          engine: 'gemini',
+          model: engineConfig.gemini.model,
+          apiKey: engineConfig.gemini.apiKey
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: engineConfig.openai.model,
+          apiKey: engineConfig.openai.apiKey
+        }
+      });
+      setTopChoiceMessage(result);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "Failed to generate Top Choice message.");
+    }
+    setIsLoading(false);
+  };
+
 
   const runCoverLetter = async () => {
     if (!resumeText || !jobDescription) {
@@ -313,49 +343,11 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(false);
   };
 
-  const saveVersion = (customName?: string) => {
-    const timestamp = new Date().toISOString();
-    const newVersion = { 
-      id: Date.now(), 
-      timestamp,
-      name: typeof customName === 'string' ? customName : (saveName || `Version ${new Date(timestamp).toLocaleString()}`),
-      data: { 
-        resumeText, 
-        jobDescription,
-        targetRole,
-        companyName,
-        results: currentResults,
-        activeAudience,
-        selectedAudiences,
-      } 
-    };
-    const newHistory = [newVersion, ...history].slice(0, 50);
-    setHistory(newHistory);
-    localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
-    window.dispatchEvent(new CustomEvent('resumeHistoryUpdated'));
-    if (typeof customName !== 'string') {
-      setSaveName('');
-    }
-  };
-
+  // Placeholder for cover letter download
   const downloadCoverLetterPDF = async () => {
     if (!coverLetter) return;
     setIsLoading(true);
     try {
-      // Save version automatically
-      const timestamp = new Date().toISOString();
-      let generatedName = '';
-      if (companyName && targetRole) {
-        generatedName = `${companyName} - ${targetRole} - Cover Letter - ${new Date(timestamp).toLocaleString()}`;
-      } else if (companyName) {
-        generatedName = `${companyName} - Cover Letter - ${new Date(timestamp).toLocaleString()}`;
-      } else if (targetRole) {
-        generatedName = `${targetRole} - Cover Letter - ${new Date(timestamp).toLocaleString()}`;
-      } else {
-        generatedName = `Cover Letter - ${new Date(timestamp).toLocaleString()}`;
-      }
-      saveVersion(generatedName);
-
       // Generate PDF
       const html = `
         <div style="font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.5; white-space: pre-wrap;">
@@ -366,7 +358,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html, css: '', fonts: [], title: generatedName.replace(/[^a-zA-Z0-9_-]/g, '_') })
+        body: JSON.stringify({ html, css: '', fonts: [], title: 'Cover Letter' })
       });
 
       if (!sessionResponse.ok) {
@@ -386,7 +378,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${generatedName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+      a.download = `Cover_Letter.pdf`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -397,20 +389,6 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       setError(e.message || "Failed to download PDF.");
     }
     setIsLoading(false);
-  };
-
-  const renameVersion = (id: number) => {
-    const newHistory = history.map(v => v.id === id ? { ...v, name: newName } : v);
-    setHistory(newHistory);
-    localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
-    setRenamingId(null);
-    setNewName('');
-  };
-
-  const deleteVersion = (id: number) => {
-    const newHistory = history.filter(v => v.id !== id);
-    setHistory(newHistory);
-    localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
   };
 
   return (
@@ -478,6 +456,21 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
               <span className="text-[11px] font-bold">Recruiter Msg</span>
             </div>
             <span className="text-[9px] opacity-70 text-left leading-tight">Short LinkedIn outreach</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('topChoiceMsg')} 
+            className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
+              activeTab === 'topChoiceMsg' 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
+                : (isDarkMode ? 'glass-card border-white/5 text-white/60 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4"/>
+              <span className="text-[11px] font-bold">Top Choice Msg</span>
+            </div>
+            <span className="text-[9px] opacity-70 text-left leading-tight">LinkedIn Easy Apply msg</span>
           </button>
 
           <button 
@@ -815,6 +808,35 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                 <button 
                   onClick={() => {
                     navigator.clipboard.writeText(whyThisJob);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
+                >
+                  <Copy className="w-3 h-3" />
+                  Copy Text
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {activeTab === 'topChoiceMsg' && (
+        <div className="space-y-4">
+          <button 
+            onClick={runTopChoiceMessage} 
+            disabled={isLoading} 
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
+          >
+            {isLoading ? 'Generating...' : 'Generate Top Choice Message'}
+          </button>
+          {topChoiceMessage && (
+            <div className="space-y-2">
+              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                {topChoiceMessage}
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(topChoiceMessage);
                   }}
                   className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
                 >

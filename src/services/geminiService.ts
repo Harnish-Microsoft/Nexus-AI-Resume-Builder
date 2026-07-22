@@ -5,6 +5,7 @@ import { routeTask, RouterConfig } from "./aiRouter";
 import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport } from "../types";
 import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { categorizeSkills } from "../lib/skillCategorizer";
 
 export interface OptimizationResult {
   personal_info: {
@@ -487,16 +488,26 @@ export async function optimizeResume(
         
         // Apply UI formatting
         // Skills must be grouped into categories.
-        const skillCategories = Object.keys(parsed.skills || {});
-        const formattedSkills: Record<string, string[]> = {};
+        let parsedSkills = parsed.skills || {};
+        let formattedSkills: Record<string, string[]> = {};
+
+        if (Array.isArray(parsedSkills)) {
+          // Flatten array of objects if needed
+          const flatSkills = parsedSkills.map((s: any) => typeof s === 'string' ? s : s.name).filter(Boolean);
+          formattedSkills = categorizeSkills(flatSkills);
+        } else {
+          // Use all categories provided by AI
+          const skillCategories = Object.keys(parsedSkills);
+          skillCategories.forEach(cat => {
+            formattedSkills[cat] = parsedSkills[cat];
+          });
+        }
         
-        // Use all categories provided by AI
-        skillCategories.forEach(cat => {
-          formattedSkills[cat] = parsed.skills[cat];
-        });
         const defaultCats = isLeadershipRole 
           ? ["Strategic Leadership", "Management", "Operations", "Technical Proficiency"]
           : ["Core Technical", "Tools & Frameworks", "Process & Methodology", "Soft Skills"];
+        
+        // Ensure at least 4 categories exist if it's not a categorized object with enough keys
         while (Object.keys(formattedSkills).length < 4) {
           const nextCat = defaultCats.find(c => !formattedSkills[c]);
           if (nextCat) formattedSkills[nextCat] = [];
@@ -560,6 +571,7 @@ ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CON
         4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
         5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
         6. TRUTHFULNESS & GROUNDING (MANDATORY): You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
+        6.1. PRESERVE ALL CERTIFICATIONS: You MUST include ALL certifications present in the source resume. DO NOT omit, drop, or skip any certificates (ensure all 3 or more are listed if they exist in the source).
         7. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
         8. STAR METHODOLOGY: Every bullet should reflect a realistic challenge and outcome. Do NOT force metrics where none existed.
         9. HUMANIZATION: Provide detailed and descriptive operational wording that sounds like a human wrote it. Avoid repetitive sentence structures.
@@ -635,13 +647,19 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         }
 
         // Skills must be grouped into categories.
-        const skillCategories = Object.keys(parsed.skills || {});
-        const formattedSkills: Record<string, string[]> = {};
+        let parsedSkills = parsed.skills || {};
+        let formattedSkills: Record<string, string[]> = {};
         
-        // Use all categories provided by the AI
-        skillCategories.forEach(cat => {
-          formattedSkills[cat] = parsed.skills[cat];
-        });
+        if (Array.isArray(parsedSkills)) {
+          const flatSkills = parsedSkills.map((s: any) => typeof s === 'string' ? s : s.name).filter(Boolean);
+          formattedSkills = categorizeSkills(flatSkills);
+        } else {
+          // Use all categories provided by the AI
+          const skillCategories = Object.keys(parsedSkills);
+          skillCategories.forEach(cat => {
+            formattedSkills[cat] = parsedSkills[cat];
+          });
+        }
 
         // Fill in missing categories if less than 4
         const defaultCats = isLeadershipRole 
@@ -831,6 +849,39 @@ export async function extractSkillsFromJD(
   }
 }
 
+export async function performSkillAssessment(
+  resumeText: string,
+  config: RouterConfig
+): Promise<{ extractedSkills: string[], faangSuggestions: string[] }> {
+  const routedConfig = routeTask('extract_skills', config);
+  const prompt = `
+    ROLE: Expert Career Coach & FAANG Recruiter.
+    TASK: Analyze the user's resume and perform a skills assessment.
+
+    1. EXTRACT all clear technical skills, tools, and expertise from the resume.
+    2. SUGGEST additional high-demand FAANG-level skills (e.g., advanced system design, specific ML frameworks like PyTorch/TensorFlow, cloud native tech like Kubernetes/Service Mesh, language-specific advanced frameworks like Go/Rust/TypeScript advanced patterns) that the user might already possess based on their experience or should consider adding to stay competitive.
+
+    RESUME:
+    ${resumeText}
+
+    Return strictly JSON:
+    {
+      "extractedSkills": ["skill1", "skill2"],
+      "faangSuggestions": ["suggestion1", "suggestion2"]
+    }
+  `;
+
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    return JSON.parse(resultText || '{"extractedSkills":[], "faangSuggestions":[]}');
+  } catch (error) {
+    console.error('Skill assessment AI error:', error);
+    return { extractedSkills: [], faangSuggestions: [] };
+  }
+}
+
+
 export async function analyzeBestAudiences(
   jobDescription: string,
   targetRole: string,
@@ -927,6 +978,55 @@ export async function analyzeBestAudiences(
 
 
 
+
+export async function generateLinkedInTopChoiceMessage(
+  jobDescription: string,
+  resumeText: string,
+  targetRole: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('linkedin_top_choice', config);
+  const prompt = `
+      You are an expert career strategist and LinkedIn profile optimizer. 
+      LinkedIn allows users to add a "Top Choice" message (up to 300 characters) when applying via Easy Apply to stand out to recruiters.
+      
+      TASK: Write a compelling, punchy "Top Choice" message that:
+      1. Expresses genuine enthusiasm for this specific role and company.
+      2. Briefly mentions the candidate's strongest matching qualification (from the resume) for this job (from the JD).
+      3. Explains why this specific company aligns with their career goals.
+      
+      CONSTRAINTS:
+      - STRICTLY MAX 280 characters.
+      - Be direct, professional, and personalized.
+      - Do NOT use generic buzzwords.
+      - Do NOT include placeholders like "[Company Name]". Use the real names if found, otherwise use "your team".
+      
+      JOB DESCRIPTION: ${jobDescription}
+      RESUME: ${resumeText}
+      TARGET ROLE: ${targetRole}
+      
+      Return ONLY the message text. No conversational padding.
+    `;
+
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    let result = data.result || "";
+    
+    // Clean up if AI wrapped in quotes or JSON
+    if (result.includes('{') && result.includes('}')) {
+      try {
+        const jsonStr = extractJson(result);
+        const parsed = JSON.parse(jsonStr);
+        result = parsed.message || parsed.top_choice_message || result;
+      } catch (e) {}
+    }
+    
+    return result.replace(/^["']|["']$/g, '').trim();
+  } catch (error) {
+    console.error("Error generating Top Choice message:", error);
+    return "";
+  }
+}
 
 export async function generateInterviewQuestions(
   jobDescription: string,

@@ -14,7 +14,8 @@ export type TaskType =
   | 'evaluate_suitability'
   | 'linkedin_analysis'
   | 'optimize_headline'
-  | 'optimize_about';
+  | 'optimize_about'
+  | 'linkedin_top_choice';
 
 export interface RouterConfig {
   mode: EngineType | 'production';
@@ -43,6 +44,7 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
       case 'optimize_about':
       case 'rewrite_resume':
       case 'cover_letter':
+      case 'linkedin_top_choice':
         selectedEngine = 'gemini';
         break;
 

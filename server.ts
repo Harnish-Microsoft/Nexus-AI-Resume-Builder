@@ -221,8 +221,11 @@ async function startServer() {
   app.get("/api/generate-resume-pdf", async (req, res) => {
     try {
       const html = renderResumeToHTML();
+      const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
       const browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        headless: true,
+        executablePath: '/root/.cache/puppeteer/chrome/linux-146.0.7680.153/chrome-linux64/chrome',
+        args: ["--no-sandbox"],
       });
       const page = await browser.newPage();
       await page.setContent(html);
@@ -620,7 +623,7 @@ async function startServer() {
       res.json({ keys });
     } catch (error: any) {
       console.error("Decryption Error:", error);
-      res.status(500).json({ error: "Failed to decrypt API keys" });
+      res.status(500).json({ error: "Failed to decrypt API keys", details: error.message });
     }
   });
 
@@ -1522,14 +1525,8 @@ async function startServer() {
       
       browser = await puppeteer.launch({
         headless: true,
-        executablePath: executablePath || undefined,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--font-render-hinting=none",
-        ],
+        executablePath: '/root/.cache/puppeteer/chrome/linux-146.0.7680.153/chrome-linux64/chrome',
+        args: ["--no-sandbox"],
       });
 
       const page = await browser.newPage();

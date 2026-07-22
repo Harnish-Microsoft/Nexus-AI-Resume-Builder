@@ -16,14 +16,39 @@ interface SkillExtractorProps {
 export const SkillExtractor: React.FC<SkillExtractorProps> = ({ isDarkMode, resumeData, onBack, engineConfig, initialJd }) => {
   const [jdText, setJdText] = useState(initialJd || '');
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isAssessing, setIsAssessing] = useState(false);
   const [extractedData, setExtractedData] = useState<{
     missing: string[];
     matching: string[];
     priority: string[];
   } | null>(null);
+  const [skillAssessment, setSkillAssessment] = useState<{
+    extractedSkills: string[];
+    faangSuggestions: string[];
+  } | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<{ type: string; index: number } | null>(null);
   const [status, setStatus] = useState<'active' | 'paused' | 'completed' | 'idle'>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  const handleAssessSkills = async () => {
+    setIsAssessing(true);
+    setError(null);
+    try {
+      const resumeText = typeof resumeData === 'string' ? resumeData : JSON.stringify(resumeData);
+      const routerConfig: RouterConfig = {
+        mode: 'production',
+        geminiConfig: engineConfig.gemini,
+        openaiConfig: engineConfig.openai
+      };
+      const result = await import('../services/geminiService').then(s => s.performSkillAssessment(resumeText, routerConfig));
+      setSkillAssessment(result);
+    } catch (error: any) {
+      console.error('Assessment failed:', error);
+      setError("Failed to perform skill assessment.");
+    } finally {
+      setIsAssessing(false);
+    }
+  };
 
   const masterSkills = Array.isArray((masterResume as any).core_competencies) 
     ? (masterResume as any).core_competencies.map((c: any) => c.skill)
@@ -213,6 +238,16 @@ export const SkillExtractor: React.FC<SkillExtractorProps> = ({ isDarkMode, resu
                       </>
                     )}
                   </button>
+                  <button
+                    onClick={() => handleAssessSkills()}
+                    disabled={isAssessing}
+                    className={`w-full mt-4 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all ${
+                      isDarkMode ? 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    }`}
+                  >
+                    {isAssessing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <BrainCircuit className="w-4 h-4" />}
+                    {isAssessing ? 'Analyzing...' : 'Run FAANG Skills Assessment'}
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-6">
@@ -325,18 +360,32 @@ export const SkillExtractor: React.FC<SkillExtractorProps> = ({ isDarkMode, resu
 
           </div>
 
-          <div className={`p-8 rounded-3xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-            <h3 className="font-bold mb-4 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-emerald-500" />
-              Recruiter Insight: Why Portal Keywords Matter
-            </h3>
-            <p className="text-sm opacity-70 leading-relaxed max-w-4xl">
-              Job portals like Workday and LinkedIn use "Elastic Search" to filter thousands of candidates before a human even sees your resume. 
-              Recruiters search via specific keywords (e.g., "Azure Architect", "Governance", "FinOps"). 
-              Even if these are on your resume, if they aren't explicitly listed in the portal's <strong>Skills Section</strong>, you might be filtered out. 
-              The list above helps you bridge that gap instantly.
-            </p>
-          </div>
+          {skillAssessment && (
+            <div className={`p-8 rounded-3xl border shadow-xl ${isDarkMode ? 'glass-panel border-white/10' : 'bg-white border-black/10'}`}>
+              <h3 className="text-xl font-bold mb-6 flex items-center gap-3">
+                <BrainCircuit className="w-6 h-6 text-blue-500" />
+                FAANG Skills Assessment
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                  <h4 className="font-bold mb-4 opacity-70">Skills Detected</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {skillAssessment.extractedSkills.map((s, i) => (
+                      <span key={i} className="px-3 py-1 rounded-full text-xs font-bold bg-gray-500/10">{s}</span>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h4 className="font-bold mb-4 text-blue-500">FAANG Suggestions</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {skillAssessment.faangSuggestions.map((s, i) => (
+                      <span key={i} className="px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-500">{s}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
