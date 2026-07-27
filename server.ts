@@ -11,7 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { google } from "googleapis";
 import stream from "stream";
 import fs from "fs";
-import admin from "firebase-admin";
+import * as admin from "firebase-admin";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import * as Optimization from "./server/optimization.ts";
 import { renderResumeToHTML } from "./server/resumeTemplate.ts";
@@ -26,30 +26,37 @@ import { saveResumeVersion } from "./server/memory";
 dotenv.config();
 
 // Initialize Firebase Admin
-const firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8"));
-const app = admin.apps.length 
-  ? admin.apps[0] 
-  : admin.initializeApp({
-      projectId: firebaseConfig.projectId,
-    });
+const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+if (!fs.existsSync(firebaseConfigPath)) {
+  console.error("firebase-applet-config.json not found. Skipping Firebase initialization.");
+} else {
+  const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+  
+  // Safe initialization
+  const app = (admin && admin.apps && admin.apps.length > 0)
+    ? admin.apps[0]
+    : admin.initializeApp({
+        projectId: firebaseConfig.projectId,
+      });
 
-let firestoreApp;
-try {
-  firestoreApp = admin.app("firestore");
-} catch {
-  firestoreApp = admin.initializeApp({}, "firestore");
-}
+  let firestoreApp;
+  try {
+    firestoreApp = admin.app("firestore");
+  } catch {
+    firestoreApp = admin.initializeApp({}, "firestore");
+  }
 
-// Robust Firestore initialization: fallback to default database if specific ID fails or is not provided
-let db: admin.firestore.Firestore;
-try {
-  const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "") 
-    ? firebaseConfig.firestoreDatabaseId 
-    : undefined;
-  db = getFirestore(firestoreApp, dbId);
-} catch (e) {
-  console.warn("[Server] Failed to initialize Firestore with specified database ID, falling back to default.", e);
-  db = getFirestore(firestoreApp);
+  // Robust Firestore initialization: fallback to default database if specific ID fails or is not provided
+  let db: admin.firestore.Firestore;
+  try {
+    const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "")
+      ? firebaseConfig.firestoreDatabaseId
+      : undefined;
+    db = getFirestore(firestoreApp, dbId);
+  } catch (e) {
+    console.warn("[Server] Failed to initialize Firestore with specified database ID, falling back to default.", e);
+    db = getFirestore(firestoreApp);
+  }
 }
 
 // Helper to get API keys from Firestore securely
