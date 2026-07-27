@@ -11,7 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { google } from "googleapis";
 import stream from "stream";
 import fs from "fs";
-import * as admin from "firebase-admin";
+import admin from "firebase-admin";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import * as Optimization from "./server/optimization.ts";
 import { renderResumeToHTML } from "./server/resumeTemplate.ts";
@@ -33,11 +33,17 @@ if (!fs.existsSync(firebaseConfigPath)) {
   const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
   
   // Safe initialization
-  const app = (admin && admin.apps && admin.apps.length > 0)
-    ? admin.apps[0]
-    : admin.initializeApp({
-        projectId: firebaseConfig.projectId,
-      });
+  let app;
+  try {
+    app = (admin && admin.apps && Array.isArray(admin.apps) && admin.apps.length > 0)
+      ? admin.apps[0]
+      : admin.initializeApp({
+          projectId: firebaseConfig.projectId,
+        });
+  } catch (err) {
+    console.error("Firebase app initialization failed:", err);
+    // Fallback or handle accordingly if needed
+  }
 
   let firestoreApp;
   try {
@@ -231,7 +237,7 @@ async function startServer() {
       const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
       const browser = await puppeteer.launch({
         headless: true,
-        executablePath: '/root/.cache/puppeteer/chrome/linux-146.0.7680.153/chrome-linux64/chrome',
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: ["--no-sandbox"],
       });
       const page = await browser.newPage();
@@ -1532,7 +1538,7 @@ async function startServer() {
       
       browser = await puppeteer.launch({
         headless: true,
-        executablePath: '/root/.cache/puppeteer/chrome/linux-146.0.7680.153/chrome-linux64/chrome',
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: ["--no-sandbox"],
       });
 
