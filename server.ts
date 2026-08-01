@@ -240,14 +240,17 @@ async function startServer() {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: ["--no-sandbox"],
       });
-      const page = await browser.newPage();
-      await page.setContent(html);
-      const pdf = await page.pdf({ format: 'A4', printBackground: true });
-      await browser.close();
-
-      res.contentType("application/pdf");
-      res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
-      res.send(pdf);
+      try {
+        const page = await browser.newPage();
+        await page.setContent(html, { waitUntil: 'networkidle0' });
+        await page.evaluateHandle('document.fonts.ready');
+        const pdf = await page.pdf({ format: 'A4', printBackground: true });
+        res.contentType("application/pdf");
+        res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
+        res.send(pdf);
+      } finally {
+        await browser.close();
+      }
     } catch (error) {
       console.error(error);
       res.status(500).send("Failed to generate PDF");
@@ -1634,7 +1637,8 @@ async function startServer() {
         format: "A4",
         printBackground: true,
         displayHeaderFooter: false,
-        preferCSSPageSize: true
+        preferCSSPageSize: true,
+        margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
       });
 
       res.setHeader("Content-Type", "application/pdf");
