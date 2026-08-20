@@ -246,7 +246,7 @@ async function startServer() {
         await page.evaluateHandle('document.fonts.ready');
         const pdf = await page.pdf({ format: 'A4', printBackground: true });
         res.contentType("application/pdf");
-        res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
+        res.setHeader('Content-Disposition', 'inline; filename="resume.pdf"');
         res.send(pdf);
       } finally {
         await browser.close();
@@ -767,6 +767,16 @@ async function startServer() {
       let geminiKey = keys?.gemini || "";
       let openaiKey = keys?.openai || "";
       
+      // 1.1 Fetch Master Resumes from Firestore
+      let masterResumes: any[] = [];
+      try {
+        const snapshot = await db.collection("master_resumes").get();
+        masterResumes = snapshot.docs.map(doc => doc.data());
+        console.log(`[Pipeline] Fetched ${masterResumes.length} master resumes.`);
+      } catch (err) {
+        console.warn("[Pipeline] Failed to fetch master resumes, proceeding without them:", err);
+      }
+      
       // Only fall back to system key if NO identity is provided (Guest Mode)
       if (!idToken) {
         geminiKey = geminiKey || process.env.GEMINI_API_KEY || "";
@@ -879,6 +889,12 @@ async function startServer() {
         ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
         ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
         
+        ${masterResumes.length > 0 ? `
+          STRATEGIC REFERENCE (MASTER RESUMES TO LEARN FROM):
+          Analyze these master resumes for style, formatting, and high-impact language choices.
+          ${masterResumes.map(r => JSON.stringify(r)).join("\n---\n")}
+        ` : ''}
+
         CRITICAL INPUT TRACKING:
         The input contains exactly ${roleCount} separate job roles. 
         You ARE REQUIRED to output exactly ${roleCount} items in the "experience" array.

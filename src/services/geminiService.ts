@@ -144,7 +144,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   }
 
   // Fallback Logic definitions
-  const FALLBACK_GEMINI_MODEL = "gemini-3.5-flash"; // Global fallback now 3.5 flash
+  const FALLBACK_GEMINI_MODEL = "gemini-3.6-flash"; // Global fallback now 3.6 flash
   const LITE_GEMINI_MODEL = "gemini-3.1-flash-lite"; // Feature fallback
   
   if (engine === 'gemini') {
@@ -162,17 +162,17 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
       const getFallbackChain = (primaryModel: string): string[] => {
         // High Thinking: Prioritize pro-preview for complex tasks
         if (primaryModel === 'gemini-3.1-pro-preview' || primaryModel === 'gemini-pro') {
-          return ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+          return ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
         }
         if (primaryModel === 'gemini-3.1-flash-lite') {
-          return ['gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+          return ['gemini-3.1-flash-lite', 'gemini-3.6-flash'];
         }
-        if (primaryModel === 'gemini-3.5-flash') {
-          return ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+        if (primaryModel === 'gemini-3.6-flash') {
+          return ['gemini-3.6-flash', 'gemini-3.1-flash-lite'];
         }
         
         // Default catch-all fallback
-        return [primaryModel, 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+        return [primaryModel, 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
       };
 
       const chain = getFallbackChain(model);
@@ -184,8 +184,8 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
         const cleanModel = modelToTry
           .replace(':thinking', '')
           .replace('gemini-1.5-pro', 'gemini-3.1-pro-preview')
-          .replace('gemini-1.5-flash', 'gemini-3.5-flash') // Redirect old flash to 3.5 flash
-          .replace('gemini-3-flash-preview', 'gemini-3.5-flash') // Clean up renamed models
+          .replace('gemini-1.5-flash', 'gemini-3.6-flash') // Redirect old flash to 3.5 flash
+          .replace('gemini-3-flash-preview', 'gemini-3.6-flash') // Clean up renamed models
           .replace('gemini-pro', 'gemini-3.1-pro-preview');
               
         const config: any = {
@@ -360,9 +360,9 @@ export async function evaluateSuitability(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.5-flash';
+    modelToUse = 'gemini-3.6-flash';
   } else if (!modelToUse) {
-    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash';
+    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.6-flash';
   }
 
   const prompt = `
@@ -441,10 +441,10 @@ export async function optimizeResume(
     if (config.mode === 'production') {
       // In Hybrid mode, fastMode forces Gemini to save costs
       engineToUse = 'gemini';
-      modelToUse = 'gemini-3.5-flash';
+      modelToUse = 'gemini-3.6-flash';
     } else {
       // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.5-flash';
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.6-flash';
     }
   }
 
@@ -893,9 +893,9 @@ export async function analyzeBestAudiences(
   
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.5-flash';
+    modelToUse = 'gemini-3.6-flash';
   } else if (!modelToUse) {
-    modelToUse = 'gemini-3.5-flash';
+    modelToUse = 'gemini-3.6-flash';
   }
   const prompt = `
     Analyze the following Job Description and Target Role.
@@ -1257,7 +1257,7 @@ export async function autoSelectPlayerCoachRole(
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3.5-flash', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, 'gemini-3.6-flash', 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.isPlayerCoach;
@@ -1307,7 +1307,7 @@ export async function rankMasterResumes(
   `;
 
   try {
-    const data = await callAI(prompt, "gemini-3.5-flash", "gemini", routedConfig.apiKey);
+    const data = await callAI(prompt, "gemini-3.6-flash", "gemini", routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     return JSON.parse(resultText || "[]");
   } catch (error) {
@@ -1366,7 +1366,7 @@ export async function selectBestMasterResume(
     const ai = new GoogleGenAI({ apiKey });
     
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: { responseMimeType: "application/json" }
     });
