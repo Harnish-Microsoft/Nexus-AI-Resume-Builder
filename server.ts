@@ -1616,11 +1616,11 @@ async function startServer() {
                  Every resume text node (name, section headings, job titles, bullets)
                  already carries its own explicit inline font-size from the editor's
                  formatting engine (e.g. 18pt name, 13pt section headings, 10.5pt body).
-                 A `!important` rule here would beat those inline styles outright and
+                 An '!important' rule here would beat those inline styles outright and
                  flatten the whole document down to one tiny, illegible size -
                  destroying the visual hierarchy the user configured on-screen.
                  Fitting long resumes to the page is instead handled by the
-                 `transform: scale(printScale)` rule injected from the frontend
+                 'transform: scale(printScale)' rule injected from the frontend
                  (see scaleCSS in App.tsx), which shrinks the whole layout
                  proportionally so text stays readable and properly sized relative
                  to everything else. */
