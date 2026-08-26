@@ -1546,6 +1546,16 @@ async function startServer() {
     await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title, session.scale);
   });
 
+  // Counts pages in a Chrome-generated PDF. Chrome/Skia writes object dictionaries
+  // uncompressed, so each page appears as a literal "/Type /Page" (the page-tree
+  // node is "/Type /Pages", hence the negative lookahead). Returns 0 if the buffer
+  // can't be parsed, which callers treat as "unknown" and fail open.
+  function countPdfPages(buffer: Uint8Array): number {
+    const raw = Buffer.from(buffer).toString('latin1');
+    const matches = raw.match(/\/Type\s*\/Page(?![sA-Za-z0-9])/g);
+    return matches ? matches.length : 0;
+  }
+
   async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume", scale?: number) {
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
@@ -1666,30 +1676,69 @@ async function startServer() {
       // Wait for Google Fonts to load
       await page.evaluateHandle('document.fonts.ready');
 
-      // Shrink-to-fit is done with Chrome's OWN print scale rather than a CSS
-      // 'transform: scale()' on the container. Chrome paginates using the
-      // UNTRANSFORMED layout box, so a CSS transform shrinks the painted pixels
-      // but not the page breaks: you get small, narrow content with a dead band
-      // at the bottom of every sheet plus extra pages. page.pdf({ scale }) is the
-      // same knob as the "Scale" field in Chrome's print dialog and repaginates
-      // correctly, so the layout stays full-width and properly aligned.
-      // Chrome only accepts 0.1 - 2.0; clamp to a sane, still-legible floor.
-      const printScale = Math.min(1, Math.max(0.6, Number(scale) || 1));
+      // Hard 2-page guarantee.
+      //
+      // The frontend can only estimate a fit factor from the on-screen preview,
+      // which has different geometry from the print box - so an estimate alone
+      // regularly lands on 3 pages. Instead we close the loop: render, count the
+      // pages Chrome actually produced, and binary-search for the LARGEST scale
+      // that still fits. That both guarantees the page count and keeps the text as
+      // large (and therefore as readable) as possible.
+      //
+      // Shrink-to-fit uses page.pdf({ scale }) - Chrome's own print scale, which
+      // repaginates correctly - rather than a CSS transform, which does not: Chrome
+      // computes page breaks from the untransformed layout box, so a transform
+      // shrinks the painted pixels but leaves the pagination alone.
+      const MAX_PAGES = 2;
+      const MIN_SCALE = 0.5; // below this the resume stops being comfortably legible
 
-      // Generate PDF with Hard 2-Page Limit
-      const pdfBuffer = await page.pdf({
+      const renderAt = (s: number) => page.pdf({
         format: "A4",
         printBackground: true,
         displayHeaderFooter: false,
         preferCSSPageSize: true,
-        scale: printScale,
+        scale: s,
         margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
       });
+
+      // Full size first - most resumes already fit and need no shrinking at all.
+      let pdfBuffer = await renderAt(1);
+      let pageCount = countPdfPages(pdfBuffer);
+
+      // pageCount === 0 means the buffer couldn't be parsed; fail open and ship it.
+      if (pageCount > MAX_PAGES) {
+        let lo = MIN_SCALE;
+        let hi = 1;
+        let best: Uint8Array | null = null;
+
+        // Seed the search with the frontend's estimate so we converge faster.
+        const hint = Number(scale);
+        const probes: number[] = [];
+        if (Number.isFinite(hint) && hint > lo && hint < hi) probes.push(hint);
+        for (let i = probes.length; i < 5; i++) probes.push(NaN);
+
+        for (const seeded of probes) {
+          const mid = Number.isFinite(seeded) ? seeded : (lo + hi) / 2;
+          const candidate = await renderAt(mid);
+          const pages = countPdfPages(candidate);
+          if (pages > 0 && pages <= MAX_PAGES) {
+            best = candidate; // fits - try to grow back toward full size
+            lo = mid;
+          } else {
+            hi = mid; // still too long - shrink further
+          }
+        }
+
+        // If even MIN_SCALE overflows, emit that rather than an oversized document.
+        pdfBuffer = best ?? await renderAt(MIN_SCALE);
+        pageCount = countPdfPages(pdfBuffer);
+      }
 
       res.setHeader("Content-Type", "application/pdf");
       const safeTitle = title.replace(/[^a-zA-Z0-9_-]/g, '_');
       res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.pdf"`);
       res.setHeader("Content-Length", pdfBuffer.length);
+      res.setHeader("X-Resume-Page-Count", String(pageCount));
       res.end(pdfBuffer);
 
     } catch (error: any) {
