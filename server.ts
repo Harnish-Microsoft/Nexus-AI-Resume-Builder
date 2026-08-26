@@ -1594,13 +1594,41 @@ async function startServer() {
                 print-color-adjust: exact;
               }
 
-              /* 2. STRETCH CONTENT HORIZONTALLY */
-              #resume-container, .resume-page {
+              /* 2. PAGE GEOMETRY - must mirror the on-screen preview exactly.
+                 The preview's .resume-page (see index.css) is 210mm wide with 25mm
+                 padding, giving a 160mm text column. printScale is measured against
+                 THAT geometry, so the PDF must reproduce the same 160mm column or
+                 the text re-wraps into a different number of lines and the layout
+                 drifts out of alignment.
+
+                 With @page margin 10mm the printable box is 190mm, so 15mm of side
+                 padding on .resume-page reproduces the 160mm column (190 - 2*15).
+
+                 Critically we must also neutralise min-width/min-height: index.css
+                 pins .resume-page to min-width:210mm / min-height:297mm, and those
+                 rules ARE injected into this document along with the rest of the
+                 app styles. Without overriding them the page is forced to 210mm
+                 inside a 190mm print box, so the right edge overflows and is
+                 clipped - which reads as "broken alignment". */
+              #resume-container {
                 width: 100% !important;
                 max-width: 100% !important;
+                min-width: 0 !important;
                 margin: 0 auto !important;
-                /* Overrides the massive 25mm internal padding from React to use the full page width */
-                padding: 0mm 5mm !important; 
+                padding: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
+              }
+
+              .resume-page {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                height: auto !important;
+                min-height: 0 !important;
+                margin: 0 auto !important;
+                padding: 0 15mm !important;
+                display: block !important; /* flex containers paginate badly in print */
                 box-shadow: none !important;
                 border: none !important;
               }
