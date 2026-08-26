@@ -1587,6 +1587,22 @@ export default function App() {
       const resumeEl = document.getElementById('resume-container');
       if (!resumeEl) return;
 
+      // Preserve whatever inline styles were already there so this purely-for-measurement
+      // mutation never leaks into the live DOM. Leaving `transform: none; width: 100%`
+      // permanently inline on #resume-container was the root cause of two bugs:
+      // 1) The PDF export captures this element's outerHTML, so the stale inline
+      //    `transform: none` would out-rank the exported document's own
+      //    `transform: scale(printScale)` rule (inline style beats a non-!important
+      //    external rule), silently disabling the shrink-to-fit scaling and leaving
+      //    the widened (`width: calc(100% / printScale)`) content mis-aligned/overflowing.
+      // 2) #resume-container is also observed by the auto-zoom ResizeObserver
+      //    (see calculateZoom below). Mutating its size here fired that observer and
+      //    fed it distorted measurements, so the on-screen zoom (and therefore the
+      //    rendered font size) could ratchet down a little more each time the resume
+      //    content changed/regenerated.
+      const prevTransform = resumeEl.style.transform;
+      const prevWidth = resumeEl.style.width;
+
       // Temporarily remove any scale to measure true physical height
       resumeEl.style.transform = 'none';
       resumeEl.style.width = '100%';
@@ -1596,6 +1612,11 @@ export default function App() {
       // Safe max height for exactly 2 pages is roughly 2050px.
       const MAX_SAFE_HEIGHT = 2050;
       const actualHeight = resumeEl.scrollHeight;
+
+      // Restore the element's inline styles immediately after measuring so no
+      // stale override is left behind for the exporter or the resize observer.
+      resumeEl.style.transform = prevTransform;
+      resumeEl.style.width = prevWidth;
 
       if (actualHeight > MAX_SAFE_HEIGHT) {
         // Calculate how much we need to shrink it to fit
@@ -1644,8 +1665,10 @@ export default function App() {
 
       const scaleCSS = `
         #resume-container {
-          transform: scale(${printScale});
-          transform-origin: top left;
+          /* !important guarantees this wins even if a stray inline style (e.g. from
+             the on-screen fit measurement) ends up in the captured markup. */
+          transform: scale(${printScale}) !important;
+          transform-origin: top left !important;
           /* Increase width to compensate for the scale down, ensuring it fills the page */
           width: calc(100% / ${printScale}) !important;
         }
@@ -2742,8 +2765,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       const scaleCSS = `
         #resume-container {
-          transform: scale(${printScale});
-          transform-origin: top left;
+          /* !important guarantees this wins even if a stray inline style (e.g. from
+             the on-screen fit measurement) ends up in the captured markup. */
+          transform: scale(${printScale}) !important;
+          transform-origin: top left !important;
           /* Increase width to compensate for the scale down, ensuring it fills the page */
           width: calc(100% / ${printScale}) !important;
         }
