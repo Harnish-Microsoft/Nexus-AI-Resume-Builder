@@ -1,5 +1,6 @@
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
 import { saveAs } from 'file-saver';
+import { formatCertification } from '../lib/certifications';
 
 export const downloadDOCX = async (res: any, targetRole: string, companyName: string, showToast: (msg: string, type: any) => void) => {
   if (!res) return;
@@ -129,7 +130,7 @@ export const downloadDOCX = async (res: any, targetRole: string, companyName: st
               }),
               ...res.certifications.map((cert: string) => 
                 new Paragraph({
-                  text: cert,
+                  text: formatCertification(cert),
                   bullet: { level: 0 },
                 })
               ),

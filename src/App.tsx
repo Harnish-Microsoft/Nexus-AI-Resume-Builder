@@ -102,6 +102,7 @@ import { DriveFolderPicker } from './components/DriveFolderPicker';
 import CorporateProgressLoader from './components/CorporateProgressLoader';
 import { AuthModal } from './components/AuthModal';
 import { TermsModal } from './components/TermsModal';
+import { formatCertification } from './lib/certifications';
 
 import defaultMasterResume from './services/master_resume.json';
 
@@ -2539,7 +2540,7 @@ ${exp.bullets.join('\n')}
 ${projectsText ? `PROJECTS\n${projectsText}\n` : ''}
 
 CERTIFICATIONS
-${(res.certifications || [] as any[]).map(cert => typeof cert === 'string' ? cert : `${cert.name}`).join('\n')}
+${(res.certifications || [] as (Certification | string)[]).map(formatCertification).join('\n')}
 
 EDUCATION
 ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (Expected : ${edu.expected_completion})`).join('\n')}
@@ -3002,7 +3003,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <div className="space-y-0.5">
               {res.certifications.map((cert: any, i: number) => (
                 <div key={i} className="text-[10.5pt]">
-                  • {typeof cert === 'string' ? cert : `${cert.name}`}
+                  • {formatCertification(cert)}
                 </div>
               ))}
             </div>
@@ -3167,7 +3168,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <div className="grid grid-cols-1 gap-0.5">
               {(results[activeAudience!]?.certifications || data.certifications || []).map((cert: any, i) => (
                 <div key={i} className="text-[10.5pt]">
-                  • {typeof cert === 'string' ? cert : cert.name}
+                  • {formatCertification(cert)}
                 </div>
               ))}
             </div>
