@@ -126,7 +126,7 @@ async function logUsage(log: UsageLog) {
 }
 
 // PDF Sessions storage
-const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, timestamp: number }>();
+const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, scale?: number, timestamp: number }>();
 
 // Cleanup old sessions every 30 minutes
 setInterval(() => {
@@ -1320,12 +1320,12 @@ async function startServer() {
 
   // API Endpoint to create a PDF session
   app.post("/api/pdf-session", (req, res) => {
-    const { html, css, fonts, title } = req.body;
+    const { html, css, fonts, title, scale } = req.body;
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
     const sessionId = uuidv4();
-    pdfSessions.set(sessionId, { html, css, fonts, title, timestamp: Date.now() });
+    pdfSessions.set(sessionId, { html, css, fonts, title, scale, timestamp: Date.now() });
     res.json({ sessionId });
   });
 
@@ -1543,10 +1543,10 @@ async function startServer() {
     }
     // Optional: delete session after retrieval to save memory
     // pdfSessions.delete(sessionId);
-    await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title);
+    await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title, session.scale);
   });
 
-  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume") {
+  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume", scale?: number) {
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
@@ -1594,43 +1594,22 @@ async function startServer() {
                 print-color-adjust: exact;
               }
 
-              /* 2. PAGE GEOMETRY - must mirror the on-screen preview exactly.
-                 The preview's .resume-page (see index.css) is 210mm wide with 25mm
-                 padding, giving a 160mm text column. printScale is measured against
-                 THAT geometry, so the PDF must reproduce the same 160mm column or
-                 the text re-wraps into a different number of lines and the layout
-                 drifts out of alignment.
-
-                 With @page margin 10mm the printable box is 190mm, so 15mm of side
-                 padding on .resume-page reproduces the 160mm column (190 - 2*15).
-
-                 Critically we must also neutralise min-width/min-height: index.css
-                 pins .resume-page to min-width:210mm / min-height:297mm, and those
-                 rules ARE injected into this document along with the rest of the
-                 app styles. Without overriding them the page is forced to 210mm
-                 inside a 190mm print box, so the right edge overflows and is
-                 clipped - which reads as "broken alignment". */
-              #resume-container {
+              /* 2. STRETCH CONTENT HORIZONTALLY */
+              #resume-container, .resume-page {
                 width: 100% !important;
                 max-width: 100% !important;
-                min-width: 0 !important;
+                min-width: 0 !important;   /* index.css pins .resume-page to 210mm; that overflows a 190mm print box */
+                height: auto !important;
+                min-height: 0 !important;  /* index.css pins 297mm, which forces spurious blank pages */
                 margin: 0 auto !important;
-                padding: 0 !important;
+                /* Overrides the massive 25mm internal padding from React to use the full page width */
+                padding: 0mm 5mm !important; 
                 box-shadow: none !important;
                 border: none !important;
               }
 
               .resume-page {
-                width: 100% !important;
-                max-width: 100% !important;
-                min-width: 0 !important;
-                height: auto !important;
-                min-height: 0 !important;
-                margin: 0 auto !important;
-                padding: 0 15mm !important;
                 display: block !important; /* flex containers paginate badly in print */
-                box-shadow: none !important;
-                border: none !important;
               }
 
               /* Reduce bullet point indentation to gain more line length */
@@ -1687,12 +1666,23 @@ async function startServer() {
       // Wait for Google Fonts to load
       await page.evaluateHandle('document.fonts.ready');
 
+      // Shrink-to-fit is done with Chrome's OWN print scale rather than a CSS
+      // 'transform: scale()' on the container. Chrome paginates using the
+      // UNTRANSFORMED layout box, so a CSS transform shrinks the painted pixels
+      // but not the page breaks: you get small, narrow content with a dead band
+      // at the bottom of every sheet plus extra pages. page.pdf({ scale }) is the
+      // same knob as the "Scale" field in Chrome's print dialog and repaginates
+      // correctly, so the layout stays full-width and properly aligned.
+      // Chrome only accepts 0.1 - 2.0; clamp to a sane, still-legible floor.
+      const printScale = Math.min(1, Math.max(0.6, Number(scale) || 1));
+
       // Generate PDF with Hard 2-Page Limit
       const pdfBuffer = await page.pdf({
         format: "A4",
         printBackground: true,
         displayHeaderFooter: false,
         preferCSSPageSize: true,
+        scale: printScale,
         margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
       });
 

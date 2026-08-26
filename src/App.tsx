@@ -1580,6 +1580,21 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [printScale, setPrintScale] = useState(1);
 
+  // Sent with every PDF export. Shrink-to-fit for long resumes is applied by the
+  // server through Chrome's native print scale (page.pdf({ scale })) instead of a
+  // CSS transform: Chrome computes page breaks from the UNTRANSFORMED layout box,
+  // so 'transform: scale()' shrinks the painted pixels without shrinking the
+  // pagination - producing narrow content, a dead band at the bottom of every
+  // sheet and spurious extra pages. So we explicitly reset any preview transform
+  // in the exported markup and let Puppeteer do the scaling properly.
+  const SCALE_RESET_CSS = `
+        #resume-container {
+          transform: none !important;
+          transform-origin: top left !important;
+          width: 100% !important;
+        }
+      `;
+
   // Add this effect to calculate the 2-page fit
   useEffect(() => {
     const calculateFit = () => {
@@ -1618,8 +1633,13 @@ export default function App() {
       resumeEl.style.width = prevWidth;
 
       if (actualHeight > MAX_SAFE_HEIGHT) {
-        // Calculate how much we need to shrink it to fit
-        const newScale = MAX_SAFE_HEIGHT / actualHeight;
+        // Chrome's print scale shrinks BOTH axes, so a scale of s makes each sheet
+        // hold ~1/s more lines vertically AND ~1/s more characters per line (fewer
+        // wraps) - i.e. capacity grows roughly with 1/s^2, not 1/s. Using the naive
+        // linear ratio here over-shrinks long resumes into tiny, hard-to-read text.
+        // The 0.97 factor is a small safety margin for headings/margins that don't
+        // reflow. The server clamps this to a legible floor before applying it.
+        const newScale = Math.sqrt(MAX_SAFE_HEIGHT / actualHeight) * 0.97;
         setPrintScale(newScale);
       } else {
         setPrintScale(1);
@@ -1662,16 +1682,7 @@ export default function App() {
         })
         .join('\n');
 
-      const scaleCSS = `
-        #resume-container {
-          /* !important guarantees this wins even if a stray inline style (e.g. from
-             the on-screen fit measurement) ends up in the captured markup. */
-          transform: scale(${printScale}) !important;
-          transform-origin: top left !important;
-          /* Increase width to compensate for the scale down, ensuring it fills the page */
-          width: calc(100% / ${printScale}) !important;
-        }
-      `;
+      const scaleCSS = SCALE_RESET_CSS;
 
       const role = targetRole || 'Resume';
       const company = companyName ? `-${companyName}` : '';
@@ -1685,6 +1696,7 @@ export default function App() {
           html: element.outerHTML,
           css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
+          scale: printScale,
           fonts: customFonts.map(font => `
             @font-face {
               font-family: '${font.name}';
@@ -2762,16 +2774,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         })
         .join('\n');
 
-      const scaleCSS = `
-        #resume-container {
-          /* !important guarantees this wins even if a stray inline style (e.g. from
-             the on-screen fit measurement) ends up in the captured markup. */
-          transform: scale(${printScale}) !important;
-          transform-origin: top left !important;
-          /* Increase width to compensate for the scale down, ensuring it fills the page */
-          width: calc(100% / ${printScale}) !important;
-        }
-      `;
+      const scaleCSS = SCALE_RESET_CSS;
 
       const role = targetRole || 'Resume';
       const companyStr = companyName ? `-${companyName}` : '';
@@ -2788,6 +2791,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           html: targetOuterHTML,
           css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
+          scale: printScale,
           fonts: customFonts.map(font => `
             @font-face {
               font-family: '${font.name}';
