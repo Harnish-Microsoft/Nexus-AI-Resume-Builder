@@ -99,8 +99,7 @@ import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, addDoc, ge
 import { handleFirestoreError } from './lib/firebaseUtils';
 import { OperationType } from './types';
 import { DriveFolderPicker } from './components/DriveFolderPicker';
-import CloudArchitectureLoader from './components/CloudArchitectureLoader';
-import PremiumEnterpriseLoader from './components/PremiumEnterpriseLoader';
+import CorporateProgressLoader from './components/CorporateProgressLoader';
 import { AuthModal } from './components/AuthModal';
 import { TermsModal } from './components/TermsModal';
 
@@ -1019,7 +1018,6 @@ export default function App() {
   const [linkedInPdfText, setLinkedInPdfText] = useState(() => localStorage.getItem('linkedInPdfText') || '');
   const [linkedInFileName, setLinkedInFileName] = useState(() => localStorage.getItem('linkedInFileName') || '');
   const [jobUrl, setJobUrl] = useState('');
-  const [usePremiumLoader, setUsePremiumLoader] = useState(true);
   const [isExtractingLinkedIn, setIsExtractingLinkedIn] = useState(false);
   const [isCareerToolActive, setIsCareerToolActive] = useState(false);
   const [isAdditionalToolActive, setIsAdditionalToolActive] = useState(false);
@@ -3948,27 +3946,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           {/* Settings Content */}
                           <div className="space-y-4">
                             <h3 className="text-xs font-bold uppercase tracking-widest opacity-50">3. Optimization Settings</h3>
-                            
-                            <div className="flex items-center justify-between mb-4 border-b border-black/5 dark:border-white/5 pb-4">
-                              <label className={`block text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Loader Visualization</label>
-                              <div className="flex rounded-md overflow-hidden border border-black/10 dark:border-white/10 text-xs font-bold uppercase tracking-widest">
-                                <button
-                                  type="button"
-                                  onClick={() => setUsePremiumLoader(true)}
-                                  className={`px-3 py-1 transition-colors ${usePremiumLoader ? 'bg-primary text-primary-foreground' : (isDarkMode ? 'bg-black text-white/50' : 'bg-white text-black/50')}`}
-                                >
-                                  Enterprise
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setUsePremiumLoader(false)}
-                                  className={`px-3 py-1 transition-colors ${!usePremiumLoader ? 'bg-primary text-primary-foreground' : (isDarkMode ? 'bg-black text-white/50' : 'bg-white text-black/50')}`}
-                                >
-                                  Cloud
-                                </button>
-                              </div>
-                            </div>
-                            
                             <div>
                               <div className="flex items-center justify-between mb-2">
                                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Optimization Mode</label>
@@ -4920,19 +4897,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                 </motion.div>
               ) : isOptimizing ? (
                 <div className="w-full h-full overflow-y-auto custom-scrollbar rounded-2xl flex flex-col">
-                  {usePremiumLoader ? (
-                    <PremiumEnterpriseLoader 
-                      isLoading={isOptimizing}
-                      progress={optimizationProgress}
-                      currentStage={optimizationStatus}
-                    />
-                  ) : (
-                    <CloudArchitectureLoader 
-                      isLoading={isOptimizing}
-                      progress={optimizationProgress}
-                      currentStage={optimizationStatus}
-                    />
-                  )}
+                  <CorporateProgressLoader
+                    isLoading={isOptimizing}
+                    progress={optimizationProgress}
+                    currentStage={optimizationStatus}
+                    isDarkMode={isDarkMode}
+                  />
                 </div>
               ) : (Object.keys(results).length === 0) ? (
                 <motion.div 

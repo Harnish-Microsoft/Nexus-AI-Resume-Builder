@@ -1611,10 +1611,21 @@ async function startServer() {
                 margin-left: 0 !important;
               }
 
-              /* 3. Beautiful Typography & Vertical Compression */
-              p, li, span, div, .resume-bullet-text { 
-                font-size: 9.5pt !important; 
-                line-height: 1.35 !important; 
+              /* 3. Typography
+                 NOTE: We intentionally do NOT force a blanket font-size here anymore.
+                 Every resume text node (name, section headings, job titles, bullets)
+                 already carries its own explicit inline font-size from the editor's
+                 formatting engine (e.g. 18pt name, 13pt section headings, 10.5pt body).
+                 A `!important` rule here would beat those inline styles outright and
+                 flatten the whole document down to one tiny, illegible size -
+                 destroying the visual hierarchy the user configured on-screen.
+                 Fitting long resumes to the page is instead handled by the
+                 `transform: scale(printScale)` rule injected from the frontend
+                 (see scaleCSS in App.tsx), which shrinks the whole layout
+                 proportionally so text stays readable and properly sized relative
+                 to everything else. */
+              p, li, span, div, .resume-bullet-text {
+                line-height: 1.4;
               }
 
               p, li, .resume-bullet-text, .experience-item div {
