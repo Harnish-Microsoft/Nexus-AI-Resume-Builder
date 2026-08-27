@@ -414,6 +414,101 @@ Return ONLY a JSON object with the following structure:
   }
 }
 
+/**
+ * Restores any work experience the model dropped.
+ *
+ * The prompt tells the model to keep every role, but an LLM under a strict
+ * page budget will still quietly delete the oldest, shortest entries - which
+ * reads on the finished resume as an unexplained employment gap. Prompt text
+ * alone cannot guarantee this, so we reconcile the model's output against the
+ * source resume in code and re-insert anything missing.
+ *
+ * Re-inserted roles are capped at a single bullet: the user's stated preference
+ * is that losing a bullet point is acceptable, losing a job is not.
+ */
+const MONTH_INDEX: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/** Sort key for reverse-chronological ordering, derived from the start date. */
+function roleStartKey(duration: string): number {
+  const match = String(duration || '').match(/([A-Za-z]{3,9})?\s*(\d{4})/);
+  if (!match) return -1;
+  const year = parseInt(match[2], 10);
+  const month = match[1] ? (MONTH_INDEX[match[1].slice(0, 3).toLowerCase()] || 1) : 1;
+  return year * 100 + month;
+}
+
+/** Company names are compared loosely - the model often rewords legal suffixes. */
+function normalizeCompany(name: string): string {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\b(pvt|private|ltd|limited|llc|inc|incorporated|co|corp|corporation|technologies|tech|india|global)\b/g, ' ')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function sameCompany(a: string, b: string): boolean {
+  const x = normalizeCompany(a);
+  const y = normalizeCompany(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+}
+
+function reconcileExperience(resumeText: string, aiExperience: any): any[] {
+  const output = Array.isArray(aiExperience) ? [...aiExperience] : [];
+
+  // The master resume is normally passed as JSON. If it is free-form text we
+  // have no reliable role list to compare against, so leave the output alone.
+  let source: any;
+  try {
+    source = JSON.parse(resumeText);
+  } catch {
+    return output;
+  }
+
+  const sourceRoles = source?.experience || source?.work_experience;
+  if (!Array.isArray(sourceRoles) || sourceRoles.length === 0) return output;
+
+  let restored = 0;
+  for (const role of sourceRoles) {
+    const company = role?.company;
+    const title = role?.role || role?.title;
+    if (!company && !title) continue;
+
+    const present = output.some((entry: any) =>
+      (company && sameCompany(entry?.company, company)) ||
+      (!company && title && String(entry?.role || '').toLowerCase() === String(title).toLowerCase())
+    );
+    if (present) continue;
+
+    const sourceBullets = role?.bullets || role?.achievements || [];
+    output.push({
+      role: title || '',
+      company: company || '',
+      duration: role?.duration || '',
+      // Single bullet only - these are recovered under a tight page budget.
+      bullets: Array.isArray(sourceBullets) && sourceBullets.length > 0
+        ? [sourceBullets[0]]
+        : [],
+    });
+    restored++;
+    console.warn(`[resume] Model omitted "${title || ''} @ ${company || ''}" - restored from source resume.`);
+  }
+
+  if (restored === 0) return output;
+
+  // Restored roles were appended, so re-establish reverse-chronological order -
+  // but only when every duration parses, to avoid scrambling a valid ordering.
+  const keys = output.map((entry: any) => roleStartKey(entry?.duration));
+  if (keys.every(key => key > 0)) {
+    output.sort((a: any, b: any) => roleStartKey(b?.duration) - roleStartKey(a?.duration));
+  }
+
+  return output;
+}
+
 export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
@@ -567,6 +662,20 @@ ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CON
            - Sterling Accuris Diagnostics: Strictly 3 bullet points, all must be single line.
            - AGILUS Diagnostics: Strictly 2 bullet points, both must be single line.
            - Galaxy Office Automation Pvt. Ltd.: Strictly 1 brief one-liner bullet point.
+           - Aegis Global: Strictly 1 brief one-liner bullet point.
+        3.1. PRESERVE EVERY ROLE - NON-NEGOTIABLE, HIGHEST PRIORITY:
+           You MUST output EVERY SINGLE role present in the source resume, including
+           the oldest and most junior ones, in full reverse-chronological order and
+           with NO gaps in the employment timeline. Count the roles in the source
+           input and return EXACTLY that many objects in the "experience" array.
+           It is a CRITICAL FAILURE to omit, merge, summarize, collapse, or truncate
+           any position - a missing role reads as an unexplained employment gap and
+           gets the candidate rejected.
+           This rule OUTRANKS every length, density and page-count instruction below.
+           If the content will not fit, you MUST shorten or drop BULLET POINTS from
+           the oldest roles (down to a single short bullet each) and tighten wording.
+           You must NEVER drop a role itself to save space. Losing a bullet is
+           acceptable; losing a job is not.
         4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
         4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
         5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
@@ -576,7 +685,7 @@ ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CON
         8. STAR METHODOLOGY: Every bullet should reflect a realistic challenge and outcome. Do NOT force metrics where none existed.
         9. HUMANIZATION: Provide detailed and descriptive operational wording that sounds like a human wrote it. Avoid repetitive sentence structures.
         10. PRESERVE TITLES: NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics".
-        11. MANDATORY 1-2 PAGE LIMIT: Strictly adhere to these counts to ensure the document fits on 1-2 pages. Priority is technical density and strategic impact within these limits.
+        11. MANDATORY 1-2 PAGE LIMIT: Strictly adhere to these counts to ensure the document fits on 1-2 pages. Priority is technical density and strategic impact within these limits. IMPORTANT: this limit is achieved by trimming BULLET POINTS and tightening wording ONLY - never by removing a role. Rule 3.1 (preserve every role) always wins over this rule.
         12. SENIOR ARCHITECT PHILOSOPHY (16+ YEARS EXPERTISE): You are representing a high-level technologist. Phrasing must reflect strategic decision-making, stakeholder management, and enterprise-wide impact. Use words like "Architected", "Partnered", "Evaluated", "Defined", and "Governed". Instead of just "using" tools, focus on "Selection Criteria", "Cost Optimization (FinOps)", "Security Posture Improvement", and "Roadmap Alignment". For a 16-year veteran, ensure the technical depth is matched by business value and leadership scale.
         13. SCALE & COMPLEXITY: Use grounded, mature terminology for enterprise contexts: "Zero-Downtime Migration", "High-Availability Configuration", "Multi-Tenant Infrastructure", "DR Orchestration", "Lifecycle Management". Avoid junior descriptions like "Helped out with..." or "Worked on...".
 
@@ -674,6 +783,9 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
 
         parsed.skills = formattedSkills;
         parsed._engine = engineToUse;
+
+        // Guarantee no role was silently dropped to satisfy the page budget.
+        parsed.experience = reconcileExperience(resumeText, parsed.experience);
 
         if (data.usage) {
           parsed._usage = data.usage;
