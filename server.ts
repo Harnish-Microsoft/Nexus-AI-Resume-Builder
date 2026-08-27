@@ -1581,11 +1581,21 @@ async function startServer() {
         <html>
           <head>
             <meta charset="UTF-8">
-            <title>${title}</title>
+            <title>${String(title || 'Resume').replace(/[<>]/g, '')}</title>
             <style>
-              /* 1. Inject Standard FAANG Font */
-              @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap');
-
+              /* 1. ATS-SAFE, LOCALLY-RESOLVABLE FONT STACK
+                 We deliberately do NOT use a Google web font here. Chrome's PDF
+                 backend does not embed downloaded web fonts: it writes a font
+                 descriptor with a name but no /FontFile2, /Subtype or /BaseFont.
+                 That produces a structurally incomplete font entry, which is why
+                 the PDF failed to render in Explorer/Outlook preview panes, tripped
+                 viewer warnings, and drifted visually from machine to machine -
+                 every reader had to guess a substitute font.
+                 Locally-installed fonts ARE embedded properly (full /FontFile2 +
+                 /Type0 + /CIDFontType2), so the file becomes self-contained and
+                 renders identically everywhere. Calibri first (the metrics the
+                 layout is tuned for), then metric-compatible / universally present
+                 fallbacks so the same output is produced on Linux CI or a Mac. */
               * { box-sizing: border-box; }
 
               @page { 
@@ -1599,9 +1609,24 @@ async function startServer() {
                 width: 100% !important;
                 height: auto !important;
                 background: white;
-                font-family: 'Open Sans', sans-serif !important;
+                font-family: Calibri, Carlito, 'Segoe UI', Arial, 'Liberation Sans', Helvetica, sans-serif !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
+              }
+
+              /* 1b. DISABLE TYPOGRAPHIC LIGATURES - CRITICAL FOR ATS PARSING.
+                 By default the font merges 'fi', 'fl', 'ffi' and 'ffl' into single
+                 glyphs, and they extract from the PDF as U+FB01/U+FB02/... instead
+                 of plain ASCII. An applicant tracking system searching the text
+                 layer therefore never matches high-value keywords: 'Configured'
+                 became 'Con<fi>gured', 'workflows' became 'work<fl>ows', and
+                 'Certified', 'Firewall', 'Defined' and 'Efficiency' were all
+                 silently unsearchable. Turning ligatures off keeps them as real
+                 characters with no visible change to the layout. */
+              html, body, * {
+                font-variant-ligatures: none !important;
+                -webkit-font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "hlig" 0 !important;
+                font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "hlig" 0 !important;
               }
 
               /* 2. STRETCH CONTENT HORIZONTALLY */
@@ -1659,6 +1684,27 @@ async function startServer() {
               /* Dynamic Scale Injection from Frontend */
               ${css || ''}
               ${fonts || ''}
+
+              /* 5. FINAL ATS ENFORCEMENT - must be last.
+                 The captured application CSS above is injected after our base rules,
+                 so anything we declared earlier can still be overridden by it (an
+                 equally-specific '!important' rule later in the sheet wins). These
+                 two guarantees are non-negotiable for a resume that has to survive
+                 both a PDF preview handler and an ATS text parser, so we restate
+                 them here where nothing can outrank them. */
+              html, body, #resume-container, .resume-page, #resume-container * {
+                font-family: Calibri, Carlito, 'Segoe UI', Arial, 'Liberation Sans', Helvetica, sans-serif !important;
+                font-variant-ligatures: none !important;
+                -webkit-font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "hlig" 0 !important;
+                font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "hlig" 0 !important;
+              }
+
+              /* Text must stay real, selectable, opaque text - never outlines or
+                 transparent fills, which extract as nothing at all. */
+              #resume-container * {
+                -webkit-text-fill-color: currentColor !important;
+                -webkit-text-stroke: 0 !important;
+              }
             </style>
           </head>
           <body>

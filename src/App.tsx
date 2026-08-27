@@ -1687,7 +1687,8 @@ export default function App() {
       const role = targetRole || 'Resume';
       const company = companyName ? `-${companyName}` : '';
       const driveFileName = `${role}${company}-Harnish Jariwala.pdf`;
-      const pdfTitle = driveFileName.replace('.pdf', '');
+      // Keep the company name out of the PDF /Title metadata - see downloadPDF.
+      const pdfTitle = `Harnish Jariwala - ${role}`;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -2780,7 +2781,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       const companyStr = companyName ? `-${companyName}` : '';
       const driveFileName = `${role}${companyStr}-Harnish Jariwala.pdf`;
       const downloadFileName = `${role}-Harnish Jariwala.pdf`;
-      const pdfTitle = driveFileName.replace('.pdf', '');
+      // The company name is deliberately kept OUT of the PDF's Title metadata.
+      // Chrome writes document.title into the PDF /Title field, which every reader
+      // shows in its title bar and document properties. Embedding the target
+      // company there means a recruiter at the next company opens the file and
+      // sees it was tailored for a competitor. The company still goes in the
+      // Google Drive filename, which is private to the user.
+      const pdfTitle = `Harnish Jariwala - ${role}`;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -3122,7 +3129,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             {results[activeAudience!]?.skills && !Array.isArray(results[activeAudience!].skills) ? (
               <div className="grid grid-cols-1 gap-y-1">
                 {Object.entries(results[activeAudience!].skills).map(([category, items]) => (
-                  <div key={category} className="grid grid-cols-[160px_1fr] gap-2 text-[10.5pt] leading-tight">
+                  <div key={category} className="grid grid-cols-[190px_1fr] gap-2 text-[10.5pt] leading-tight">
                     <span className="font-bold">{category}:</span>
                     <span className="">{(items as unknown as string[]).join(', ')}</span>
                   </div>
@@ -3131,7 +3138,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             ) : typeof data.skills === 'object' && !Array.isArray(data.skills) ? (
               <div className="grid grid-cols-1 gap-y-1">
                 {Object.entries(data.skills as any).map(([category, items]) => (
-                  <div key={category} className="grid grid-cols-[160px_1fr] gap-2 text-[10.5pt] leading-tight">
+                  <div key={category} className="grid grid-cols-[190px_1fr] gap-2 text-[10.5pt] leading-tight">
                     <span className="font-bold">{category}:</span>
                     <span className="">{(items as unknown as string[]).join(', ')}</span>
                   </div>
