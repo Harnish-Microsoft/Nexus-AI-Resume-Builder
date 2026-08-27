@@ -2192,7 +2192,13 @@ export default function App() {
     }
   };
 
-  const handleOptimize = async () => {
+  const handleOptimize = async (overrideResumeText?: string) => {
+    // Re-entrancy guard. Not every Optimize button in the UI disables itself
+    // while a run is in flight, and re-entering here would clear the results of
+    // the run already in progress and overwrite its AbortController, orphaning
+    // it so it can no longer be stopped.
+    if (isOptimizing) return;
+
     console.log("[Nexus AI] handleOptimize started. Engine:", selectedEngine);
     setError(null);
     setOptimizationStatus("Initializing Nexus Pipeline...");
@@ -2298,7 +2304,12 @@ export default function App() {
     const controller = new AbortController();
     setAbortController(controller);
     
-    let finalResumeText = resumeText || "";
+    // Callers such as "Add Missing Skills" hand us the updated resume directly.
+    // They call setResumeText() immediately before invoking us, but that state
+    // update is not visible inside this closure, so reading the resumeText state
+    // here would silently re-optimize the OLD text and discard the skills that
+    // were just added.
+    let finalResumeText = overrideResumeText || resumeText || "";
 
     try {
       const finalTargetRole = targetRole || "Professional Candidate";

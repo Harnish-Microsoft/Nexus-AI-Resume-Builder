@@ -609,7 +609,13 @@ export async function optimizeResume(
           else formattedSkills[`Category ${Object.keys(formattedSkills).length + 1}`] = [];
         }
         parsed.skills = formattedSkills;
-        
+
+        // Guarantee no role was silently dropped to satisfy the page budget.
+        // The V2 pipeline returns here, well before the legacy path's identical
+        // reconcile call, so without this the "never drop a job" safeguard would
+        // protect only the Gemini/OpenAI engines and silently miss every Hybrid run.
+        parsed.experience = reconcileExperience(resumeText, parsed.experience);
+
         // Apply title fix to V2 results as well
         const fixTitle = (obj: any): any => {
           if (typeof obj === 'string') {
