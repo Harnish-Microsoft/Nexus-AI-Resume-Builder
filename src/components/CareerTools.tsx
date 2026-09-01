@@ -109,7 +109,7 @@ export const CareerTools: React.FC<CareerToolsProps> = ({ isDarkMode, engineConf
     <div className="space-y-6">
       <div className="mb-6">
         <h2 className="text-xl font-bold mb-2">Career Tools & Quizzes</h2>
-        <p className="text-sm opacity-70">Leverage Gemini 3.1 Pro to guide your career decisions and track your job applications.</p>
+        <p className="text-sm opacity-70">Leverage AI to guide your career decisions and track your job applications.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

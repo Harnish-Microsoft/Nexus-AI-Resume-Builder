@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import { 
   FileText, 
@@ -103,6 +103,7 @@ import CorporateProgressLoader from './components/CorporateProgressLoader';
 import { AuthModal } from './components/AuthModal';
 import { TermsModal } from './components/TermsModal';
 import { formatCertification } from './lib/certifications';
+import { resolveActiveModel, modelLabel } from './lib/aiModels';
 
 import defaultMasterResume from './services/master_resume.json';
 
@@ -1183,6 +1184,9 @@ export default function App() {
   });
   const [selectedEngine, setSelectedEngine] = useState<'gemini' | 'openai' | 'hybrid-gemini' | 'hybrid-openai'>('gemini');
   const [showEngineSettings, setShowEngineSettings] = useState(false);
+  // Model id reported by the last completed optimization, so the UI can show what
+  // genuinely ran instead of only what the settings predict.
+  const [lastUsedModel, setLastUsedModel] = useState<string | null>(null);
   
   const getSectionStyle = (sectionId: string) => {
     const style = sectionStyles[sectionId] || {};
@@ -2054,6 +2058,26 @@ export default function App() {
     };
   };
 
+  // What the header badge shows. Prefers the model the last run actually
+  // reported (which can differ from local settings when the hybrid pipeline or
+  // a retry fallback picks its own), otherwise predicts from current settings.
+  const activeModelInfo = useMemo(
+    () => resolveActiveModel({ selectedEngine, engineConfig, fastMode, recruiterSimulationMode }),
+    [selectedEngine, engineConfig, fastMode, recruiterSimulationMode]
+  );
+
+  // A recorded model is only valid for the settings that produced it. Drop it as
+  // soon as the user changes engine/model/mode, so the badge never shows a model
+  // that the next run will not use.
+  useEffect(() => {
+    setLastUsedModel(null);
+  }, [selectedEngine, engineConfig.gemini.model, engineConfig.openai.model, fastMode, recruiterSimulationMode]);
+
+  const headerModelLabel = useMemo(() => {
+    const label = lastUsedModel ? modelLabel(lastUsedModel) : activeModelInfo.label;
+    return label.toUpperCase();
+  }, [lastUsedModel, activeModelInfo]);
+
   const handleFetchJobDescription = async () => {
     if (!jobUrl) {
       setError('Please enter a job URL first.');
@@ -2292,13 +2316,10 @@ export default function App() {
       });
     }, 100);
     
-    const engineNameMap: Record<string, string> = {
-      'gemini': 'Google Gemini 2.0',
-      'openai': 'OpenAI GPT-4o',
-      'hybrid-gemini': 'Hybrid Strategy (Gemini + Flash)',
-      'hybrid-openai': 'Hybrid Premium (OpenAI + Gemini Flash)'
-    };
-    const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
+    // Report the model that will actually run, resolved from the same routing
+    // rules the request itself follows - not a hardcoded guess.
+    const activeModel = activeModelInfo;
+    const engineName = activeModel.label;
     setOptimizationStatus(`Initializing ${engineName}...`);
 
     const controller = new AbortController();
@@ -2327,7 +2348,6 @@ export default function App() {
       const routerConfig = getRouterConfig();
       let completedAudiences = 0;
       const totalAudiences = currentAudiences.length;
-      const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
 
       // Set a combined status for all audiences to avoid rapid overwriting
       const allAudienceLabels = currentAudiences.map(audienceId => 
@@ -2343,13 +2363,17 @@ export default function App() {
           ? (customAudience || 'Custom Persona') 
           : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId);
         
-        // Progress reporting for hybrid mode (only set by first one to prevent overlap)
+        // Progress reporting for hybrid mode (only set by first one to prevent overlap).
+        // Guarded on the AbortController rather than the isOptimizing state: this
+        // closure captured isOptimizing === false from the render it was created
+        // in, so the old check was never true and these messages never appeared.
         if (selectedEngine.includes('hybrid') && index === 0) {
+          const stillRunning = () => !controller.signal.aborted;
           setTimeout(() => {
-            if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming for ${allAudienceLabels.length} audiences...`);
+            if (stillRunning()) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming for ${allAudienceLabels.length} audiences...`);
           }, 4000);
           setTimeout(() => {
-            if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
+            if (stillRunning()) setOptimizationStatus(`Step 3: Final Synthesis with ${activeModel.modelName}...`);
           }, 8000);
         }
         
@@ -2373,6 +2397,10 @@ export default function App() {
         
         completedAudiences++;
         setOptimizationProgress(Math.min(95, (completedAudiences / currentAudiences.length) * 100));
+
+        // Record the model the backend says it actually used, so the header badge
+        // reflects reality (hybrid pipeline / retry fallbacks pick their own).
+        if (data._model) setLastUsedModel(data._model);
         
         // Update token usage
         if (data._engine === 'hybrid-v2') {
@@ -3582,7 +3610,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0</span>
                   <div className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-500 animate-pulse`}>
                       <Cpu className="w-3 h-3" />
-                      <span>{engineConfig.gemini.model === 'gemini-3.1-pro-preview' ? 'GEMINI 3.1 PRO (MULTI-FALLBACK)' : 'GEMINI 3.5 FLASH (MULTI-FALLBACK)'}</span>
+                      <span>{headerModelLabel}</span>
                   </div>
                   <Link to="/profile" className={`flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full border transition-colors ${isDarkMode ? 'border-white/20 hover:border-emerald-500/50 bg-neutral-900' : 'border-black/10 hover:border-emerald-500/50 bg-white'}`}>
                     {user ? (

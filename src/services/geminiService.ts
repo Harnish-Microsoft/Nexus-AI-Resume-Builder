@@ -577,6 +577,9 @@ export async function optimizeResume(
         
         // Post-processing
         parsed._engine = 'hybrid-v2';
+        // The V2 pipeline picks its own model server-side, so surface what it
+        // actually used rather than letting the UI guess from local settings.
+        if (data._model) parsed._model = data._model;
         if (data.usage) parsed._usage = data.usage;
         if (data.geminiUsage) parsed._geminiUsage = data.geminiUsage;
         if (data.intermediateData) parsed._intermediateData = data.intermediateData;
@@ -789,6 +792,9 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
 
         parsed.skills = formattedSkills;
         parsed._engine = engineToUse;
+        // currentModel, not modelToUse: the retry loop can downgrade the model
+        // mid-flight, so this is the one that actually produced the response.
+        parsed._model = currentModel;
 
         // Guarantee no role was silently dropped to satisfy the page budget.
         parsed.experience = reconcileExperience(resumeText, parsed.experience);
