@@ -268,8 +268,19 @@ HARD CONSTRAINTS (violating any of these is a critical failure):
 10. PROJECTS. Output EVERY project. Maximum 2 sentences each: technical architecture first,
     then business outcome.
 
-11. KEYWORD ALIGNMENT. Weave JD vocabulary into bullets ONLY where the underlying work
-    genuinely occurred. Genuinely missing keywords belong in "keyword_gap", never in a bullet.
+11. JD TAILORING - THIS IS WHAT MAKES THE DOCUMENT SPECIFIC TO THIS POSTING.
+    Read the full job description below, not just the extracted keyword list. Two different
+    postings for a similar title MUST produce visibly different documents: different summary
+    framing, a different ordering of emphasis within each role, and a different selection of
+    which source bullets are promoted or dropped.
+    - Reorder and reselect bullets so the work closest to THIS posting's priorities appears
+      first within each role.
+    - Mirror the posting's own vocabulary where the underlying work genuinely occurred
+      (if it says "observability" and the source says "monitoring", adopt the posting's term).
+    - Rewrite the summary to answer this specific posting, never as a generic profile.
+    - Weave JD vocabulary into bullets ONLY where the underlying work genuinely occurred.
+      Genuinely missing keywords belong in "keyword_gap", never in a bullet.
+    Tailoring changes EMPHASIS, SELECTION, and WORDING. It never changes facts.
 ${section(
     jdKeywords && jdKeywords.length > 0,
     `    Priority JD keywords: ${(jdKeywords || []).join(", ")}.`
@@ -293,7 +304,12 @@ ${section(
 
 ${inputLabel}:
 ${inputData}
-${section(jobDescription, `\nJOB DESCRIPTION:\n${jobDescription}`)}
+${section(
+    jobDescription,
+    `
+=== TARGET JOB DESCRIPTION (tailor against this in full - see rule 11) ===
+${jobDescription}`
+  )}
 
 OUTPUT:
 Return ONE valid JSON object and nothing else. No markdown fences, no preamble, no commentary,
