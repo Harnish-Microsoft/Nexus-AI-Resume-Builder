@@ -219,12 +219,27 @@ HARD CONSTRAINTS (violating any of these is a critical failure):
 3. PRESERVE ALL CERTIFICATIONS AND TITLES verbatim, including issuer and date. Never
    normalise, "correct", re-case, or abbreviate a job title or company name.
 
-4. BULLET BUDGET (trim wording, never roles):
-   - Most recent role: 5-6 bullets
-   - Roles within the last ~5 years: 3-4 bullets
-   - Older roles: 1-2 bullets, core outcome only
-   The total document must fit 1-2 pages. This limit is achieved by trimming bullets and
-   tightening wording ONLY. Rule 1 always wins over this rule.
+4. BULLET BUDGET - TENURE FIRST, THEN RECENCY (trim wording, never roles):
+   If a role in the input carries a "bullet_budget" field, that value is AUTHORITATIVE -
+   produce exactly that many bullets for that role. It was computed from the actual dates
+   and overrides every heuristic below.
+   Where no "bullet_budget" is given, derive tenure from the duration field and apply:
+   - Under 3 months:        exactly 1 bullet, single line
+   - 3 to 12 months:        2-3 bullets
+   - Over 1 year, current or most recent role:  6-7 bullets
+   - Over 1 year, earlier roles:                3-4 bullets
+   - Anything before the last ~10 years:        1-2 bullets, core outcome only
+
+   ANTI-PADDING RULE: bullet count must stay proportionate to time served. A long list
+   under a short stint reads as padding, invites scrutiny of the entire document, and is
+   a worse outcome than saying less. Never inflate a brief role to match the depth of a
+   multi-year one, however senior the title or well known the employer. For a stint under
+   three months, state the single thing that was actually delivered and stop.
+
+   Depth belongs to the roles that earned it: give substantial, long-tenure positions the
+   fullest treatment, and let short ones stay deliberately thin.
+   The total document must fit 1-2 pages, achieved by trimming bullets and tightening
+   wording ONLY. Rule 1 always wins over this rule.
 
 5. BULLET SHAPE - DELIBERATE VARIATION (there is NO single bullet template):
    Rotate across these shapes so that no two consecutive bullets share a cadence:
