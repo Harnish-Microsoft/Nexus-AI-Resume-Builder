@@ -21,6 +21,7 @@ import { runAgents } from "./server/agents";
 import { generatePerRole } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
+import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
@@ -879,100 +880,19 @@ async function startServer() {
 
       // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
       const roleCount = optimizedInput.experience.length;
-      const finalPrompt = `
-        ACT AS:
-        You are a Principal Resume Intelligence Architect, FAANG Technical Recruiter, and Enterprise ATS Strategist.
-        Your objective is to transform resumes into recruiter-safe, ATS-optimized, technically mature documents that reflect factual realism and believable operational ownership.
-
-        Optimize this structured resume data for the target role: ${targetRole}.
-        Audience: ${audience}. Mode: ${mode}.
-        ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
-        ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
-        
-        ${masterResumes.length > 0 ? `
-          STRATEGIC REFERENCE (MASTER RESUMES TO LEARN FROM):
-          Analyze these master resumes for style, formatting, and high-impact language choices.
-          ${masterResumes.map(r => JSON.stringify(r)).join("\n---\n")}
-        ` : ''}
-
-        CRITICAL INPUT TRACKING:
-        The input contains exactly ${roleCount} separate job roles. 
-        You ARE REQUIRED to output exactly ${roleCount} items in the "experience" array.
-        
-        CORPORATE DNA TAILORING:
-        ${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership", "Bias for Action", and "Data-driven results". Use terminology from Amazon Leadership Principles.' : ''}
-        ${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale", "Cloud Transformation", and "Collaborative Ecosystems".' : ''}
-        ${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design", "Extreme Scale", "Algorithmic Efficiency", and "Google XYZ Formula".' : ''}
-        ${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast", "Shipping End-to-End Impact", and "Performance Optimization".' : ''}
-        ${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery", "Global Managed Services", and "Cross-functional Deployment".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
-        
-        PLAYER-COACH MODE:
-        ${mode === 'Player-Coach' ? `
-          - 60/40 BALANCE: 60% Execution (Azure infra, Site Recovery, Entra ID), 40% Leadership (Mentoring, Agile pods, Architecture reviews).
-          - HYBRID VOCABULARY: Use "Architected & Led," "Designed & Mentored," "Engineered & Standardized," "Governance Support".
-          - STRICT NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps". Focus entirely on Azure Infrastructure.
-        ` : ''}
-
-        STRICT OPERATIONAL REALISM RULES (GLOBAL SYSTEM RULES):
-        1. TRUTHFULNESS & GROUNDING (MANDATORY): You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
-        
-        2. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
-        
-        3. TIMELINE-BASED BULLET CONSTRAINTS (STRICT):
-           - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
-           - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
-           - OLDER ROLES (Before 2017): Strictly 1 brief bullet point focusing only on the core outcome.
-           - CASEPOINT: At least 4 bullet points.
-           - HCL: Strictly 2 bullet points, both must be single line.
-           - Sterling Accuris Diagnostics: Strictly 3 bullet points, all must be single line.
-           - AGILUS Diagnostics: Strictly 2 bullet points, both must be single line.
-           - Galaxy Office Automation Pvt. Ltd.: Strictly 1 brief one-liner bullet point.
-        
-        4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
-        4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
-        
-        5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
-        
-        6. NO TRUNCATION: Adhere strictly to the bullet counts above. Do not exceed them, as the goal is to fit everything on 1-2 pages.
-        
-        7. SOURCE ANCHORING: Derive new bullets primarily from that specific role’s context. Do not invent fake projects.
-        
-        8. TRUTHFULNESS & GROUNDING: You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
-        
-        9. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
-        
-        INPUT DATA (Optimized):
-        ${JSON.stringify(optimizedInput, null, 2)}
-        
-        STRICT FINAL RULES:
-        1. TONE & FOCUS: Maintain a professional, detailed, human-written tone. Focus on JD keywords: ${optimizedInput.jd_keywords.join(', ')}.
-        2. PRESERVE TITLES: Do NOT modify job titles.
-        3. TIMELINE ADHERENCE: Strictly follow the bullet counts for RECENT, MID-CAREER, and OLDER roles.
-        4. DEVOPS BAN: The terms "CI/CD", "Pipelines", and "DevOps" are ABSOLUTELY FORBIDDEN. Focus the narrative on Azure Infrastructure, HA/DR, and Governance.
-        5. PROJECT FIDELITY: You MUST output EVERY project. Limit descriptions to 2 sentences.
-        6. NO FABRICATION: Do not invent metrics or technologies.
-        7. NO AI SLOP: Ban "Spearheaded", "Leveraged", etc. Use grounded verbs.
-        8. BALANCED IaC: Terraform/IaC references are encouraged for technical roles. Include up to 5-6 bullet points TOTAL across the entire resume if relevant to the JD.
-        
-        OUTPUT JSON SCHEMA:
-        {
-          "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
-          "summary": "string",
-          "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
-          "experience": [ { "id": "string", "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
-          "projects": [ { "title": "string", "description": "string" } ],
-          "education": [ { "degree": "string", "institution": "string", "expected_completion": "string" } ],
-          "certifications": [ { "name": "string", "issuer": "string", "date": "string" } ],
-          "ats_keywords_from_jd": ["string"],
-          "keyword_gap": ["string"],
-          "match_score": 85,
-          "baseline_score": 60,
-          "improvement_notes": ["string"],
-          "audience_alignment_notes": "string",
-          "star_stories": [ { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
-          "audit_report": { "score": 85, "flags": [], "trajectory": { "stage": "acceleration", "description": "string", "recommendation": "string" } }
-        }
-      `;
+      const finalPrompt = buildResumeGenerationPrompt({
+        targetRole,
+        audience,
+        mode,
+        targetCompany,
+        customPrompt,
+        brainDump,
+        roleCount,
+        jdKeywords: optimizedInput.jd_keywords,
+        masterResumes,
+        inputLabel: "INPUT DATA (structured, pre-extracted and trimmed)",
+        inputData: JSON.stringify(optimizedInput, null, 2),
+      });
 
       let result;
       let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";

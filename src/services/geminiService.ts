@@ -6,6 +6,7 @@ import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport 
 import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { categorizeSkills } from "../lib/skillCategorizer";
+import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
 
 export interface OptimizationResult {
   personal_info: {
@@ -544,7 +545,6 @@ export async function optimizeResume(
   }
 
   const isLeadershipRole = /director|manager|lead|head|executive|vp|chief|principal|senior manager/i.test(targetRole);
-  const isTechnicalRole = /engineer|developer|architect|specialist|analyst|technician/i.test(targetRole);
 
   // V2 PIPELINE INTEGRATION: Use the optimized backend pipeline for production mode
   if ((config.mode === 'production' || pipelineType) && !recruiterSimulationMode && !fastMode) {
@@ -641,98 +641,18 @@ export async function optimizeResume(
     }
   }
 
-  const prompt = `
-ACT AS:
-You are a Principal Resume Intelligence Architect, FAANG Technical Recruiter, and Enterprise ATS Strategist.
-Your objective is to transform resumes into recruiter-safe, ATS-optimized, technically mature, and human-written documents that reflect factual realism and believable operational ownership.
-
-THE CURRENT DATE: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons based on lack of impact/metrics.' : 'TASK: Rewrite resume into a top-tier professional document adhering to operational realism.'}
-
-${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
-${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}\nSift through this raw data and include high-impact achievements that are missing from the original resume.` : ''}
-
-CORPORATE DNA TAILORING:
-${targetCompany === 'amazon' ? 'TAILOR FOR AMAZON: Emphasize "Ownership" and "Bias for Action".' : ''}
-${targetCompany === 'microsoft' ? 'TAILOR FOR MICROSOFT: Emphasize "Enterprise Scale" and "Cloud Transformation".' : ''}
-${targetCompany === 'google' ? 'TAILOR FOR GOOGLE: Emphasize "Systems Design" and "Innovation".' : ''}
-${targetCompany === 'meta' ? 'TAILOR FOR META: Emphasize "Moving Fast" and "Shipping Engineering Impact".' : ''}
-${targetCompany === 'accenture' || targetCompany === 'infosys' ? 'TAILOR FOR CONSULTING: Emphasize "Client Delivery" and "Managed Services".' : 'TAILOR FOR PRODUCT TECH: Focus on internal product growth and feature ownership.'}
-
-        3. TIMELINE-BASED BULLET CONSTRAINTS (STRICT):
-           - RECENT ROLES (2022–Present): Strictly 5 to 6 XYZ bullet points.
-           - MID-CAREER (2017–2022): Strictly 3 to 4 XYZ bullet points.
-           - OLDER ROLES (Before 2017): Strictly 1 brief bullet point focusing only on the core outcome.
-           - CASEPOINT: At least 4 bullet points.
-           - HCL: Strictly 2 bullet points, both must be single line.
-           - Sterling Accuris Diagnostics: Strictly 3 bullet points, all must be single line.
-           - AGILUS Diagnostics: Strictly 2 bullet points, both must be single line.
-           - Galaxy Office Automation Pvt. Ltd.: Strictly 1 brief one-liner bullet point.
-           - Aegis Global: Strictly 1 brief one-liner bullet point.
-        3.1. PRESERVE EVERY ROLE - NON-NEGOTIABLE, HIGHEST PRIORITY:
-           You MUST output EVERY SINGLE role present in the source resume, including
-           the oldest and most junior ones, in full reverse-chronological order and
-           with NO gaps in the employment timeline. Count the roles in the source
-           input and return EXACTLY that many objects in the "experience" array.
-           It is a CRITICAL FAILURE to omit, merge, summarize, collapse, or truncate
-           any position - a missing role reads as an unexplained employment gap and
-           gets the candidate rejected.
-           This rule OUTRANKS every length, density and page-count instruction below.
-           If the content will not fit, you MUST shorten or drop BULLET POINTS from
-           the oldest roles (down to a single short bullet each) and tighten wording.
-           You must NEVER drop a role itself to save space. Losing a bullet is
-           acceptable; losing a job is not.
-        4. CRITICAL BULLET FORMAT: Write high-impact, outcome-driven bullet points. Keep bullets highly concise and readable. Use exactly 1 line for direct impact statements. Only use 2 lines if absolutely necessary to explain complex technical scale. DO NOT artificially pad sentences.
-        4.1. SKILLS CATEGORIES STRICT RULE: You MUST use short, highly readable, Title Case strings for the 4 skill category keys (e.g., 'Cloud Infrastructure', 'Security & Governance'). NEVER use snake_case, underscores, or overly long unbroken strings. The category names must fit cleanly on a page.
-        5. PROJECTS: Keep project descriptions to a maximum of 2 sentences, focusing strictly on the technical architecture and the business outcome.
-        6. TRUTHFULNESS & GROUNDING (MANDATORY): You MUST NOT fabricate metrics, technologies (Kubernetes/Terraform), certifications, or skills not explicitly present in the source input. Stick strictly to the user's existing tech stack.
-        6.1. PRESERVE ALL CERTIFICATIONS: You MUST include ALL certifications present in the source resume. DO NOT omit, drop, or skip any certificates (ensure all 3 or more are listed if they exist in the source).
-        7. AI-GENERATED LANGUAGE BAN: ABSOLUTELY FORBIDDEN: "Spearheaded", "Orchestrated", "Pioneered", "Leveraged", "Empowered", "Synergized". Use natural, grounded operational verbs: "Managed", "Implemented", "Coordinated", "Governed", "Standardized", "Optimized", "Configured", "Delivered", "Automated".
-        8. STAR METHODOLOGY: Every bullet should reflect a realistic challenge and outcome. Do NOT force metrics where none existed.
-        9. HUMANIZATION: Provide detailed and descriptive operational wording that sounds like a human wrote it. Avoid repetitive sentence structures.
-        10. PRESERVE TITLES: NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics".
-        11. MANDATORY 1-2 PAGE LIMIT: Strictly adhere to these counts to ensure the document fits on 1-2 pages. Priority is technical density and strategic impact within these limits. IMPORTANT: this limit is achieved by trimming BULLET POINTS and tightening wording ONLY - never by removing a role. Rule 3.1 (preserve every role) always wins over this rule.
-        12. SENIOR ARCHITECT PHILOSOPHY (16+ YEARS EXPERTISE): You are representing a high-level technologist. Phrasing must reflect strategic decision-making, stakeholder management, and enterprise-wide impact. Use words like "Architected", "Partnered", "Evaluated", "Defined", and "Governed". Instead of just "using" tools, focus on "Selection Criteria", "Cost Optimization (FinOps)", "Security Posture Improvement", and "Roadmap Alignment". For a 16-year veteran, ensure the technical depth is matched by business value and leadership scale.
-        13. SCALE & COMPLEXITY: Use grounded, mature terminology for enterprise contexts: "Zero-Downtime Migration", "High-Availability Configuration", "Multi-Tenant Infrastructure", "DR Orchestration", "Lifecycle Management". Avoid junior descriptions like "Helped out with..." or "Worked on...".
-
-INPUT:
-RESUME: ${resumeText}
-JD: ${jobDescription}
-ROLE: ${targetRole}
-MODE: ${mode} | AUDIENCE: ${audience}
-
-OUTPUT: JSON matching OptimizationResult schema.
-OUTPUT SCHEMA (MUST MATCH EXACTLY):
-{
-  "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
-  "summary": "string",
-  "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
-  "experience": [ { "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
-  "projects": [ { "title": "string", "description": "string" }, { "title": "string", "description": "string" } ],
-  "education": [ { "degree": "string", "institution": "string", "expected_completion": "string" } ],
-  "certifications": [
-    { "name": "string", "issuer": "string", "date": "string" }
-  ],
-  "ats_keywords_from_jd": ["string"],
-  "ats_keywords_added_to_resume": ["string"],
-  "keyword_gap": ["string"],
-  "match_score": 85,
-  "baseline_score": 60,
-  "improvement_notes": ["string"],
-  "audience_alignment_notes": "string",
-  "rejection_reasons": ["string"],
-  "star_stories": [
-    { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" }
-  ],
-  "audit_report": {
-    "score": number,
-    "flags": [
-      { "id": "string", "type": "string", "message": "string", "fix": "string", "severity": "high" }
-    ],
-    "trajectory": { "stage": "acceleration", "description": "string", "recommendation": "string" }
-  }
-}
-`;
+  const prompt = buildResumeGenerationPrompt({
+    targetRole,
+    audience,
+    mode,
+    targetCompany,
+    customPrompt,
+    brainDump,
+    recruiterSimulationMode,
+    jobDescription,
+    inputLabel: "SOURCE RESUME (raw text)",
+    inputData: resumeText,
+  });
 
   const maxRetries = 5;
   let retryCount = 0;
