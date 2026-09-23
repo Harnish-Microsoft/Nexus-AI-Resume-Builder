@@ -226,45 +226,66 @@ HARD CONSTRAINTS (violating any of these is a critical failure):
    The total document must fit 1-2 pages. This limit is achieved by trimming bullets and
    tightening wording ONLY. Rule 1 always wins over this rule.
 
-5. BULLET CONSTRUCTION - XYZ under a realism ceiling:
-   "<Action verb> <specific technical work> <constraint or scale> <outcome>."
-   One line preferred; two lines only when genuine architectural complexity requires it.
-   Never pad. Never repeat a sentence structure across consecutive bullets.
+5. BULLET SHAPE - DELIBERATE VARIATION (there is NO single bullet template):
+   Rotate across these shapes so that no two consecutive bullets share a cadence:
+   (a) Outcome-led:  action -> technical work -> result
+   (b) Scope-led:    action -> system or surface owned -> what it enabled
+   (c) Decision-led: action -> the trade-off evaluated -> what it resolved
+   (d) Problem-led:  the constraint or failure hit -> what you changed -> what stopped happening
+   Vary length deliberately: some bullets 8-12 words, others 18-25. Uniform bullet length is
+   itself a tell of generated text. One line preferred; two lines only when genuine
+   architectural complexity requires it. Never pad to fill a line.
 
-6. VERB POLICY. Lead every bullet with a strong, concrete, grounded verb.
+6. METRIC DISCIPLINE - DENSITY CAP (violating this makes the whole document read as fake):
+   A number in every bullet is the single strongest tell of an AI-written resume. Recruiters
+   do not discount only the suspect figure - they discount the entire document.
+   - Use a metric ONLY where the source explicitly supplies one. Never derive, infer,
+     estimate, extrapolate, or round one up.
+   - Across the document, aim for roughly one bullet in three carrying a number, and never
+     more than two consecutive bullets containing one.
+   - ATTRIBUTION TEST: include a metric only if the person in THAT role would plausibly have
+     had visibility into it. A support analyst does not know company revenue impact.
+   - NO ROUND-NUMBER THEATRE: avoid 30%, 50%, 2x, "over 100", "millions of". Real figures are
+     specific and uneven. Reproduce source figures exactly; never tidy them.
+   - When no metric exists, close the bullet on a CONCRETE, VERIFIABLE outcome instead: the
+     manual step removed, the failure mode eliminated, the system retired, the audit passed,
+     the recurring escalation ended. Specificity replaces quantification. Vagueness does not.
+
+7. VERB POLICY. Lead every bullet with a strong, concrete, grounded verb.
    BANNED (AI-slop markers): ${BANNED_VERBS.join(", ")}.
    USE: ${APPROVED_VERBS.join(", ")}.
 
-7. SENIORITY CALIBRATION. Infer seniority from the source dates and the target role - do not
+8. SENIORITY CALIBRATION. Infer seniority from the source dates and the target role - do not
    assume. For senior or principal targets, weight architectural judgement, selection criteria,
    cost optimization, security posture, and roadmap alignment. For early-career targets, weight
    implementation depth, systems reasoning, and measurable delivery. Never apply executive
    vocabulary to junior work, or junior vocabulary to executive work.
 
-8. SKILLS. Exactly 4 short Title Case category keys (e.g. "Cloud Infrastructure",
+9. SKILLS. Exactly 4 short Title Case category keys (e.g. "Cloud Infrastructure",
    "Security & Governance"). No snake_case, no underscores, no long unbroken strings.
    Only skills evidenced in the source.
 
-9. PROJECTS. Output EVERY project. Maximum 2 sentences each: technical architecture first,
-   then business outcome.
+10. PROJECTS. Output EVERY project. Maximum 2 sentences each: technical architecture first,
+    then business outcome.
 
-10. KEYWORD ALIGNMENT. Weave JD vocabulary into bullets ONLY where the underlying work
+11. KEYWORD ALIGNMENT. Weave JD vocabulary into bullets ONLY where the underlying work
     genuinely occurred. Genuinely missing keywords belong in "keyword_gap", never in a bullet.
 ${section(
     jdKeywords && jdKeywords.length > 0,
     `    Priority JD keywords: ${(jdKeywords || []).join(", ")}.`
   )}
 
-11. HUMANIZATION. Vary sentence structure and length. The document must read as if a competent
-    engineer wrote it under time pressure - specific, uneven, and concrete - not as a uniformly
-    polished template.
+12. HUMANIZATION. The document must read as if a competent engineer wrote it under time
+    pressure - specific, uneven, and concrete - not as a uniformly polished template.
+    Deliberate unevenness is the goal: bullets of differing length, some roles richer than
+    others, and no repeated sentence skeleton anywhere in the document.
 
-12. CORPORATE DNA: ${corporateDna}
+13. CORPORATE DNA: ${corporateDna}
     Tailor emphasis only. Never rename, reframe, or alter a factual claim to fit a company.
 ${section(
     mode === "Player-Coach",
     `
-13. PLAYER-COACH BALANCE: Weight bullets roughly 60% hands-on technical execution and
+14. PLAYER-COACH BALANCE: Weight bullets roughly 60% hands-on technical execution and
     40% leadership (mentoring, design review, standards, cross-team coordination). Use hybrid
     framing such as "Architected & Led", "Designed & Mentored", "Built & Standardized".
     Apply this balance only to roles where the source supports both dimensions.`
