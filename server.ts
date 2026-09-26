@@ -22,6 +22,7 @@ import { generatePerRole } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
 import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
+import { applyMatchScores } from "./src/lib/matchScore";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
@@ -212,6 +213,38 @@ function decrypt(text: string) {
 
   console.error("Decryption Error: DECRYPTION_FAILED");
   throw new Error("DECRYPTION_FAILED: The encryption key has changed or the data is corrupted. Please re-save your API keys in your profile.");
+}
+
+/**
+ * Replaces the model's guessed match_score/baseline_score with values computed
+ * from the real job description and the real resume.
+ *
+ * Every generation branch (OpenAI premium, Gemini split-gen, and the fallbacks)
+ * funnels through here before the response is cached, so no branch can leak the
+ * placeholder numbers the model used to echo back from the prompt schema.
+ */
+function attachRealMatchScores(
+  result: any,
+  params: {
+    jobDescription: string;
+    originalResumeText: string;
+    targetRole?: string;
+    jdKeywords?: string[];
+  }
+): any {
+  if (!result || typeof result.result !== "string") return result;
+  try {
+    const parsed = JSON.parse(result.result);
+    applyMatchScores(parsed, params);
+    console.log(
+      `[Scoring] baseline=${parsed.baseline_score ?? "n/a"} match=${parsed.match_score ?? "n/a"} ` +
+        `(${parsed.score_breakdown?.jd_keywords_evaluated ?? 0} JD requirements evaluated)`
+    );
+    return { ...result, result: JSON.stringify(parsed) };
+  } catch (e: any) {
+    console.warn("[Scoring] Could not compute deterministic match score:", e?.message || e);
+    return result;
+  }
 }
 
 async function startServer() {
@@ -1036,6 +1069,7 @@ async function startServer() {
           6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
           7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
           8. COMPLETE DATA: You MUST process and include EVERY SINGLE section provided in the INPUT DATA. Do not omit any roles, projects, or certifications.
+          9. SCORING: Return "match_score" as null. JD-alignment scoring is computed deterministically by the platform from the real job description and the real resume - any number you guess is discarded. Populate "ats_keywords_from_jd" and "keyword_gap" only with terms that literally appear in the job description.
           
           OUTPUT JSON SCHEMA:
           {
@@ -1049,7 +1083,7 @@ async function startServer() {
             "ats_keywords_from_jd": [...],
             "ats_keywords_added_to_resume": [...],
             "keyword_gap": [...],
-            "match_score": 85,
+            "match_score": null,
             "improvement_notes": [...],
             "audience_alignment_notes": "...",
             "star_stories": [...],
@@ -1125,8 +1159,14 @@ async function startServer() {
       }
     }
     
-    // STEP 5: Cache Result (Merged/Unified)
+    // STEP 5: Deterministic scoring, then cache (Merged/Unified)
     if (result) {
+      result = attachRealMatchScores(result, {
+        jobDescription,
+        originalResumeText: resumeText,
+        targetRole,
+        jdKeywords,
+      });
       Optimization.saveToCache(cacheKey, result);
       res.json(result);
     }

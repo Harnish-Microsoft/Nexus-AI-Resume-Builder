@@ -3689,23 +3689,56 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <div className="space-y-4">
                             <h3 className="text-xs font-bold uppercase tracking-widest text-white/80">2. Job Analysis</h3>
                             {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (
-                              <div className={`p-4 rounded-xl border flex items-center justify-between ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
-                                <div>
-                                  <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
-                                  <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>Based on current JD</p>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  {results[activeAudience].baseline_score !== undefined && (
+                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                                    <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>
+                                      {results[activeAudience].score_breakdown
+                                        ? `Measured against ${results[activeAudience].score_breakdown!.jd_keywords_evaluated} requirements extracted from this JD`
+                                        : 'Based on current JD'}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    {results[activeAudience].baseline_score !== undefined && (
+                                      <div className="text-right">
+                                        <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
+                                        <span className={`font-bold text-lg opacity-60 line-through`}>{results[activeAudience].baseline_score}%</span>
+                                      </div>
+                                    )}
                                     <div className="text-right">
-                                      <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
-                                      <span className={`font-bold text-lg opacity-60 line-through`}>{results[activeAudience].baseline_score}%</span>
+                                      <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
+                                      <span className={`font-bold text-2xl text-emerald-500`}>{results[activeAudience].match_score}%</span>
                                     </div>
-                                  )}
-                                  <div className="text-right">
-                                    <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
-                                    <span className={`font-bold text-2xl text-emerald-500`}>{results[activeAudience].match_score}%</span>
                                   </div>
                                 </div>
+                                {results[activeAudience].score_breakdown && (
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
+                                    {results[activeAudience].score_breakdown!.optimized.components.map((component) => {
+                                      const baselineComponent = results[activeAudience].score_breakdown!.baseline.components
+                                        .find((c) => c.id === component.id);
+                                      return (
+                                        <div key={component.id} className="flex items-center justify-between gap-3 text-[10px]">
+                                          <span className="opacity-70 truncate" title={component.detail}>
+                                            {component.label}
+                                            <span className="opacity-50"> · {Math.round(component.weight * 100)}% weight</span>
+                                          </span>
+                                          <span className="font-bold tabular-nums whitespace-nowrap">
+                                            {baselineComponent && (
+                                              <span className="opacity-40 mr-1">{Math.round(baselineComponent.score * 100)}% →</span>
+                                            )}
+                                            <span className="text-emerald-500">{Math.round(component.score * 100)}%</span>
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                    {results[activeAudience].score_breakdown!.optimized.missing.length > 0 && (
+                                      <p className="text-[10px] opacity-60 pt-1">
+                                        Still missing: {results[activeAudience].score_breakdown!.optimized.missing.slice(0, 6).join(', ')}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             )}
                             <div className="relative" ref={audienceDropdownRef}>

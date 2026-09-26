@@ -92,14 +92,14 @@ const OUTPUT_SCHEMA = `{
   "ats_keywords_from_jd": ["string"],
   "ats_keywords_added_to_resume": ["string"],
   "keyword_gap": ["string"],
-  "match_score": 85,
-  "baseline_score": 60,
+  "match_score": null,
+  "baseline_score": null,
   "improvement_notes": ["string"],
   "audience_alignment_notes": "string",
   "rejection_reasons": ["string"],
   "star_stories": [ { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
   "audit_report": {
-    "score": 85,
+    "score": "integer 0-100, computed per the AUDIT SCORE RUBRIC below",
     "flags": [
       { "id": "string", "type": "tool_dropping|passive_ownership|leadership_signal|ats_cohesion", "message": "string", "fix": "string", "severity": "low|medium|high" }
     ],
@@ -329,6 +329,27 @@ ${jobDescription}`
 OUTPUT:
 Return ONE valid JSON object and nothing else. No markdown fences, no preamble, no commentary,
 no trailing explanation. All Phase 1 findings go into audit_report.flags and improvement_notes.
+
+SCORING RULES (read carefully - these fields are NOT yours to estimate):
+- "match_score" and "baseline_score" MUST be returned as null. The platform computes
+  JD-alignment scores deterministically from the actual job description, the actual source
+  resume, and this generated document. Any number you invent here is discarded, and guessing
+  one wastes output tokens.
+- "ats_keywords_from_jd", "ats_keywords_added_to_resume" and "keyword_gap" must contain only
+  terms that literally appear in the supplied job description. Never invent a keyword. These
+  lists are verified against the posting and recomputed downstream.
+
+AUDIT SCORE RUBRIC (audit_report.score - this one IS yours to compute):
+Start at 100 and subtract, then report the integer result. Do NOT default to a round number.
+  -15  a role, certification, or date from the source is missing or altered
+  -10  any metric, employer, technology, or title that is not traceable to the source
+  -10  bullet counts are disproportionate to tenure (padding a short stint)
+   -8  more than half of the bullets carry a number, or the same bullet skeleton repeats
+   -6  each unresolved ATS cohesion flag (gap, inconsistent dates, acronym mismatch)
+   -5  passive ownership phrasing survives anywhere in the document
+   -4  a banned verb appears
+   -3  a core JD requirement is absent from the resume body AND missing from keyword_gap
+Two documents with different flaws MUST receive different scores.
 
 OUTPUT JSON SCHEMA (MUST MATCH EXACTLY):
 ${OUTPUT_SCHEMA}

@@ -7,6 +7,7 @@ import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
+import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
 
 export interface OptimizationResult {
   personal_info: {
@@ -38,6 +39,8 @@ export interface OptimizationResult {
   keyword_gap: string[];
   match_score: number;
   baseline_score: number;
+  /** How match_score and baseline_score were derived. Absent when the JD is too thin to score. */
+  score_breakdown?: MatchScoreResult["score_breakdown"];
   improvement_notes: string[];
   audience_alignment_notes: string;
   why_this_job?: string;
@@ -634,6 +637,17 @@ export async function optimizeResume(
           return obj;
         };
 
+        // Recompute JD alignment against the FINAL document. The server already
+        // scored this response, but reconcileExperience above can restore roles
+        // the model dropped, and a cached server response may predate scoring.
+        // Scoring is deterministic, so recomputing is safe and idempotent.
+        applyMatchScores(parsed, {
+          jobDescription,
+          originalResumeText: resumeText,
+          targetRole,
+          jdKeywords: parsed._intermediateData?.jdKeywords,
+        });
+
         return fixTitle(parsed);
       }
     } catch (e) {
@@ -672,14 +686,6 @@ export async function optimizeResume(
 
       try {
         const parsed = JSON.parse(resultText);
-        
-        // Ensure scores are present and numeric
-        if (typeof parsed.match_score !== 'number') {
-          parsed.match_score = parseInt(parsed.match_score) || 70;
-        }
-        if (typeof parsed.baseline_score !== 'number') {
-          parsed.baseline_score = parseInt(parsed.baseline_score) || 50;
-        }
 
         // Skills must be grouped into categories.
         let parsedSkills = parsed.skills || {};
@@ -712,6 +718,15 @@ export async function optimizeResume(
 
         // Guarantee no role was silently dropped to satisfy the page budget.
         parsed.experience = reconcileExperience(resumeText, parsed.experience);
+
+        // Scores are computed from the finished document, never taken from the
+        // model. Asking an LLM to score against a schema example just returns
+        // the example, which is why every resume used to report the same number.
+        applyMatchScores(parsed, {
+          jobDescription,
+          originalResumeText: resumeText,
+          targetRole,
+        });
 
         if (data.usage) {
           parsed._usage = data.usage;

@@ -8,7 +8,8 @@ NexusPro AI is a production-grade, full-stack application designed to transform 
 Unlike simple prompt-based wrappers, NexusPro uses a multi-stage server-side pipeline:
 - **Requirement Deconstruction**: Analyzes JDs to extract explicit and implicit technical/leadership requirements.
 - **Agentic Role Synthesis**: Spawns concurrent LLM tasks for each professional role to generate STAR-method achievements tailored specifically to the target job description.
-- **Deduplication & scoring**: Applies scoring algorithms to ensure content quality and calculates a "Fit Score" based on keyword density and semantic alignment.
+- **Deduplication & scoring**: Applies scoring algorithms to ensure content quality.
+- **Deterministic match scoring**: The JD match score is computed in code, never guessed by the LLM. `src/lib/matchScore.ts` extracts weighted requirements from the posting (skill dictionary, technical-token patterns, "experience with X" phrases, plus extraction-stage keywords verified against the JD text), then scores the original resume and the generated resume against that same list. The returned `score_breakdown` exposes every component — requirement coverage, proof-in-experience depth, role vocabulary alignment and years-of-experience fit — so the number shown in the UI is auditable. When a posting carries too little signal to score honestly, the score fields are omitted rather than filled with a placeholder.
 - **Logic**: Implemented in Node.js using `server/optimization.ts` and `server/roleGenerator.ts`.
 
 ### 2. Multi-Audience Strategy
