@@ -890,6 +890,10 @@ async function startServer() {
         roleCount,
         jdKeywords: optimizedInput.jd_keywords,
         masterResumes,
+        // The extracted keyword list alone is too lossy to differentiate two job
+        // descriptions for similar roles, which caused near-identical output across
+        // different JDs. The model needs the actual posting to tailor against.
+        jobDescription: Optimization.trimInput(jobDescription, 6000),
         inputLabel: "INPUT DATA (structured, pre-extracted and trimmed)",
         inputData: JSON.stringify(optimizedInput, null, 2),
       });
