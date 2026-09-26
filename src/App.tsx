@@ -3855,6 +3855,75 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 </div>
                               );
                             })()}
+                            {activeAudience && results[activeAudience]?.bullet_budget_report && (() => {
+                              const report = results[activeAudience].bullet_budget_report!;
+                              const statusTone: Record<string, string> = {
+                                within: 'text-emerald-500',
+                                trimmed: 'text-amber-500',
+                                under: 'text-sky-500',
+                                unbudgeted: 'opacity-50',
+                              };
+                              const statusLabel: Record<string, string> = {
+                                within: 'Within',
+                                trimmed: 'Trimmed',
+                                under: 'Under',
+                                unbudgeted: 'Model decided',
+                              };
+                              const statusHint: Record<string, string> = {
+                                within: 'Inside the budget for this tenure.',
+                                trimmed: 'The model wrote more than the ceiling; the weakest bullets were removed.',
+                                under: 'Fewer bullets than the budget. The platform never pads a role - add more detail about this role to your resume to reach it.',
+                                unbudgeted: 'The dates could not be read, so the count was left to the model (never more than the maximum).',
+                              };
+                              return (
+                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-teal-400' : 'text-teal-700'}`}>Bullet Budget</h3>
+                                      <p className="text-[10px] mt-1 opacity-70">
+                                        Bullets per role follow tenure, then recency ·{' '}
+                                        {report.trimmed > 0
+                                          ? `${report.trimmed} over-budget bullet${report.trimmed === 1 ? '' : 's'} removed`
+                                          : 'nothing removed'}
+                                      </p>
+                                    </div>
+                                    <span className={`text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${report.compliant ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                      {report.compliant ? 'Compliant' : 'Review'}
+                                    </span>
+                                  </div>
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                                    {report.roles.map((role, idx) => (
+                                      <div key={`${role.company}-${role.role}-${idx}`} className="text-[10px]">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <span className="opacity-80 truncate" title={[role.role, role.company, role.duration].filter(Boolean).join(' · ')}>
+                                            {[role.role, role.company].filter(Boolean).join(' · ') || `Role ${idx + 1}`}
+                                            <span className="opacity-50"> · {role.tenure_months !== null ? `${role.tenure_months} mo` : 'dates unreadable'}</span>
+                                          </span>
+                                          <span className="font-bold tabular-nums whitespace-nowrap" title={`${role.reason}. ${statusHint[role.status] || ''}`}>
+                                            {role.delivered} / {role.budget ?? `max ${role.max}`}
+                                            <span className={`ml-2 uppercase tracking-wider ${statusTone[role.status] || ''}`}>
+                                              {statusLabel[role.status] || role.status}
+                                            </span>
+                                          </span>
+                                        </div>
+                                        {role.removed.length > 0 && (
+                                          <details className="mt-1">
+                                            <summary className="cursor-pointer opacity-50">
+                                              {role.removed.length} removed to fit the budget
+                                            </summary>
+                                            <ul className="mt-1 space-y-0.5">
+                                              {role.removed.map((bullet, bIdx) => (
+                                                <li key={bIdx} className="opacity-40 italic truncate" title={bullet}>“{bullet}”</li>
+                                              ))}
+                                            </ul>
+                                          </details>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             {autoSelection && (                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
                                 <div className="flex items-start justify-between gap-3">
                                   <div>

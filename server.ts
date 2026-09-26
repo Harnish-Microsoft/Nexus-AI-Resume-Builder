@@ -18,12 +18,13 @@ import { renderResumeToHTML } from "./server/resumeTemplate.ts";
 import { pipelineCache } from "./server/cacheUtility";
 import { calculateCost, UsageLog } from "./server/analytics";
 import { runAgents } from "./server/agents";
-import { generatePerRole } from "./server/roleGenerator";
+import { generatePerRole, selectStarStories } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
 import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
 import { applyMatchScores } from "./src/lib/matchScore";
 import { applyImpactAudit } from "./src/lib/impactScore";
+import { computeBulletBudgets, enforceBulletBudgets } from "./src/lib/bulletBudget";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
@@ -266,38 +267,62 @@ function decrypt(text: string) {
 }
 
 /**
- * Replaces the model's guessed match_score/baseline_score with values computed
- * from the real job description and the real resume.
+ * Deterministic post-processing shared by every generation branch (OpenAI
+ * premium, Gemini split-gen, and the fallbacks) before the response is cached:
  *
- * Every generation branch (OpenAI premium, Gemini split-gen, and the fallbacks)
- * funnels through here before the response is cached, so no branch can leak the
- * placeholder numbers the model used to echo back from the prompt schema.
+ *   1. enforce each role's tenure-based bullet budget (trims, never pads),
+ *   2. replace the model's guessed match_score/baseline_score with values
+ *      computed from the real job description and the real resume,
+ *   3. run the impact audit, tracing every figure back to the candidate's own
+ *      material.
+ *
+ * Budgets run first so the scores and the audit describe the document the
+ * candidate actually receives. The source text deliberately excludes the
+ * reference resumes so that the client, which re-runs the same steps, agrees.
  */
-function attachRealMatchScores(
+function finalizeResumeResult(
   result: any,
   params: {
     jobDescription: string;
     originalResumeText: string;
     targetRole?: string;
     jdKeywords?: string[];
+    brainDump?: string;
+    customPrompt?: string;
   }
 ): any {
   if (!result || typeof result.result !== "string") return result;
   try {
     const parsed = JSON.parse(result.result);
-    applyMatchScores(parsed, params);
-    applyImpactAudit(parsed);
+    const { brainDump, customPrompt, ...scoreParams } = params;
+    const sourceText = [params.originalResumeText, brainDump, customPrompt]
+      .filter((part) => typeof part === "string" && part.trim().length > 0)
+      .join("\n\n");
+
+    const budget = enforceBulletBudgets(parsed, { sourceText });
+    applyMatchScores(parsed, scoreParams);
+    applyImpactAudit(parsed, { sourceText });
+    if (budget) {
+      const outside = budget.roles.filter((r) => r.status === "trimmed" || r.status === "under");
+      console.log(
+        `[Budget] ${budget.roles.length} roles, ${budget.trimmed} bullet(s) trimmed, compliant=${budget.compliant}` +
+          (outside.length > 0
+            ? ` (${outside.map((r) => `${r.role || "role"}: ${r.delivered}/${r.budget ?? `max ${r.max}`} ${r.status}`).join("; ")})`
+            : "")
+      );
+    }
     console.log(
       `[Scoring] baseline=${parsed.baseline_score ?? "n/a"} match=${parsed.match_score ?? "n/a"} ` +
         `(${parsed.score_breakdown?.jd_keywords_evaluated ?? 0} JD requirements evaluated) ` +
         `impact=${parsed.impact_audit?.score ?? "n/a"} ` +
         `(${parsed.impact_audit?.bullets_evaluated ?? 0} bullets, ` +
         `${parsed.impact_audit?.findings?.length ?? 0} findings, ` +
+        `${parsed.impact_audit?.unverified_figure_bullets ?? 0} with unverified figures, ` +
         `${parsed.impact_audit?.star_dropped ?? 0} STAR dropped)`
     );
     return { ...result, result: JSON.stringify(parsed) };
   } catch (e: any) {
-    console.warn("[Scoring] Could not compute deterministic match score:", e?.message || e);
+    console.warn("[Scoring] Could not finalize the generated resume:", e?.message || e);
     return result;
   }
 }
@@ -971,6 +996,7 @@ async function startServer() {
         roleCount,
         jdKeywords: optimizedInput.jd_keywords,
         masterResumes,
+        bulletBudgets: computeBulletBudgets(optimizedInput.experience),
         // The extracted keyword list alone is too lossy to differentiate two job
         // descriptions for similar roles, which caused near-identical output across
         // different JDs. The model needs the actual posting to tailor against.
@@ -1134,7 +1160,6 @@ async function startServer() {
             "match_score": null,
             "improvement_notes": [...],
             "audience_alignment_notes": "...",
-            "star_stories": [ { "bullet": "copied VERBATIM from a bullet in the generated experience section", "role": "...", "company": "...", "situation": "...", "task": "...", "action": "...", "result": "..." } ],
             "audit_report": { ... }
           }
         `;
@@ -1158,7 +1183,12 @@ async function startServer() {
             audience,
             mode,
             customPrompt,
-            brainDump
+            brainDump,
+            {
+              // Each role is tailored against the real posting, like the whole-document path.
+              jobDescription: Optimization.trimInput(jobDescription, 6000),
+              jdKeywords: optimizedInput.jd_keywords,
+            }
           )
         ]);
 
@@ -1170,11 +1200,16 @@ async function startServer() {
         
         // 3. Deduplicate and Score
         console.log("[Pipeline] Deduplicating and Scoring...");
-        const finalExperience = deduplicateAndScore(roleResults);
+        const finalExperience = deduplicateAndScore(
+          roleResults.map(({ star_stories, generation, ...role }) => role)
+        );
 
         const finalResult = {
           ...metaData,
-          experience: finalExperience
+          experience: finalExperience,
+          // Drafted per role, next to the evidence and the bullets they expand.
+          // The meta call never sees the bullets, so it cannot write stories that link.
+          star_stories: selectStarStories(roleResults),
         };
 
         // STEP 4: Agentic Review (Multi-Agent Refinement)
@@ -1207,13 +1242,15 @@ async function startServer() {
       }
     }
     
-    // STEP 5: Deterministic scoring, then cache (Merged/Unified)
+    // STEP 5: Deterministic budget, scoring and audit, then cache (Merged/Unified)
     if (result) {
-      result = attachRealMatchScores(result, {
+      result = finalizeResumeResult(result, {
         jobDescription,
         originalResumeText: resumeText,
         targetRole,
         jdKeywords,
+        brainDump,
+        customPrompt,
       });
       Optimization.saveToCache(cacheKey, result);
       res.json(result);

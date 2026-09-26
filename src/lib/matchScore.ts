@@ -237,8 +237,11 @@ const REQUIREMENT_HINT =
   /\b(require[ds]?|must\s+have|must-have|minimum|mandatory|essential|qualification|responsib|proficien|expertise|hands[-\s]?on|demonstrated|proven|at\s+least)\b/i;
 
 function splitLines(text: string): string[] {
+  // No lookbehind: vite's default target includes Safari 14, where a lookbehind
+  // regex literal is a SyntaxError that would take the whole bundle down.
   return (text || "")
-    .split(/\r?\n|(?<=[.;])\s{2,}/)
+    .replace(/([.;])\s{2,}/g, "$1\n")
+    .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
 }

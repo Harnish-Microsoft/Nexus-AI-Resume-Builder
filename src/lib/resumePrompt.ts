@@ -1,12 +1,21 @@
 /**
- * Single source of truth for the resume generation prompt.
+ * Single source of truth for the resume generation prompts.
  *
- * Both generation paths consume this builder:
- *   - server.ts        -> POST /api/v2/optimize (primary hybrid pipeline, structured input)
- *   - geminiService.ts -> optimizeResume() legacy/fallback path (raw resume text input)
+ * Every generation path consumes these builders:
+ *   - server.ts            -> POST /api/v2/optimize, OpenAI branch (whole document)
+ *   - server/roleGenerator -> POST /api/v2/optimize, default hybrid-gemini branch (one role at a time)
+ *   - geminiService.ts     -> optimizeResume() legacy/fallback path (raw resume text input)
  *
- * Keep this module dependency-free: it is bundled by both esbuild (node) and vite (browser).
+ * The FAANG bullet standard, STAR standard and bullet budget are defined once
+ * here and shared by both prompt shapes, so the paths cannot drift apart again.
+ *
+ * Only imports the other dependency-free src/lib modules: it is bundled by both
+ * esbuild (node) and vite (browser).
  */
+
+import { describeBudgetRules, formatBudgetTable, UNPARSEABLE_MAX } from "./bulletBudget";
+import type { BulletBudget } from "./bulletBudget";
+import { BANNED_LEAD_VERBS } from "./impactScore";
 
 export interface ResumePromptOptions {
   targetRole: string;
@@ -27,20 +36,15 @@ export interface ResumePromptOptions {
   currentDate?: string;
   /** Hiring-manager rejection review instead of a rewrite. */
   recruiterSimulationMode?: boolean;
+  /** Per-role budgets computed from the source dates; rendered as an authoritative table. */
+  bulletBudgets?: BulletBudget[];
 }
 
-const BANNED_VERBS = [
-  "Spearheaded",
-  "Orchestrated",
-  "Pioneered",
-  "Leveraged",
-  "Empowered",
-  "Synergized",
-  "Revolutionized",
-  "Championed",
-  "Utilized",
-  "Facilitated",
-];
+function titleCase(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+const BANNED_VERBS = BANNED_LEAD_VERBS.map(titleCase);
 
 const APPROVED_VERBS = [
   "Architected",
@@ -68,18 +72,133 @@ const APPROVED_VERBS = [
 
 const CORPORATE_DNA: Record<string, string> = {
   amazon:
-    'Emphasize "Ownership", "Bias for Action", and data-driven results, using Amazon Leadership Principles vocabulary.',
+    "Emphasize Ownership, Bias for Action, Dive Deep and Deliver Results: customer impact, operational excellence, and decisions backed by data. Demonstrate the Leadership Principles through the work; never name them in a bullet.",
   microsoft:
-    'Emphasize "Enterprise Scale", "Cloud Transformation", and collaborative cross-org ecosystems.',
+    "Emphasize enterprise scale, cloud transformation, customer outcomes, and collaboration across organizational boundaries.",
   google:
-    'Emphasize systems design, extreme scale, algorithmic efficiency, and the Google XYZ bullet formula.',
+    "Emphasize systems design, scale, and technical depth, in XYZ-shaped bullets that carry the measure only where the source states it.",
   meta:
-    'Emphasize moving fast, shipping end-to-end impact, and performance optimization.',
+    "Emphasize moving fast, shipping end-to-end impact, and performance optimization.",
+  apple:
+    "Emphasize craftsmanship and attention to detail, user-facing quality, privacy and security by design, and tight cross-functional collaboration.",
+  netflix:
+    "Emphasize independent judgment, ownership of outcomes with minimal process, candid communication, and the business impact of each decision.",
   accenture:
-    'Emphasize client delivery, global managed services, and cross-functional deployment.',
+    "Emphasize client delivery, global managed services, and cross-functional deployment.",
   infosys:
-    'Emphasize client delivery, global managed services, and cross-functional deployment.',
+    "Emphasize client delivery, global managed services, and cross-functional deployment.",
 };
+
+const DEFAULT_CORPORATE_DNA =
+  "Focus on internal product growth, feature ownership, and end-to-end delivery.";
+
+/** Subsidiaries and products that share their parent's hiring bar. */
+const COMPANY_ALIASES: Record<string, string> = {
+  amazon: "amazon", aws: "amazon",
+  google: "google", alphabet: "google", youtube: "google", deepmind: "google",
+  meta: "meta", facebook: "meta", instagram: "meta", whatsapp: "meta",
+  microsoft: "microsoft", azure: "microsoft",
+  apple: "apple",
+  netflix: "netflix",
+  accenture: "accenture",
+  infosys: "infosys",
+};
+
+/** Own-key lookup, so a company named "Constructor" never resolves to Object.prototype.constructor. */
+function ownEntry<T>(table: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+}
+
+/**
+ * Canonical key for a target company, matched per word so that "Amazon Web
+ * Services", "AWS" and "Google LLC" resolve like "Amazon" and "Google" do.
+ */
+export function companyKey(company?: string): string | null {
+  const tokens = String(company || "").toLowerCase().match(/[a-z0-9]+/g) || [];
+  for (const token of tokens) {
+    const key = ownEntry(COMPANY_ALIASES, token);
+    if (key) return key;
+  }
+  return null;
+}
+
+export interface StarFramework {
+  name: string;
+  competencies: string[];
+}
+
+/** The competency model each company's behavioral interviews are organized around. */
+const STAR_FRAMEWORKS: Record<string, StarFramework> = {
+  amazon: {
+    name: "Amazon's Leadership Principles",
+    competencies: [
+      "Customer Obsession", "Ownership", "Invent and Simplify", "Are Right, A Lot",
+      "Learn and Be Curious", "Hire and Develop the Best", "Insist on the Highest Standards",
+      "Think Big", "Bias for Action", "Frugality", "Earn Trust", "Dive Deep",
+      "Have Backbone; Disagree and Commit", "Deliver Results",
+      "Strive to be Earth's Best Employer", "Success and Scale Bring Broad Responsibility",
+    ],
+  },
+  google: {
+    name: "Google's hiring attributes",
+    competencies: [
+      "Googleyness", "Emergent Leadership", "Comfort with Ambiguity", "Bias to Action",
+      "Collaboration", "Role-Related Knowledge",
+    ],
+  },
+  meta: {
+    name: "the signals Meta's behavioral interview assesses",
+    competencies: [
+      "Driving Results", "Moving Fast", "Resolving Conflict", "Embracing Ambiguity",
+      "Growing Continuously", "Communicating Effectively",
+    ],
+  },
+  microsoft: {
+    name: "Microsoft's culture and leadership principles",
+    competencies: [
+      "Growth Mindset", "Customer Obsession", "Collaboration (One Microsoft)", "Create Clarity",
+      "Generate Energy", "Deliver Success",
+    ],
+  },
+  apple: {
+    name: "the qualities Apple interviewers commonly probe",
+    competencies: [
+      "Attention to Detail", "User Focus", "Cross-Functional Collaboration", "Ownership",
+      "Simplicity", "Handling Ambiguity",
+    ],
+  },
+  netflix: {
+    name: "Netflix's culture values",
+    competencies: [
+      "Judgment", "Communication", "Curiosity", "Courage", "Passion", "Selflessness",
+      "Innovation", "Inclusion", "Integrity", "Impact",
+    ],
+  },
+};
+
+const DEFAULT_STAR_FRAMEWORK: StarFramework = {
+  name: "the core behavioral competencies top-tier loops assess",
+  competencies: [
+    "Ownership", "Delivering Results", "Technical Depth", "Problem Solving",
+    "Handling Ambiguity", "Collaboration", "Influence Without Authority",
+    "Conflict Resolution", "Customer Focus", "Learning from Failure",
+  ],
+};
+
+export function starFrameworkFor(targetCompany?: string): StarFramework {
+  const key = companyKey(targetCompany);
+  return (key && ownEntry(STAR_FRAMEWORKS, key)) || DEFAULT_STAR_FRAMEWORK;
+}
+
+function corporateDnaFor(targetCompany?: string): string {
+  const key = companyKey(targetCompany);
+  return (key && ownEntry(CORPORATE_DNA, key)) || DEFAULT_CORPORATE_DNA;
+}
+
+const STAR_STORY_FIELDS =
+  '"competency": "string", "question": "string", "situation": "string", "task": "string", ' +
+  '"action": "string, first person singular", "result": "string", "learning": "string", ' +
+  '"follow_ups": ["string"], "prep_gaps": ["string"]';
 
 const OUTPUT_SCHEMA = `{
   "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
@@ -97,7 +216,7 @@ const OUTPUT_SCHEMA = `{
   "improvement_notes": ["string"],
   "audience_alignment_notes": "string",
   "rejection_reasons": ["string"],
-  "star_stories": [ { "bullet": "string, copied VERBATIM from a bullet in experience", "role": "string, the role that bullet belongs to", "company": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
+  "star_stories": [ { "bullet": "string, copied VERBATIM from a bullet in experience", "role": "string, the role that bullet belongs to", "company": "string", ${STAR_STORY_FIELDS} } ],
   "audit_report": {
     "score": "integer 0-100, computed per the AUDIT SCORE RUBRIC below",
     "flags": [
@@ -110,6 +229,141 @@ const OUTPUT_SCHEMA = `{
 function section(condition: unknown, text: string): string {
   return condition ? text : "";
 }
+
+/* ------------------------------------------------------------------ *
+ * Shared standards. Each block is referenced by NAME, never by number,
+ * because the whole-document and per-role prompts number their rules
+ * differently.
+ * ------------------------------------------------------------------ */
+
+const STAR_GROUNDING = `For each role, identify the achievements the source actually evidences, and for each one
+silently reconstruct the four STAR elements FROM THE SOURCE ONLY:
+  S - the situation: the system, constraint, failure, or business condition that existed
+  T - the task: what this person specifically owned in it, not what the team owned
+  A - the action: the concrete technical or organisational decision they made and executed
+  R - the result: what measurably or observably changed as a consequence
+
+Then write the bullet as the compressed A -> R of that story: the action taken and what it
+changed. The S and T stay in your reasoning as the context that makes the bullet specific;
+they are what stops it collapsing into a tool-dropping list.
+
+RULES FOR THIS STEP:
+- If the source does not support an element, leave it thin and factual. NEVER invent a
+  situation, a stakeholder, a deadline, or a result to complete the pattern. An honest
+  three-element story beats a fabricated four-element one. ZERO FABRICATION outranks STAR
+  completeness absolutely.
+- If a Result cannot be evidenced, close on the concrete change instead - the manual step
+  removed, the failure mode eliminated, the system retired, the escalation that stopped.
+- STAR is the reasoning scaffold, NOT a bullet template. Do NOT write bullets shaped
+  "Faced with X, tasked with Y, I did Z, achieving W" - that cadence is an instant tell and
+  violates BULLET SHAPE. The reader must never be able to see the scaffold in the prose.
+- A bullet that is pure responsibility description with no action and no change is not a
+  STAR-grounded bullet. Rewrite it or drop it.`;
+
+const ZERO_FABRICATION = `ZERO FABRICATION. Do not invent metrics, percentages, currency amounts, team sizes,
+   technologies, tools, certifications, employers, or dates. If the source contains no
+   number, the bullet ships without a number. A precise, unquantified, technically specific
+   bullet always beats an invented statistic. Every noun in the output must be traceable to
+   the source input, or to the JD's vocabulary applied to work the source actually supports.
+   Every figure you write is checked mechanically against the candidate's own material; one
+   that cannot be found there is shown to the candidate as UNVERIFIED. Reproduce source
+   figures exactly - never round them, and never derive a new one (such as a percentage
+   computed from two source numbers); state the before and after as the source gives them.`;
+
+const FAANG_BULLET_STANDARD = `FAANG BULLET STANDARD - how a top-tier screen reads every bullet:
+   a. IMPACT FIRST, XYZ SHAPE: "Accomplished [X], as measured by [Y], by doing [Z]". Include
+      Y ONLY when the source states the measure. When it does not, X must still be concrete:
+      the system shipped, the failure mode removed, the process retired. Never manufacture a
+      Y to complete the formula - a missing measure is honest, an invented one disqualifies.
+      Not every bullet carries a number (see METRIC DISCIPLINE).
+   b. LEGIBLE SCOPE: make the size of the problem visible with facts the source gives - what
+      the system does for the business, who depends on it, how many services, environments,
+      teams, or regions it spans. Scope stands in for a metric and never needs invention.
+   c. INDIVIDUAL ATTRIBUTION: every bullet states what THIS person did. No "we", "our", "I",
+      or "my" - implied first person, verb first. For team efforts, name the part that was
+      theirs ("Designed the failover logic for..."); the team appears only as scope.
+   d. LEVEL CALIBRATION: infer seniority from the source dates and the target role. Senior
+      and above: architectural judgement, trade-offs weighed, cost and risk ownership,
+      cross-team influence, ambiguity resolved. Earlier career: implementation depth,
+      systems reasoning, delivery. Never apply executive vocabulary to junior work, or
+      junior vocabulary to executive work.
+   e. TENSE: past tense for every accomplishment, including in the current role - the work
+      is finished even if the job is not.
+   f. ONE CLAIM PER BULLET: one accomplishment in one to two lines. Two unrelated wins joined
+      by "and" are two bullets, or one bullet and one cut.
+   g. DEFENSIBILITY: keep a bullet only if the candidate could answer "walk me through that"
+      for five minutes using nothing but the source. Otherwise cut it back to what they can
+      defend.`;
+
+const BULLET_SHAPE = `BULLET SHAPE - DELIBERATE VARIATION (there is NO single bullet template):
+   Rotate across these shapes so that no two consecutive bullets share a cadence. Every
+   shape still opens on the action verb:
+   (a) Outcome-led:  action -> technical work -> result
+   (b) Scope-led:    action -> system or surface owned -> what it enabled
+   (c) Decision-led: action -> the trade-off evaluated -> what it resolved
+   (d) Problem-led:  action -> the constraint or failure it removed -> what stopped happening
+   Vary length deliberately: some bullets 8-12 words, others 18-25. Uniform bullet length is
+   itself a tell of generated text. One line preferred; two lines only when genuine
+   architectural complexity requires it. Never pad to fill a line.`;
+
+const METRIC_DISCIPLINE = `METRIC DISCIPLINE - DENSITY CAP (violating this makes the whole document read as fake):
+   A number in every bullet is the single strongest tell of an AI-written resume. Recruiters
+   do not discount only the suspect figure - they discount the entire document.
+   - Use a metric ONLY where the source explicitly supplies one. Never derive, infer,
+     estimate, extrapolate, or round one up.
+   - Aim for roughly one bullet in three carrying a number, and never more than two
+     consecutive bullets containing one.
+   - ATTRIBUTION TEST: include a metric only if the person in THAT role would plausibly have
+     had visibility into it. A support analyst does not know company revenue impact.
+   - NO ROUND-NUMBER THEATRE: avoid 30%, 50%, 2x, "over 100", "millions of". Real figures are
+     specific and uneven. Reproduce source figures exactly; never tidy them.
+   - When no metric exists, close the bullet on a CONCRETE, VERIFIABLE outcome instead: the
+     manual step removed, the failure mode eliminated, the system retired, the audit passed,
+     the recurring escalation ended. Specificity replaces quantification. Vagueness does not.`;
+
+const VERB_POLICY = `VERB POLICY. Lead every bullet with a strong, concrete, past-tense verb, and never open
+   two bullets of the same role with the same verb.
+   BANNED (AI-slop markers): ${BANNED_VERBS.join(", ")}.
+   USE: ${APPROVED_VERBS.join(", ")}.`;
+
+function starStoryStandard(framework: StarFramework): string {
+  return `STAR STORY STANDARD - every story must survive a top-tier behavioral interview loop:
+- Build a story only from a bullet whose source evidence supports a real answer.
+- "competency": the ONE competency the story best evidences, taken from ${framework.name}:
+  ${framework.competencies.join(" | ")}.
+  Give each story a DIFFERENT competency where the evidence allows: each interviewer in a
+  loop is assigned different ones.
+- "question": the behavioral question this story answers, phrased the way an interviewer
+  asks it ("Tell me about a time you...").
+- "situation" (1-2 sentences) and "task" (1 sentence): brief context, about a fifth of the
+  story. The task is what THIS person owned, not what the team owned.
+- "action": the bulk of the story, about half of it - 3 to 5 concrete steps told in FIRST
+  PERSON SINGULAR ("I profiled...", "I proposed..."), never "we". Include the reasoning
+  behind the key decision and the trade-off that was weighed.
+- "result": what changed, using the source's own figures where they exist and otherwise
+  the concrete qualitative change. Never a figure the source does not state.
+- "learning": one sentence on what the candidate took away or would do differently.
+- "follow_ups": the 2-3 probing questions an interviewer is most likely to ask next.
+- "prep_gaps": details the candidate must prepare because the source does not supply them
+  (for example "the latency before the change"). Empty when nothing is missing. Missing
+  evidence goes HERE - never into the story itself.
+- Spoken aloud, a story runs about two minutes: specific, first person, no preamble.`;
+}
+
+function budgetCountPhrase(budget: BulletBudget): string {
+  if (budget.label === null) {
+    return `no readable dates - proportionate to the evidence, never more than ${budget.max} bullets`;
+  }
+  if (budget.min === budget.max) return `EXACTLY ${budget.min} bullet${budget.min === 1 ? "" : "s"}`;
+  return `${budget.min} to ${budget.max} bullets`;
+}
+
+const BUDGET_ENFORCEMENT = `ENFORCEMENT: the platform counts every role's bullets after generation. Bullets beyond a
+   role's ceiling are deleted automatically, weakest first - an extra bullet never ships, it
+   only displaces a stronger one. The low end of a range is a target, not a quota: if the
+   source evidences fewer distinct achievements, write fewer bullets rather than invent one.
+   Splitting a compound source bullet into two genuine achievements is allowed; restating
+   one achievement twice is not.`;
 
 export function buildResumeGenerationPrompt(options: ResumePromptOptions): string {
   const {
@@ -131,12 +385,12 @@ export function buildResumeGenerationPrompt(options: ResumePromptOptions): strin
       day: "numeric",
     }),
     recruiterSimulationMode = false,
+    bulletBudgets,
   } = options;
 
-  const dnaKey = (targetCompany || "").toLowerCase();
-  const corporateDna =
-    CORPORATE_DNA[dnaKey] ||
-    "Focus on internal product growth, feature ownership, and end-to-end delivery.";
+  const corporateDna = corporateDnaFor(targetCompany);
+  const framework = starFrameworkFor(targetCompany);
+  const budgets = Array.isArray(bulletBudgets) && bulletBudgets.length > 0 ? bulletBudgets : null;
 
   const roleCountRule =
     typeof roleCount === "number"
@@ -205,29 +459,7 @@ D. ATS COHESION
 === PHASE 1.5 - STAR GROUNDING (internal reasoning; DO NOT emit as prose) ===
 This step happens BEFORE you write a single bullet, and it determines what the bullets say.
 
-For each role, identify the achievements the source actually evidences, and for each one
-silently reconstruct the four STAR elements FROM THE SOURCE ONLY:
-  S - the situation: the system, constraint, failure, or business condition that existed
-  T - the task: what this person specifically owned in it, not what the team owned
-  A - the action: the concrete technical or organisational decision they made and executed
-  R - the result: what measurably or observably changed as a consequence
-
-Then write the bullet as the compressed A -> R of that story: the action taken and what it
-changed. The S and T stay in your reasoning as the context that makes the bullet specific;
-they are what stops it collapsing into a tool-dropping list.
-
-RULES FOR THIS STEP:
-- If the source does not support an element, leave it thin and factual. NEVER invent a
-  situation, a stakeholder, a deadline, or a result to complete the pattern. An honest
-  three-element story beats a fabricated four-element one. Rule 2 (ZERO FABRICATION)
-  outranks STAR completeness absolutely.
-- If a Result cannot be evidenced, close on the concrete change instead - the manual step
-  removed, the failure mode eliminated, the system retired, the escalation that stopped.
-- STAR is the reasoning scaffold, NOT a bullet template. Do NOT write bullets shaped
-  "Faced with X, tasked with Y, I did Z, achieving W" - that cadence is an instant tell and
-  violates rule 5. The reader must never be able to see the scaffold in the prose.
-- A bullet that is pure responsibility description with no action and no change is not a
-  STAR-grounded bullet. Rewrite it or drop it.
+${STAR_GROUNDING}
 
 Then populate "star_stories" with the 4-6 STRONGEST of these, weighted toward the most
 recent and most senior roles, including at least one from the current or most recent role.
@@ -235,6 +467,8 @@ Each entry's "bullet" field MUST be copied VERBATIM, character for character, fr
 you actually emitted in "experience" - it is the interview-prep expansion of that exact
 bullet, and entries that do not match an emitted bullet are discarded by the platform.
 Set "role" and "company" to the role that bullet belongs to.
+
+${starStoryStandard(framework)}
 
 === PHASE 2 - REWRITE ===
 
@@ -247,25 +481,26 @@ HARD CONSTRAINTS (violating any of these is a critical failure):
    If content will not fit, remove BULLETS from the oldest roles - never a role.
    Losing a bullet is acceptable; losing a job is not.
 
-2. ZERO FABRICATION. Do not invent metrics, percentages, currency amounts, team sizes,
-   technologies, tools, certifications, employers, or dates. If the source contains no
-   number, the bullet ships without a number. A precise, unquantified, technically specific
-   bullet always beats an invented statistic. Every noun in the output must be traceable to
-   the source input, or to the JD's vocabulary applied to work the source actually supports.
+2. ${ZERO_FABRICATION}
 
 3. PRESERVE ALL CERTIFICATIONS AND TITLES verbatim, including issuer and date. Never
    normalise, "correct", re-case, or abbreviate a job title or company name.
 
 4. BULLET BUDGET - TENURE FIRST, THEN RECENCY (trim wording, never roles):
-   If a role in the input carries a "bullet_budget" field, that value is AUTHORITATIVE -
-   produce exactly that many bullets for that role. It was computed from the actual dates
-   and overrides every heuristic below.
-   Where no "bullet_budget" is given, derive tenure from the duration field and apply:
-   - Under 3 months:        exactly 1 bullet, single line
-   - 3 to 12 months:        2-3 bullets
-   - Over 1 year, current or most recent role:  6-7 bullets
-   - Over 1 year, earlier roles:                3-4 bullets
-   - Anything before the last ~10 years:        1-2 bullets, core outcome only
+${
+    budgets
+      ? `   PER-ROLE BUDGET - computed from the actual dates. AUTHORITATIVE: it overrides every
+   heuristic below and your own reading of the dates.
+${formatBudgetTable(budgets)}
+   The tiers these were derived from (first match wins):
+${describeBudgetRules()}`
+      : `   Derive each role's tenure from its duration field (and the CURRENT DATE for ongoing
+   roles), then apply the first tier that matches:
+${describeBudgetRules()}
+   The recency tier applies to any ongoing role and to the most recent role longer than
+   12 months. A role whose dates cannot be read never exceeds ${UNPARSEABLE_MAX} bullets.`
+  }
+   ${BUDGET_ENFORCEMENT}
 
    ANTI-PADDING RULE: bullet count must stay proportionate to time served. A long list
    under a short stint reads as padding, invites scrutiny of the entire document, and is
@@ -278,40 +513,13 @@ HARD CONSTRAINTS (violating any of these is a critical failure):
    The total document must fit 1-2 pages, achieved by trimming bullets and tightening
    wording ONLY. Rule 1 always wins over this rule.
 
-5. BULLET SHAPE - DELIBERATE VARIATION (there is NO single bullet template):
-   Rotate across these shapes so that no two consecutive bullets share a cadence:
-   (a) Outcome-led:  action -> technical work -> result
-   (b) Scope-led:    action -> system or surface owned -> what it enabled
-   (c) Decision-led: action -> the trade-off evaluated -> what it resolved
-   (d) Problem-led:  the constraint or failure hit -> what you changed -> what stopped happening
-   Vary length deliberately: some bullets 8-12 words, others 18-25. Uniform bullet length is
-   itself a tell of generated text. One line preferred; two lines only when genuine
-   architectural complexity requires it. Never pad to fill a line.
+5. ${BULLET_SHAPE}
 
-6. METRIC DISCIPLINE - DENSITY CAP (violating this makes the whole document read as fake):
-   A number in every bullet is the single strongest tell of an AI-written resume. Recruiters
-   do not discount only the suspect figure - they discount the entire document.
-   - Use a metric ONLY where the source explicitly supplies one. Never derive, infer,
-     estimate, extrapolate, or round one up.
-   - Across the document, aim for roughly one bullet in three carrying a number, and never
-     more than two consecutive bullets containing one.
-   - ATTRIBUTION TEST: include a metric only if the person in THAT role would plausibly have
-     had visibility into it. A support analyst does not know company revenue impact.
-   - NO ROUND-NUMBER THEATRE: avoid 30%, 50%, 2x, "over 100", "millions of". Real figures are
-     specific and uneven. Reproduce source figures exactly; never tidy them.
-   - When no metric exists, close the bullet on a CONCRETE, VERIFIABLE outcome instead: the
-     manual step removed, the failure mode eliminated, the system retired, the audit passed,
-     the recurring escalation ended. Specificity replaces quantification. Vagueness does not.
+6. ${METRIC_DISCIPLINE}
 
-7. VERB POLICY. Lead every bullet with a strong, concrete, grounded verb.
-   BANNED (AI-slop markers): ${BANNED_VERBS.join(", ")}.
-   USE: ${APPROVED_VERBS.join(", ")}.
+7. ${VERB_POLICY}
 
-8. SENIORITY CALIBRATION. Infer seniority from the source dates and the target role - do not
-   assume. For senior or principal targets, weight architectural judgement, selection criteria,
-   cost optimization, security posture, and roadmap alignment. For early-career targets, weight
-   implementation depth, systems reasoning, and measurable delivery. Never apply executive
-   vocabulary to junior work, or junior vocabulary to executive work.
+8. ${FAANG_BULLET_STANDARD}
 
 9. SKILLS. Exactly 4 short Title Case category keys (e.g. "Cloud Infrastructure",
    "Security & Governance"). No snake_case, no underscores, no long unbroken strings.
@@ -385,11 +593,161 @@ Start at 100 and subtract, then report the integer result. Do NOT default to a r
    -6  each unresolved ATS cohesion flag (gap, inconsistent dates, acronym mismatch)
    -5  passive ownership phrasing survives anywhere in the document
    -4  a banned verb appears
+    -4  a bullet uses "we", "our", "I" or "my", or a STAR action is told as "we"
    -3  a core JD requirement is absent from the resume body AND missing from keyword_gap
    -3  each star_stories entry whose "bullet" does not match a bullet you emitted verbatim
 Two documents with different flaws MUST receive different scores.
 
 OUTPUT JSON SCHEMA (MUST MATCH EXACTLY):
 ${OUTPUT_SCHEMA}
+`;
+}
+
+export interface RoleBulletPromptOptions {
+  role: { role?: string; company?: string; duration?: string };
+  /** The role's source bullets: the only evidence the model may use. */
+  sourceBullets: string[];
+  budget: BulletBudget;
+  targetRole?: string;
+  targetCompany?: string;
+  audience?: string;
+  mode?: string;
+  customPrompt?: string;
+  brainDump?: string;
+  jobDescription?: string;
+  jdKeywords?: string[];
+  /** STAR stories to draft from this role; 0 asks for none. */
+  starStoryCount?: number;
+  /** Pipeline-specific rules appended after the shared standard. */
+  extraRules?: string[];
+  /** Problems found in a previous attempt, fed back for one corrective retry. */
+  retryFeedback?: { issues: string[]; previousBullets: string[] };
+  currentDate?: string;
+}
+
+/**
+ * Prompt for rewriting ONE role, used by the default split-generation pipeline.
+ *
+ * Carries the same FAANG, STAR and budget standards as the whole-document
+ * prompt, plus the job description, so bullets written role-by-role are tailored
+ * and budgeted exactly like bullets written in a single pass.
+ */
+export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string {
+  const {
+    role,
+    sourceBullets,
+    budget,
+    targetRole,
+    targetCompany,
+    audience,
+    mode,
+    customPrompt,
+    brainDump,
+    jobDescription,
+    jdKeywords,
+    starStoryCount = 0,
+    extraRules = [],
+    retryFeedback,
+    currentDate = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }),
+  } = options;
+
+  const framework = starFrameworkFor(targetCompany);
+  const evidence = sourceBullets.length > 0
+    ? sourceBullets.map((b, i) => `  ${i + 1}. ${b}`).join("\n")
+    : "  (no bullets in the source - write only what the title and company alone support)";
+  const tenure = budget.tenureMonths !== null ? `${budget.tenureMonths} months` : "tenure unreadable";
+  const shortStint = budget.max === 1
+    ? "\n  For a stint this short, state the single thing that was actually delivered and stop."
+    : "";
+
+  const rules = [
+    ZERO_FABRICATION,
+    FAANG_BULLET_STANDARD,
+    BULLET_SHAPE,
+    METRIC_DISCIPLINE,
+    VERB_POLICY,
+    `JD TAILORING. Select which of this role's achievements to feature, and order them, by
+   relevance to the target posting: the closest work comes first. Mirror the posting's
+   vocabulary only where the underlying work genuinely occurred. Tailoring changes
+   emphasis, selection, and wording - never facts.${
+      jdKeywords && jdKeywords.length > 0 ? `\n   Priority JD keywords: ${jdKeywords.join(", ")}.` : ""
+    }`,
+    ...extraRules,
+  ];
+
+  const starSection = starStoryCount > 0
+    ? `=== STAR STORIES (interview preparation) ===
+Draft up to ${starStoryCount} STAR ${starStoryCount === 1 ? "story" : "stories"} from this role's strongest bullets. Each
+"bullet" field MUST be copied VERBATIM from your "bullets" array - stories that match no
+bullet are discarded by the platform. Draft fewer, or none, if the source cannot support a
+real answer.
+
+${starStoryStandard(framework)}`
+    : `Return "star_stories" as an empty array for this role.`;
+
+  const retrySection = retryFeedback && retryFeedback.issues.length > 0
+    ? `
+=== CORRECTIONS REQUIRED - your previous attempt was rejected ===
+The platform's checks found these problems:
+${retryFeedback.issues.map((issue) => `- ${issue}`).join("\n")}
+Previous attempt, for reference only (fix every problem above; do not repeat them):
+${retryFeedback.previousBullets.map((b) => `- ${b}`).join("\n")}
+`
+    : "";
+
+  return `ACT AS:
+Principal Resume Intelligence Architect + Tier-1 Technical Recruiter, holding the FAANG
+hiring bar. You are rewriting ONE role of a resume; every other role is written separately.
+Your output is consumed by a JSON parser, never read as prose by a human.
+
+TARGET ROLE: ${targetRole || "Professional"}
+TARGET COMPANY: ${targetCompany || "General Product Tech"}
+AUDIENCE: ${audience || "Recruiters"} | MODE: ${mode || "Standard"} | CURRENT DATE: ${currentDate}
+CORPORATE DNA: ${corporateDnaFor(targetCompany)}
+  Tailor emphasis only. Never rename, reframe, or alter a factual claim to fit a company.
+${section(customPrompt, `CUSTOM INSTRUCTIONS: ${customPrompt}`)}
+
+ROLE TO REWRITE:
+  Title: ${role.role || "(untitled)"}
+  Company: ${role.company || "(unnamed)"}
+  Dates: ${role.duration || "(none given)"} - ${tenure}
+
+SOURCE EVIDENCE FOR THIS ROLE (the only facts you may use):
+${evidence}
+${section(
+    brainDump,
+    `BRAIN DUMP (raw, unverified): ${brainDump}
+Use only what is clearly about THIS role at THIS company. Ignore anything unverifiable.`
+  )}
+
+BULLET BUDGET FOR THIS ROLE - HARD LIMIT: ${budgetCountPhrase(budget)}.
+  Why: ${budget.reason}. Budgets follow tenure first, then recency (first match wins):
+${describeBudgetRules("  ")}${shortStint}
+  ${BUDGET_ENFORCEMENT}
+
+=== STAR GROUNDING (silent reasoning; DO NOT emit as prose) ===
+${STAR_GROUNDING}
+
+=== WRITING RULES (all mandatory) ===
+${rules.map((rule, i) => `${i + 1}. ${rule}`).join("\n\n")}
+${section(
+    jobDescription,
+    `
+=== TARGET JOB DESCRIPTION (tailor this role against it) ===
+${jobDescription}`
+  )}
+
+${starSection}
+${retrySection}
+OUTPUT:
+Return ONE valid JSON object and nothing else - no markdown fences, no commentary:
+{
+  "bullets": ["string"],
+  "star_stories": [ { "bullet": "string, copied VERBATIM from bullets", ${STAR_STORY_FIELDS} } ]
+}
 `;
 }

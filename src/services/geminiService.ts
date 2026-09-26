@@ -9,6 +9,8 @@ import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
 import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
 import { applyImpactAudit, ImpactScoreResult } from "../lib/impactScore";
+import { computeBulletBudgets, enforceBulletBudgets } from "../lib/bulletBudget";
+import type { BulletBudget, BulletBudgetReport } from "../lib/bulletBudget";
 
 export interface OptimizationResult {
   personal_info: {
@@ -49,6 +51,8 @@ export interface OptimizationResult {
   star_stories?: StarStory[];
   /** Deterministic bullet-quality audit. Absent when there are too few bullets to score. */
   impact_audit?: ImpactScoreResult;
+  /** Per-role tenure budget and what enforcement delivered against it. */
+  bullet_budget_report?: BulletBudgetReport;
   audit_report?: AuditReport;
   _usage?: {
     promptTokenCount: number;
@@ -516,6 +520,55 @@ function reconcileExperience(resumeText: string, aiExperience: any): any[] {
   return output;
 }
 
+/**
+ * The candidate's own material, against which every generated figure is traced.
+ * Must match finalizeResumeResult in server.ts so both sides reach the same audit.
+ */
+function candidateSourceText(resumeText: string, brainDump?: string, customPrompt?: string): string {
+  return [resumeText, brainDump, customPrompt]
+    .filter((part) => typeof part === "string" && part.trim().length > 0)
+    .join("\n\n");
+}
+
+/** Budgets for a JSON master resume; undefined for free-form text, whose roles are unknown. */
+function budgetsFromResumeText(resumeText: string): BulletBudget[] | undefined {
+  try {
+    const source = JSON.parse(resumeText);
+    const roles = source?.experience || source?.work_experience;
+    return Array.isArray(roles) && roles.length > 0 ? computeBulletBudgets(roles) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Deterministic post-processing on the FINAL document, in the same order as the
+ * server: bullet budgets first, so the scores and the audit describe what the
+ * candidate actually receives. Every step is idempotent, so re-running it on a
+ * server result that was already processed is safe.
+ */
+function finalizeResume(
+  parsed: any,
+  params: {
+    resumeText: string;
+    jobDescription: string;
+    targetRole: string;
+    jdKeywords?: string[];
+    brainDump?: string;
+    customPrompt?: string;
+  }
+): void {
+  const sourceText = candidateSourceText(params.resumeText, params.brainDump, params.customPrompt);
+  enforceBulletBudgets(parsed, { sourceText });
+  applyMatchScores(parsed, {
+    jobDescription: params.jobDescription,
+    originalResumeText: params.resumeText,
+    targetRole: params.targetRole,
+    jdKeywords: params.jdKeywords,
+  });
+  applyImpactAudit(parsed, { sourceText });
+}
+
 export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
@@ -640,17 +693,18 @@ export async function optimizeResume(
           return obj;
         };
 
-        // Recompute JD alignment against the FINAL document. The server already
-        // scored this response, but reconcileExperience above can restore roles
-        // the model dropped, and a cached server response may predate scoring.
-        // Scoring is deterministic, so recomputing is safe and idempotent.
-        applyMatchScores(parsed, {
+        // Recompute against the FINAL document. The server already did this, but
+        // reconcileExperience above can restore roles the model dropped, and a
+        // cached server response may predate it. Every step is deterministic
+        // and idempotent, so recomputing is safe.
+        finalizeResume(parsed, {
+          resumeText,
           jobDescription,
-          originalResumeText: resumeText,
           targetRole,
           jdKeywords: parsed._intermediateData?.jdKeywords,
+          brainDump,
+          customPrompt,
         });
-        applyImpactAudit(parsed);
 
         return fixTitle(parsed);
       }
@@ -670,6 +724,9 @@ export async function optimizeResume(
     jobDescription,
     inputLabel: "SOURCE RESUME (raw text)",
     inputData: resumeText,
+    // Computed from the real dates when the master resume is structured; for
+    // free-form text the prompt derives them from the tiers instead.
+    bulletBudgets: budgetsFromResumeText(resumeText),
   });
 
   const maxRetries = 5;
@@ -723,15 +780,17 @@ export async function optimizeResume(
         // Guarantee no role was silently dropped to satisfy the page budget.
         parsed.experience = reconcileExperience(resumeText, parsed.experience);
 
-        // Scores are computed from the finished document, never taken from the
-        // model. Asking an LLM to score against a schema example just returns
-        // the example, which is why every resume used to report the same number.
-        applyMatchScores(parsed, {
+        // Budgets, scores and the audit are computed from the finished document,
+        // never taken from the model. Asking an LLM to score against a schema
+        // example just returns the example, which is why every resume used to
+        // report the same number.
+        finalizeResume(parsed, {
+          resumeText,
           jobDescription,
-          originalResumeText: resumeText,
           targetRole,
+          brainDump,
+          customPrompt,
         });
-        applyImpactAudit(parsed);
 
         if (data.usage) {
           parsed._usage = data.usage;
