@@ -105,6 +105,7 @@ import { TermsModal } from './components/TermsModal';
 import { formatCertification } from './lib/certifications';
 
 import defaultMasterResume from './services/master_resume.json';
+import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
 
 // Lazy load heavy components for better initial performance
 const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ default: m.CareerTools })));
@@ -386,12 +387,28 @@ export default function App() {
       return saved || 'default';
   });
 
+  // 'auto' lets Optimize pick the master resume that already scores highest
+  // against the JD. Any deliberate pick by the user flips this to 'manual' so
+  // their choice is never silently overridden.
+  const [resumeSelectionMode, setResumeSelectionMode] = useState<'auto' | 'manual'>(() => {
+      const saved = localStorage.getItem('resumeSelectionMode');
+      return saved === 'manual' ? 'manual' : 'auto';
+  });
+  const [autoSelection, setAutoSelection] = useState<ResumeRankingResult | null>(null);
+
+  const setResumeSelectionModePersisted = (mode: 'auto' | 'manual') => {
+    setResumeSelectionMode(mode);
+    localStorage.setItem('resumeSelectionMode', mode);
+  };
+
   const handleSetActiveResume = (id: string) => {
     setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === id })));
     setSelectedResumeId(id);
     const selected = masterResumes.find(r => r.id === id) || masterResumes[0];
     localStorage.setItem('selectedResumeId', id);
     setResumeText(JSON.stringify(selected.data, null, 2));
+    setResumeSelectionModePersisted('manual');
+    setAutoSelection(null);
   };
 
   const handleDuplicateResume = (id: string) => {
@@ -2311,6 +2328,50 @@ export default function App() {
     // were just added.
     let finalResumeText = overrideResumeText || resumeText || "";
 
+    // Auto-select the master resume that already scores highest against this JD.
+    // Ranking is deterministic and local - no model call.
+    //
+    // Skipped whenever the text in the editor is not simply the currently
+    // selected master resume: a caller-supplied document, an uploaded/imported
+    // file, a restored version or a hand-edit all represent a deliberate choice
+    // of document, and swapping a master resume in would destroy it.
+    const selectedMaster = masterResumes.find(r => r.id === selectedResumeId);
+    const editorHoldsSelectedMaster =
+      !!selectedMaster && resumeText === JSON.stringify(selectedMaster.data, null, 2);
+
+    let selection: ResumeRankingResult | null = null;
+    if (
+      !overrideResumeText &&
+      resumeSelectionMode === 'auto' &&
+      editorHoldsSelectedMaster &&
+      masterResumes.length > 1
+    ) {
+      selection = rankResumesByJd({
+        jobDescription,
+        targetRole,
+        resumes: masterResumes.map(r => ({ id: r.id, name: r.name, content: r.data })),
+      });
+
+      if (selection) {
+        const winner = masterResumes.find(r => r.id === selection!.winner.id);
+        if (winner) {
+          finalResumeText = JSON.stringify(winner.data, null, 2);
+          setSelectedResumeId(winner.id);
+          localStorage.setItem('selectedResumeId', winner.id);
+          setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === winner.id })));
+          setResumeText(finalResumeText);
+          console.log(
+            `[Nexus AI] Auto-selected "${winner.name}" (${selection.winner.score}%)` +
+            (selection.runnerUp ? ` over "${selection.runnerUp.name}" (${selection.runnerUp.score}%)` : '')
+          );
+        } else {
+          selection = null;
+        }
+      }
+    }
+    // A thin JD returns null; keep whatever the user already had rather than guess.
+    setAutoSelection(selection);
+
     try {
       const finalTargetRole = targetRole || "Professional Candidate";
       let finalMode = mode;
@@ -3739,6 +3800,57 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     )}
                                   </div>
                                 )}
+                              </div>
+                            )}
+                            {autoSelection && (
+                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>Auto-selected Master Resume</h3>
+                                    <p className="text-[10px] mt-1 opacity-70">
+                                      Ranked {autoSelection.ranked.length} resumes against {autoSelection.jd_keywords_evaluated} JD requirements
+                                    </p>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="text-[10px] uppercase tracking-widest text-indigo-400 block">Winner</span>
+                                    <span className="font-bold text-lg text-indigo-400">{autoSelection.winner.score}%</span>
+                                  </div>
+                                </div>
+                                <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
+                                  {autoSelection.ranked.slice(0, 5).map((entry, index) => (
+                                    <div key={entry.id} className="flex items-center justify-between gap-3 text-[10px]">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetActiveResume(entry.id)}
+                                        title={`Pin "${entry.name}" and stop auto-selecting`}
+                                        className={`truncate text-left hover:underline ${index === 0 ? 'font-bold' : 'opacity-70'}`}
+                                      >
+                                        {index === 0 ? '★ ' : `${index + 1}. `}{entry.name}
+                                      </button>
+                                      <span className="font-bold tabular-nums whitespace-nowrap opacity-80">{entry.score}%</span>
+                                    </div>
+                                  ))}
+                                  {autoSelection.closeCall && (
+                                    <p className="text-[10px] text-amber-500 pt-1">
+                                      Close call — only {autoSelection.margin} point{autoSelection.margin === 1 ? '' : 's'} separate the top two. Review both.
+                                    </p>
+                                  )}
+                                  <p className="text-[10px] opacity-50 pt-1">Click any resume above to pin it and turn auto-selection off.</p>
+                                </div>
+                              </div>
+                            )}
+                            {resumeSelectionMode === 'manual' && masterResumes.length > 1 && (
+                              <div className="flex items-center justify-between gap-3 px-1">
+                                <p className="text-[10px] opacity-60">
+                                  Auto-selection is off — optimizing your pinned resume.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setResumeSelectionModePersisted('auto')}
+                                  className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 hover:underline whitespace-nowrap"
+                                >
+                                  Enable auto-select
+                                </button>
                               </div>
                             )}
                             <div className="relative" ref={audienceDropdownRef}>

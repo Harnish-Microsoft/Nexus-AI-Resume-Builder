@@ -663,6 +663,77 @@ function pct(value: number): string {
 }
 
 /**
+ * Builds the four scored components for one document. Shared by the
+ * baseline/optimized comparison and by cross-resume ranking so a ranking score
+ * and a match score are produced by identical weighting and are comparable.
+ */
+function scoreDocument(params: {
+  terms: Map<string, number>;
+  fullText: string;
+  evidenceText: string;
+  roleText: string;
+  targetRole: string;
+  jobDescription: string;
+  seniorityScore: number | null;
+  seniorityDetail: string;
+}): { breakdown: MatchScoreBreakdown; cov: CoverageOutcome } {
+  const { terms, fullText, evidenceText, roleText, targetRole, jobDescription } = params;
+
+  const cov = coverage(terms, fullText);
+  const evidenceCov = coverage(terms, evidenceText);
+  const role = roleAlignment(targetRole, jobDescription, roleText);
+
+  const components: ScoreComponent[] = [
+    {
+      id: "keyword_coverage",
+      label: "JD requirement coverage",
+      weight: 0.5,
+      score: cov.score,
+      detail: `${cov.matched.length} of ${terms.size} weighted requirements matched (${cov.partial.length} partial)`,
+    },
+    {
+      id: "evidence_depth",
+      label: "Proof in experience",
+      weight: 0.2,
+      score: evidenceCov.score,
+      detail: `${evidenceCov.matched.length} requirements evidenced in roles/projects rather than a skills list`,
+    },
+    {
+      id: "role_alignment",
+      label: "Role vocabulary alignment",
+      weight: 0.15,
+      score: role,
+      detail: `${pct(role)} of target-title terms present`,
+    },
+  ];
+
+  if (params.seniorityScore != null) {
+    components.push({
+      id: "seniority",
+      label: "Experience depth",
+      weight: 0.15,
+      score: params.seniorityScore,
+      detail: params.seniorityDetail,
+    });
+  }
+
+  return { breakdown: buildBreakdown(components, cov), cov };
+}
+
+function seniorityFor(
+  needYears: number | null,
+  haveYears: number | null
+): { score: number | null; detail: string } {
+  if (needYears && haveYears != null) {
+    return {
+      score: Math.max(0, Math.min(1, haveYears / needYears)),
+      detail: `${haveYears} yrs evidenced vs ${needYears} yrs required`,
+    };
+  }
+  return { score: null, detail: "no explicit experience requirement in JD" };
+}
+
+/**
  * Scores the source resume and the generated resume against the same extracted
  * JD requirements. Returns null when the JD carries too little signal to score
  * honestly, so callers can omit the field rather than show an invented number.
@@ -681,89 +752,46 @@ export function computeMatchScores(input: MatchScoreInput): MatchScoreResult | n
   if (terms.size < 3) return null;
 
   const baselineFull = originalResumeText || "";
-  const baselineEvidence = stripSkillSections(baselineFull);
-  const optimizedFull = optimizedFullText(optimizedResume);
-  const optimizedEvidence = optimizedEvidenceText(optimizedResume);
-
-  const baselineCoverage = coverage(terms, baselineFull);
-  const optimizedCoverage = coverage(terms, optimizedFull);
-  const baselineEvidenceCoverage = coverage(terms, baselineEvidence);
-  const optimizedEvidenceCoverage = coverage(terms, optimizedEvidence);
-
-  const baselineRole = roleAlignment(targetRole, jobDescription, baselineFull);
-  const optimizedRole = roleAlignment(
-    targetRole,
-    jobDescription,
-    roleVocabularyText(optimizedResume, baselineFull)
-  );
 
   const needYears = requiredYears(jobDescription);
+  // Derived from the source facts, so both sides get the same value: a rewrite
+  // cannot manufacture tenure.
   const haveYears = candidateYears(optimizedResume, baselineFull);
-  const seniorityScore =
-    needYears && haveYears != null ? Math.max(0, Math.min(1, haveYears / needYears)) : null;
-  const seniorityDetail =
-    needYears && haveYears != null
-      ? `${haveYears} yrs evidenced vs ${needYears} yrs required`
-      : "no explicit experience requirement in JD";
+  const seniority = seniorityFor(needYears, haveYears);
 
-  const makeComponents = (
-    cov: CoverageOutcome,
-    evidenceCov: CoverageOutcome,
-    role: number
-  ): ScoreComponent[] => {
-    const components: ScoreComponent[] = [
-      {
-        id: "keyword_coverage",
-        label: "JD requirement coverage",
-        weight: 0.5,
-        score: cov.score,
-        detail: `${cov.matched.length} of ${terms.size} weighted requirements matched (${cov.partial.length} partial)`,
-      },
-      {
-        id: "evidence_depth",
-        label: "Proof in experience",
-        weight: 0.2,
-        score: evidenceCov.score,
-        detail: `${evidenceCov.matched.length} requirements evidenced in roles/projects rather than a skills list`,
-      },
-      {
-        id: "role_alignment",
-        label: "Role vocabulary alignment",
-        weight: 0.15,
-        score: role,
-        detail: `${pct(role)} of target-title terms present`,
-      },
-    ];
-    if (seniorityScore != null) {
-      components.push({
-        id: "seniority",
-        label: "Experience depth",
-        weight: 0.15,
-        score: seniorityScore,
-        detail: seniorityDetail,
-      });
-    }
-    return components;
-  };
+  const baselineScored = scoreDocument({
+    terms,
+    fullText: baselineFull,
+    evidenceText: stripSkillSections(baselineFull),
+    roleText: baselineFull,
+    targetRole,
+    jobDescription,
+    seniorityScore: seniority.score,
+    seniorityDetail: seniority.detail,
+  });
 
-  const baseline = buildBreakdown(
-    makeComponents(baselineCoverage, baselineEvidenceCoverage, baselineRole),
-    baselineCoverage
-  );
-  const optimized = buildBreakdown(
-    makeComponents(optimizedCoverage, optimizedEvidenceCoverage, optimizedRole),
-    optimizedCoverage
-  );
+  const optimizedScored = scoreDocument({
+    terms,
+    fullText: optimizedFullText(optimizedResume),
+    evidenceText: optimizedEvidenceText(optimizedResume),
+    roleText: roleVocabularyText(optimizedResume, baselineFull),
+    targetRole,
+    jobDescription,
+    seniorityScore: seniority.score,
+    seniorityDetail: seniority.detail,
+  });
 
-  const baselineHit = new Set([...baselineCoverage.matched, ...baselineCoverage.partial]);
-  const addedKeywords = optimizedCoverage.matched.filter((t) => !baselineHit.has(t));
+  const baseline = baselineScored.breakdown;
+  const optimized = optimizedScored.breakdown;
+  const baselineHit = new Set([...baselineScored.cov.matched, ...baselineScored.cov.partial]);
+  const addedKeywords = optimizedScored.cov.matched.filter((t) => !baselineHit.has(t));
 
   return {
     match_score: optimized.score,
     baseline_score: baseline.score,
     ats_keywords_from_jd: Array.from(terms.keys()),
     ats_keywords_added_to_resume: addedKeywords,
-    keyword_gap: optimizedCoverage.missing,
+    keyword_gap: optimizedScored.cov.missing,
     score_breakdown: {
       method: "deterministic-jd-coverage-v1",
       jd_keywords_evaluated: terms.size,
@@ -819,4 +847,144 @@ export function applyMatchScores(
   optimizedResume.ats_keywords_added_to_resume = scores.ats_keywords_added_to_resume;
   optimizedResume.keyword_gap = scores.keyword_gap;
   return optimizedResume;
+}
+
+export interface ResumeRankingEntry {
+  id: string;
+  name: string;
+  score: number;
+  matched: string[];
+  missing: string[];
+  components: ScoreComponent[];
+}
+
+export interface ResumeRankingResult {
+  ranked: ResumeRankingEntry[];
+  winner: ResumeRankingEntry;
+  runnerUp: ResumeRankingEntry | null;
+  margin: number;
+  closeCall: boolean;
+  jd_keywords_evaluated: number;
+}
+
+/** A ranking gap this small is inside the noise floor of keyword matching. */
+const CLOSE_CALL_MARGIN = 5;
+
+function toResumeObject(content: unknown): any {
+  let parsed: any = content;
+  if (typeof content === "string") {
+    const trimmed = content.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        parsed = null;
+      }
+    } else {
+      parsed = null;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      // Not structured - score it as plain text.
+      return { __raw: content };
+    }
+  }
+  if (!parsed || typeof parsed !== "object") return { __raw: "" };
+
+  const summary =
+    typeof parsed.summary === "string" ? parsed.summary : parsed?.personal_info?.summary || "";
+  return { ...parsed, summary };
+}
+
+function rankingTexts(resume: any): { full: string; evidence: string; role: string } {
+  if (typeof resume.__raw === "string") {
+    return {
+      full: resume.__raw,
+      evidence: stripSkillSections(resume.__raw),
+      role: resume.__raw,
+    };
+  }
+  const full = optimizedFullText(resume);
+  return {
+    full,
+    evidence: optimizedEvidenceText(resume),
+    role: roleVocabularyText(resume, full),
+  };
+}
+
+/**
+ * Ranks the user's master resumes against one JD using the same deterministic
+ * engine that produces the match score, so the resume that wins here is the one
+ * that genuinely starts closest to the posting.
+ *
+ * Every resume is scored in full - no truncation, no model call - which makes
+ * the result reproducible and free. Returns null when the JD is too thin to
+ * score, so callers keep the user's current selection rather than guessing.
+ */
+export function rankResumesByJd(input: {
+  jobDescription: string;
+  resumes: { id: string; name: string; content: unknown }[];
+  targetRole?: string;
+  jdKeywords?: string[];
+}): ResumeRankingResult | null {
+  const { jobDescription, resumes, targetRole = "", jdKeywords = [] } = input;
+
+  try {
+    if (!jobDescription || jobDescription.trim().length < 40) return null;
+    if (!Array.isArray(resumes) || resumes.length === 0) return null;
+
+    const terms = extractJdTerms(
+      jobDescription,
+      targetRole,
+      (Array.isArray(jdKeywords) ? jdKeywords : []).filter((k): k is string => typeof k === "string")
+    );
+    if (terms.size < 3) return null;
+
+    const needYears = requiredYears(jobDescription);
+
+    const ranked: ResumeRankingEntry[] = resumes.map((entry) => {
+      const resume = toResumeObject(entry.content);
+      const texts = rankingTexts(resume);
+      const seniority = seniorityFor(needYears, candidateYears(resume, texts.full));
+
+      const { breakdown } = scoreDocument({
+        terms,
+        fullText: texts.full,
+        evidenceText: texts.evidence,
+        roleText: texts.role,
+        targetRole,
+        jobDescription,
+        seniorityScore: seniority.score,
+        seniorityDetail: seniority.detail,
+      });
+
+      return {
+        id: entry.id,
+        name: entry.name,
+        score: breakdown.score,
+        matched: breakdown.matched,
+        missing: breakdown.missing,
+        components: breakdown.components,
+      };
+    });
+
+    // Stable: equal scores keep the caller's original order rather than
+    // shuffling the winner between identical runs.
+    ranked.sort((a, b) => b.score - a.score);
+
+    const winner = ranked[0];
+    const runnerUp = ranked.length > 1 ? ranked[1] : null;
+    const margin = runnerUp ? winner.score - runnerUp.score : winner.score;
+
+    return {
+      ranked,
+      winner,
+      runnerUp,
+      margin,
+      closeCall: runnerUp != null && margin < CLOSE_CALL_MARGIN,
+      jd_keywords_evaluated: terms.size,
+    };
+  } catch (e: any) {
+    console.warn("[matchScore] Ranking failed; keeping current resume selection:", e?.message || e);
+    return null;
+  }
 }

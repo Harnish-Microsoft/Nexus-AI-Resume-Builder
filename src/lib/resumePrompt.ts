@@ -164,9 +164,12 @@ Mine this only for achievements that are grounded in the roles listed below. Ign
   )}
 ${section(
     masterResumes && masterResumes.length > 0,
-    `STRATEGIC REFERENCE (MASTER RESUMES):
-Study these only for style, structure, and high-impact phrasing. Never copy their facts,
-employers, metrics, or technologies into this candidate's document.
+    `STRATEGIC REFERENCE (THE CANDIDATE'S OTHER RESUMES):
+These are other resume versions belonging to this same candidate. Use them for style,
+structure, and high-impact phrasing, and you may reuse a fact from them only when it is
+clearly this candidate's own verifiable history. Never invent a blend: the INPUT DATA above
+remains the authoritative record of employers, dates, and metrics, and anything that
+contradicts it must be ignored.
 ${(masterResumes || []).map((r) => JSON.stringify(r)).join("\n---\n")}`
   )}
 

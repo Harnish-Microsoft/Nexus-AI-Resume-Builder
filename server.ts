@@ -115,6 +115,55 @@ async function getApiKeys(idToken: string) {
     }
 }
 
+/**
+ * Reference material from the caller's OTHER master resumes, scoped to the caller.
+ *
+ * These previously came from a top-level `master_resumes` collection read with
+ * no user filter, so on a shared Firestore every optimization was seeded with
+ * other people's resumes. A user's own resumes are synced to their user
+ * document by the client (App.tsx syncAllData), which is the correct source.
+ *
+ * The resume currently being rewritten is excluded: it is already supplied as
+ * the input document, and re-supplying it as reference material would sit under
+ * an instruction telling the model not to reuse its facts.
+ */
+const MAX_MASTER_RESUME_REFERENCES = 5;
+
+async function getUserMasterResumes(idToken: string, excludeResumeText = ""): Promise<any[]> {
+  if (!idToken || idToken === "SYSTEM_PIPELINE" || idToken === "undefined" || idToken === "null") {
+    return [];
+  }
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const snapshot = await db.collection("users").doc(decodedToken.uid).get();
+    const stored = snapshot.exists ? snapshot.data()?.masterResumes : null;
+    if (!Array.isArray(stored)) return [];
+
+    const excluded = String(excludeResumeText || "").trim();
+    const references = stored
+      .filter((entry: any) => {
+        if (!entry) return false;
+        if (!excluded) return true;
+        try {
+          return JSON.stringify(entry.data ?? entry, null, 2).trim() !== excluded;
+        } catch {
+          return true;
+        }
+      })
+      .slice(0, MAX_MASTER_RESUME_REFERENCES)
+      .map((entry: any) => (entry.data ? { name: entry.name, data: entry.data } : entry));
+
+    console.log(`[Pipeline] Using ${references.length} reference resumes for user ${decodedToken.uid}.`);
+    return references;
+  } catch (err) {
+    console.warn(
+      "[Pipeline] Failed to fetch user master resumes, proceeding without them:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return [];
+  }
+}
+
 // Function to log usage to Firestore
 async function logUsage(log: UsageLog) {
   try {
@@ -801,15 +850,8 @@ async function startServer() {
       let geminiKey = keys?.gemini || "";
       let openaiKey = keys?.openai || "";
       
-      // 1.1 Fetch Master Resumes from Firestore
-      let masterResumes: any[] = [];
-      try {
-        const snapshot = await db.collection("master_resumes").get();
-        masterResumes = snapshot.docs.map(doc => doc.data());
-        console.log(`[Pipeline] Fetched ${masterResumes.length} master resumes.`);
-      } catch (err) {
-        console.warn("[Pipeline] Failed to fetch master resumes, proceeding without them:", err);
-      }
+      // 1.1 Fetch this user's own master resumes, minus the one being rewritten
+      const masterResumes = await getUserMasterResumes(idToken, resumeText);
       
       // Only fall back to system key if NO identity is provided (Guest Mode)
       if (!idToken) {
