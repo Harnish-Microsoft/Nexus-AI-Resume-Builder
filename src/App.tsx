@@ -3802,8 +3802,60 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 )}
                               </div>
                             )}
-                            {autoSelection && (
-                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                            {activeAudience && results[activeAudience]?.impact_audit && (() => {
+                              const audit = results[activeAudience].impact_audit!;
+                              const tone = audit.score >= 75 ? 'text-emerald-500' : audit.score >= 55 ? 'text-amber-500' : 'text-rose-500';
+                              return (
+                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-sky-400' : 'text-sky-700'}`}>Impact Audit</h3>
+                                      <p className="text-[10px] mt-1 opacity-70">
+                                        FAANG-style bullet quality across {audit.bullets_evaluated} bullets · {Math.round(audit.quantified_ratio * 100)}% quantified
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <span className="text-[10px] uppercase tracking-widest opacity-60 block">Score</span>
+                                      <span className={`font-bold text-2xl ${tone}`}>{audit.score}</span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
+                                    {audit.components.map((component) => (
+                                      <div key={component.id} className="flex items-center justify-between gap-3 text-[10px]">
+                                        <span className="opacity-70 truncate" title={component.detail}>
+                                          {component.label}
+                                          <span className="opacity-50"> · {Math.round(component.weight * 100)}% weight</span>
+                                        </span>
+                                        <span className="font-bold tabular-nums whitespace-nowrap">
+                                          {Math.round(component.score * 100)}%
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {audit.findings.length > 0 && (
+                                    <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">
+                                        Top fixes ({audit.findings.length} found)
+                                      </p>
+                                      {audit.findings.slice(0, 4).map((finding, idx) => (
+                                        <div key={`${finding.id}-${idx}`} className="text-[10px] leading-relaxed">
+                                          <span className={`font-bold uppercase tracking-wider mr-1 ${
+                                            finding.severity === 'high' ? 'text-rose-500'
+                                              : finding.severity === 'medium' ? 'text-amber-500' : 'opacity-50'
+                                          }`}>{finding.severity}</span>
+                                          <span className="opacity-80">{finding.issue}</span>
+                                          <span className="opacity-50"> → {finding.fix}</span>
+                                          {finding.bullet && (
+                                            <p className="opacity-40 italic truncate mt-0.5" title={finding.bullet}>“{finding.bullet}”</p>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {autoSelection && (                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
                                     <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>Auto-selected Master Resume</h3>

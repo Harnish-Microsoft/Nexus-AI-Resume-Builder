@@ -107,6 +107,9 @@ export interface SuitabilityResult {
 
 export interface StarStory {
   bullet: string;
+  /** Role and company the bullet belongs to, attached during STAR linkage. */
+  role?: string;
+  company?: string;
   situation: string;
   task: string;
   action: string;

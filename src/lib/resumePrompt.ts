@@ -97,7 +97,7 @@ const OUTPUT_SCHEMA = `{
   "improvement_notes": ["string"],
   "audience_alignment_notes": "string",
   "rejection_reasons": ["string"],
-  "star_stories": [ { "bullet": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
+  "star_stories": [ { "bullet": "string, copied VERBATIM from a bullet in experience", "role": "string, the role that bullet belongs to", "company": "string", "situation": "string", "task": "string", "action": "string", "result": "string" } ],
   "audit_report": {
     "score": "integer 0-100, computed per the AUDIT SCORE RUBRIC below",
     "flags": [
@@ -201,6 +201,40 @@ D. ATS COHESION
    unexplained title or seniority regressions, duplicate or contradictory skill naming,
    acronym-only usage where the JD spells the term out (or vice versa), and JD keywords
    absent from the resume body. Emit each as a flag with a concrete fix.
+
+=== PHASE 1.5 - STAR GROUNDING (internal reasoning; DO NOT emit as prose) ===
+This step happens BEFORE you write a single bullet, and it determines what the bullets say.
+
+For each role, identify the achievements the source actually evidences, and for each one
+silently reconstruct the four STAR elements FROM THE SOURCE ONLY:
+  S - the situation: the system, constraint, failure, or business condition that existed
+  T - the task: what this person specifically owned in it, not what the team owned
+  A - the action: the concrete technical or organisational decision they made and executed
+  R - the result: what measurably or observably changed as a consequence
+
+Then write the bullet as the compressed A -> R of that story: the action taken and what it
+changed. The S and T stay in your reasoning as the context that makes the bullet specific;
+they are what stops it collapsing into a tool-dropping list.
+
+RULES FOR THIS STEP:
+- If the source does not support an element, leave it thin and factual. NEVER invent a
+  situation, a stakeholder, a deadline, or a result to complete the pattern. An honest
+  three-element story beats a fabricated four-element one. Rule 2 (ZERO FABRICATION)
+  outranks STAR completeness absolutely.
+- If a Result cannot be evidenced, close on the concrete change instead - the manual step
+  removed, the failure mode eliminated, the system retired, the escalation that stopped.
+- STAR is the reasoning scaffold, NOT a bullet template. Do NOT write bullets shaped
+  "Faced with X, tasked with Y, I did Z, achieving W" - that cadence is an instant tell and
+  violates rule 5. The reader must never be able to see the scaffold in the prose.
+- A bullet that is pure responsibility description with no action and no change is not a
+  STAR-grounded bullet. Rewrite it or drop it.
+
+Then populate "star_stories" with the 4-6 STRONGEST of these, weighted toward the most
+recent and most senior roles, including at least one from the current or most recent role.
+Each entry's "bullet" field MUST be copied VERBATIM, character for character, from a bullet
+you actually emitted in "experience" - it is the interview-prep expansion of that exact
+bullet, and entries that do not match an emitted bullet are discarded by the platform.
+Set "role" and "company" to the role that bullet belongs to.
 
 === PHASE 2 - REWRITE ===
 
@@ -352,6 +386,7 @@ Start at 100 and subtract, then report the integer result. Do NOT default to a r
    -5  passive ownership phrasing survives anywhere in the document
    -4  a banned verb appears
    -3  a core JD requirement is absent from the resume body AND missing from keyword_gap
+   -3  each star_stories entry whose "bullet" does not match a bullet you emitted verbatim
 Two documents with different flaws MUST receive different scores.
 
 OUTPUT JSON SCHEMA (MUST MATCH EXACTLY):

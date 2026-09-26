@@ -8,6 +8,7 @@ import { db, auth } from "../firebase";
 import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
 import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
+import { applyImpactAudit, ImpactScoreResult } from "../lib/impactScore";
 
 export interface OptimizationResult {
   personal_info: {
@@ -46,6 +47,8 @@ export interface OptimizationResult {
   why_this_job?: string;
   rejection_reasons?: string[];
   star_stories?: StarStory[];
+  /** Deterministic bullet-quality audit. Absent when there are too few bullets to score. */
+  impact_audit?: ImpactScoreResult;
   audit_report?: AuditReport;
   _usage?: {
     promptTokenCount: number;
@@ -647,6 +650,7 @@ export async function optimizeResume(
           targetRole,
           jdKeywords: parsed._intermediateData?.jdKeywords,
         });
+        applyImpactAudit(parsed);
 
         return fixTitle(parsed);
       }
@@ -727,6 +731,7 @@ export async function optimizeResume(
           originalResumeText: resumeText,
           targetRole,
         });
+        applyImpactAudit(parsed);
 
         if (data.usage) {
           parsed._usage = data.usage;

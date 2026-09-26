@@ -23,6 +23,7 @@ import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
 import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
 import { applyMatchScores } from "./src/lib/matchScore";
+import { applyImpactAudit } from "./src/lib/impactScore";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
@@ -285,9 +286,14 @@ function attachRealMatchScores(
   try {
     const parsed = JSON.parse(result.result);
     applyMatchScores(parsed, params);
+    applyImpactAudit(parsed);
     console.log(
       `[Scoring] baseline=${parsed.baseline_score ?? "n/a"} match=${parsed.match_score ?? "n/a"} ` +
-        `(${parsed.score_breakdown?.jd_keywords_evaluated ?? 0} JD requirements evaluated)`
+        `(${parsed.score_breakdown?.jd_keywords_evaluated ?? 0} JD requirements evaluated) ` +
+        `impact=${parsed.impact_audit?.score ?? "n/a"} ` +
+        `(${parsed.impact_audit?.bullets_evaluated ?? 0} bullets, ` +
+        `${parsed.impact_audit?.findings?.length ?? 0} findings, ` +
+        `${parsed.impact_audit?.star_dropped ?? 0} STAR dropped)`
     );
     return { ...result, result: JSON.stringify(parsed) };
   } catch (e: any) {
@@ -1128,7 +1134,7 @@ async function startServer() {
             "match_score": null,
             "improvement_notes": [...],
             "audience_alignment_notes": "...",
-            "star_stories": [...],
+            "star_stories": [ { "bullet": "copied VERBATIM from a bullet in the generated experience section", "role": "...", "company": "...", "situation": "...", "task": "...", "action": "...", "result": "..." } ],
             "audit_report": { ... }
           }
         `;

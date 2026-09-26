@@ -180,6 +180,11 @@ export const NexusProInsights: React.FC<NexusProInsightsProps> = ({ isDarkMode, 
                       </div>
                       <div className="flex-1 min-w-0 pr-4">
                         <p className="text-[11px] font-bold leading-relaxed">{star.bullet}</p>
+                        {(star.role || star.company) && (
+                          <p className="text-[9px] uppercase tracking-widest opacity-50 mt-1">
+                            {[star.role, star.company].filter(Boolean).join(' · ')}
+                          </p>
+                        )}
                       </div>
                       <ChevronDown className={`w-4 h-4 transition-transform shrink-0 ${expandedStar === idx ? 'rotate-180' : ''}`} />
                     </button>
