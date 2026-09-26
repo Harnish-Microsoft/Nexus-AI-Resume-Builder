@@ -92,6 +92,8 @@ export interface GeneratePerRoleOptions {
   /** The target posting, already trimmed by the caller. */
   jobDescription?: string;
   jdKeywords?: string[];
+  /** Reader brief from buildAudienceBrief(mix, "role"), shared by every role. */
+  audienceBrief?: string;
 }
 
 function toText(value: unknown): string {
@@ -393,6 +395,7 @@ export async function generatePerRole(
     targetRole,
     targetCompany,
     audience,
+    audienceBrief: options.audienceBrief,
     mode,
     customPrompt,
     brainDump,

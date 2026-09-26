@@ -20,6 +20,8 @@ import { BANNED_LEAD_VERBS } from "./impactScore";
 export interface ResumePromptOptions {
   targetRole: string;
   audience: string;
+  /** Reader brief from buildAudienceBrief(mix, "document"); shapes emphasis, never facts. */
+  audienceBrief?: string;
   mode: string;
   /** Raw resume text or pre-extracted JSON, already trimmed by the caller. */
   inputData: string;
@@ -369,6 +371,7 @@ export function buildResumeGenerationPrompt(options: ResumePromptOptions): strin
   const {
     targetRole,
     audience,
+    audienceBrief,
     mode,
     inputData,
     inputLabel = "INPUT DATA",
@@ -410,6 +413,7 @@ TASK: ${
       ? "Critical hiring-manager review. Populate rejection_reasons with concrete, evidence-based reasons this profile would be screened out, then still return the full rewritten document."
       : "Rewrite the source into a top-tier professional document adhering to operational realism."
   }
+${section(audienceBrief, `\n${audienceBrief}\n`)}
 ${section(customPrompt, `CUSTOM INSTRUCTIONS: ${customPrompt}`)}
 ${section(
     brainDump,
@@ -611,6 +615,8 @@ export interface RoleBulletPromptOptions {
   targetRole?: string;
   targetCompany?: string;
   audience?: string;
+  /** Reader brief from buildAudienceBrief(mix, "role"). */
+  audienceBrief?: string;
   mode?: string;
   customPrompt?: string;
   brainDump?: string;
@@ -640,6 +646,7 @@ export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string 
     targetRole,
     targetCompany,
     audience,
+    audienceBrief,
     mode,
     customPrompt,
     brainDump,
@@ -709,6 +716,7 @@ TARGET COMPANY: ${targetCompany || "General Product Tech"}
 AUDIENCE: ${audience || "Recruiters"} | MODE: ${mode || "Standard"} | CURRENT DATE: ${currentDate}
 CORPORATE DNA: ${corporateDnaFor(targetCompany)}
   Tailor emphasis only. Never rename, reframe, or alter a factual claim to fit a company.
+${section(audienceBrief, `\n${audienceBrief}\n`)}
 ${section(customPrompt, `CUSTOM INSTRUCTIONS: ${customPrompt}`)}
 
 ROLE TO REWRITE:

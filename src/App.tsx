@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import { 
   FileText, 
@@ -68,7 +68,7 @@ import { useResumeStore } from './store';
 import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeAudienceMix, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
@@ -106,6 +106,15 @@ import { formatCertification } from './lib/certifications';
 
 import defaultMasterResume from './services/master_resume.json';
 import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
+import {
+  BLENDED_RESULT_KEY,
+  CUSTOM_AUDIENCE_ID,
+  MAX_BLENDED_AUDIENCES,
+  audienceHeadline,
+  postingFingerprint,
+  resolveAudienceMix,
+  type AudienceMix,
+} from './lib/audienceProfiles';
 
 // Lazy load heavy components for better initial performance
 const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ default: m.CareerTools })));
@@ -452,6 +461,15 @@ export default function App() {
   const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const [customAudience, setCustomAudience] = useState('');
+  // The last Auto-Select and the posting it was made for. Its weights and reasons describe
+  // that posting only, so they stop applying as soon as the job description changes.
+  const [audienceSuggestion, setAudienceSuggestion] = useState<{ mix: AudienceMix; posting: string } | null>(null);
+  // Selected readers in priority order (first = primary), blended into ONE resume.
+  const audienceMix = useMemo(() => {
+    const suggested =
+      audienceSuggestion && audienceSuggestion.posting === postingFingerprint(jobDescription) ? audienceSuggestion.mix : null;
+    return resolveAudienceMix(selectedAudiences, { customLabel: customAudience, suggested });
+  }, [selectedAudiences, customAudience, audienceSuggestion, jobDescription]);
   const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement>(null);
@@ -1317,6 +1335,8 @@ export default function App() {
         results,
         activeAudience,
         selectedAudiences,
+        customAudience,
+        audienceSuggestion,
         formatting: formattingState
       }
     };
@@ -2025,6 +2045,9 @@ export default function App() {
       setActiveAudience(Object.keys(version.data.results)[0]);
     }
     if (version.data.selectedAudiences) setSelectedAudiences(version.data.selectedAudiences);
+    // Older versions predate blending: without a stored suggestion the blend is treated as hand-picked.
+    setAudienceSuggestion(version.data.audienceSuggestion || null);
+    if (typeof version.data.customAudience === 'string') setCustomAudience(version.data.customAudience);
     if (version.data.targetRole) setTargetRole(version.data.targetRole);
     if (version.data.companyName) setCompanyName(version.data.companyName);
     if (version.data.formatting) {
@@ -2034,13 +2057,26 @@ export default function App() {
     navigate('/build');
   };
 
+  const applyAudienceMix = (mix: AudienceMix, forJobDescription: string) => {
+    const custom = mix.entries.find(entry => entry.id === CUSTOM_AUDIENCE_ID);
+    if (custom) setCustomAudience(custom.label);
+    setSelectedAudiences(mix.entries.map(entry => entry.id));
+    setAudienceSuggestion({ mix, posting: postingFingerprint(forJobDescription) });
+  };
+
   const handleAutoSelectAudiences = async () => {
-    if (!jobDescription) return;
+    if (!jobDescription) {
+      showToast('Paste a job description first - the audience is chosen from it.', 'info');
+      return;
+    }
     setIsAutoSelectingAudiences(true);
     try {
-      const bestAudiences = await analyzeBestAudiences(jobDescription, targetRole, getRouterConfig());
-      setSelectedAudiences(bestAudiences);
-      showToast('Audience auto-selected!', 'success');
+      const mix = await analyzeAudienceMix(jobDescription, targetRole, getRouterConfig());
+      applyAudienceMix(mix, jobDescription);
+      showToast(
+        `${mix.source === 'ai' ? 'Blending' : 'Blending (keyword match - AI unavailable)'}: ${audienceHeadline(mix)}`,
+        'success'
+      );
     } catch (e) {
       console.error(e);
       showToast('Failed to auto-select audience', 'error');
@@ -2050,9 +2086,19 @@ export default function App() {
   };
 
   const toggleAudience = (id: string) => {
-    setSelectedAudiences(prev => 
-      prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
-    );
+    if (selectedAudiences.includes(id)) {
+      setSelectedAudiences(prev => prev.filter(a => a !== id));
+      return;
+    }
+    if (selectedAudiences.length >= MAX_BLENDED_AUDIENCES) {
+      showToast(`Blend up to ${MAX_BLENDED_AUDIENCES} audiences into one resume. Remove one first.`, 'info');
+      return;
+    }
+    setSelectedAudiences(prev => [...prev, id]);
+  };
+
+  const makePrimaryAudience = (id: string) => {
+    setSelectedAudiences(prev => (prev.includes(id) ? [id, ...prev.filter(a => a !== id)] : prev));
   };
 
   const getRouterConfig = (): RouterConfig => {
@@ -2261,25 +2307,18 @@ export default function App() {
       return;
     }
 
-    let currentAudiences = [...selectedAudiences];
-    console.log("[Nexus AI] Current Audiences:", currentAudiences);
+    let runAudienceMix = audienceMix;
+    console.log("[Nexus AI] Audience blend:", runAudienceMix ? audienceHeadline(runAudienceMix) : "(none selected)");
 
-    if (currentAudiences.length === 0) {
-      console.log("[Nexus AI] No audiences selected, analyzing best audiences...");
+    if (!runAudienceMix) {
+      console.log("[Nexus AI] No audiences selected, choosing a blend from the JD...");
       setIsOptimizing(true);
       
       try {
-        const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
-        console.log("[Nexus AI] Best Audiences matched:", bestAudiences);
-        if (bestAudiences && bestAudiences.length > 0) {
-          setSelectedAudiences(bestAudiences);
-          currentAudiences = bestAudiences;
-        } else {
-          console.warn("[Nexus AI] Could not auto-select audience");
-          setError('Could not auto-select audience. Please select at least one manually.');
-          setIsOptimizing(false);
-          return;
-        }
+        const mix = await analyzeAudienceMix(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
+        console.log("[Nexus AI] Audience blend chosen:", audienceHeadline(mix));
+        applyAudienceMix(mix, jobDescription);
+        runAudienceMix = mix;
       } catch (err) {
         console.error("[Nexus AI] Auto-selection failed:", err);
         setError('Auto-selection failed. Please select an audience manually.');
@@ -2290,7 +2329,9 @@ export default function App() {
       setIsOptimizing(true);
     }
 
-    console.log("[Nexus AI] Optimization state active. Proceeding with", currentAudiences.length, "audiences");
+    console.log("[Nexus AI] Optimization state active. Writing one resume for", runAudienceMix.entries.length, "blended audience(s)");
+    const blend: AudienceMix = runAudienceMix;
+    const blendHeadline = audienceHeadline(blend);
     setCurrentOptimizingEngine(selectedEngine);
     setResults({});
     setActiveAudience(null);
@@ -2386,122 +2427,96 @@ export default function App() {
       }
       
       const routerConfig = getRouterConfig();
-      let completedAudiences = 0;
-      const totalAudiences = currentAudiences.length;
-      const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
 
-      // Set a combined status for all audiences to avoid rapid overwriting
-      const allAudienceLabels = currentAudiences.map(audienceId => 
-        audienceId === 'custom' 
-          ? (customAudience || 'Custom Persona') 
-          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId)
+      // ONE run for the whole blend: every selected reader shapes the same document
+      // through a weighted brief, instead of one full optimization per audience.
+      setOptimizationStatus(`Writing one resume for: \n${blendHeadline}`);
+
+      // Progress reporting for hybrid mode
+      if (selectedEngine.includes('hybrid')) {
+        setTimeout(() => {
+          if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming...`);
+        }, 4000);
+        setTimeout(() => {
+          if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
+        }, 8000);
+      }
+
+      const data = await optimizeResume(
+        finalResumeText, 
+        jobDescription, 
+        finalTargetRole, 
+        finalMode, 
+        blendHeadline, 
+        routerConfig, 
+        linkedInUrl, 
+        linkedInPdfText, 
+        jobUrl, 
+        fastMode, 
+        recruiterSimulationMode,
+        customPrompt,
+        selectedEngine.includes('hybrid') ? selectedEngine : undefined,
+        targetCompany,
+        brainDump,
+        blend
       );
-      setOptimizationStatus(`Optimizing for: \n${allAudienceLabels.join(', ')}`);
 
-      // Run all audience optimizations in parallel
-      const optimizationPromises = currentAudiences.map(async (audienceId, index) => {
-        const audienceLabel = audienceId === 'custom' 
-          ? (customAudience || 'Custom Persona') 
-          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId);
-        
-        // Progress reporting for hybrid mode (only set by first one to prevent overlap)
-        if (selectedEngine.includes('hybrid') && index === 0) {
-          setTimeout(() => {
-            if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming for ${allAudienceLabels.length} audiences...`);
-          }, 4000);
-          setTimeout(() => {
-            if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
-          }, 8000);
-        }
-        
-        const data = await optimizeResume(
-          finalResumeText, 
-          jobDescription, 
-          finalTargetRole, 
-          finalMode, 
-          audienceLabel, 
-          routerConfig, 
-          linkedInUrl, 
-          linkedInPdfText, 
-          jobUrl, 
-          fastMode, 
-          recruiterSimulationMode,
-          customPrompt,
-          selectedEngine.includes('hybrid') ? selectedEngine : undefined,
-          targetCompany,
-          brainDump
-        );
-        
-        completedAudiences++;
-        setOptimizationProgress(Math.min(95, (completedAudiences / currentAudiences.length) * 100));
-        
-        // Update token usage
-        if (data._engine === 'hybrid-v2') {
-          // Handle V2 Pipeline (OpenAI + Gemini)
-          if (data._usage) {
-            const openaiInput = data._usage.promptTokenCount || 0;
-            const openaiOutput = data._usage.candidatesTokenCount || 0;
-            setTokenUsage(prev => ({
-              ...prev,
-              openai: {
-                input: (prev.openai.input || 0) + openaiInput,
-                output: (prev.openai.output || 0) + openaiOutput
-              }
-            }));
-            syncTokenUsage('openai', openaiInput, openaiOutput);
-          }
-          if (data._geminiUsage) {
-            const geminiInput = data._geminiUsage.promptTokenCount || 0;
-            const geminiOutput = data._geminiUsage.candidatesTokenCount || 0;
-            setTokenUsage(prev => ({
-              ...prev,
-              gemini: {
-                input: (prev.gemini.input || 0) + geminiInput,
-                output: (prev.gemini.output || 0) + geminiOutput
-              }
-            }));
-            syncTokenUsage('gemini', geminiInput, geminiOutput);
-          }
-        } else if (data._usage && data._engine) {
-          // Handle Legacy Pipeline
-          const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
-          const inputDelta = data._usage!.promptTokenCount || 0;
-          const outputDelta = data._usage!.candidatesTokenCount || 0;
-          
+      setOptimizationProgress(95);
+
+      // Update token usage
+      if (data._engine === 'hybrid-v2') {
+        // Handle V2 Pipeline (OpenAI + Gemini)
+        if (data._usage) {
+          const openaiInput = data._usage.promptTokenCount || 0;
+          const openaiOutput = data._usage.candidatesTokenCount || 0;
           setTokenUsage(prev => ({
             ...prev,
-            [engine]: {
-              input: (prev[engine].input || 0) + inputDelta,
-              output: (prev[engine].output || 0) + outputDelta
+            openai: {
+              input: (prev.openai.input || 0) + openaiInput,
+              output: (prev.openai.output || 0) + openaiOutput
             }
           }));
-          
-          syncTokenUsage(engine, inputDelta, outputDelta);
+          syncTokenUsage('openai', openaiInput, openaiOutput);
         }
-
-        // Update results
-        setResults(prev => {
-          const newResults = { 
-            ...prev, 
-            [audienceId]: { 
-              ...data, 
-              _engine: selectedEngine, 
-              _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
-            } as any
-          };
-          
-          if (!activeAudience) {
-            setActiveAudience(audienceId);
+        if (data._geminiUsage) {
+          const geminiInput = data._geminiUsage.promptTokenCount || 0;
+          const geminiOutput = data._geminiUsage.candidatesTokenCount || 0;
+          setTokenUsage(prev => ({
+            ...prev,
+            gemini: {
+              input: (prev.gemini.input || 0) + geminiInput,
+              output: (prev.gemini.output || 0) + geminiOutput
+            }
+          }));
+          syncTokenUsage('gemini', geminiInput, geminiOutput);
+        }
+      } else if (data._usage && data._engine) {
+        // Handle Legacy Pipeline
+        const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
+        const inputDelta = data._usage!.promptTokenCount || 0;
+        const outputDelta = data._usage!.candidatesTokenCount || 0;
+        
+        setTokenUsage(prev => ({
+          ...prev,
+          [engine]: {
+            input: (prev[engine].input || 0) + inputDelta,
+            output: (prev[engine].output || 0) + outputDelta
           }
-          
-          return newResults;
-        });
+        }));
+        
+        syncTokenUsage(engine, inputDelta, outputDelta);
+      }
 
-        return data;
+      setResults({
+        [BLENDED_RESULT_KEY]: {
+          ...data,
+          _engine: selectedEngine,
+          _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
+        } as any
       });
+      setActiveAudience(BLENDED_RESULT_KEY);
 
-      const optimizationResults = await Promise.all(optimizationPromises);
-      const matchScore = optimizationResults[0]?.match_score || 0;
+      const matchScore = data?.match_score || 0;
       
       // Save version immediately after optimization
       saveResumeVersion(`Optimized - ${companyName} - ${new Date().toLocaleString()}`);
@@ -2997,6 +3012,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     setSuitabilityResult(null);
     setOptimizationProgress(0);
     setSelectedAudiences(['microsoft']);
+    setAudienceSuggestion(null);
     
     // Clear the backend cache
     fetch('/api/cache/clear', { method: 'POST' }).catch(err => console.error("Failed to clear backend cache", err));
@@ -3924,6 +3940,89 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 </div>
                               );
                             })()}
+                            {activeAudience && results[activeAudience]?.audience_coverage && (() => {
+                              const coverage = results[activeAudience].audience_coverage!;
+                              const tone = (value: number | null) =>
+                                value === null ? 'opacity-50' : value >= 70 ? 'text-emerald-500' : value >= 45 ? 'text-amber-500' : 'text-rose-500';
+                              return (
+                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-fuchsia-400' : 'text-fuchsia-700'}`}>Audience Coverage</h3>
+                                      <p className="text-[10px] mt-1 opacity-70 truncate" title={coverage.headline}>
+                                        One resume for: {coverage.headline}
+                                      </p>
+                                    </div>
+                                    {coverage.weighted !== null && (
+                                      <div className="text-right whitespace-nowrap">
+                                        <span className="text-[10px] uppercase tracking-widest opacity-60 block">Weighted</span>
+                                        {coverage.baseline_weighted !== null && coverage.baseline_weighted !== coverage.weighted && (
+                                          <span className="font-bold text-sm opacity-50 line-through mr-2">{coverage.baseline_weighted}%</span>
+                                        )}
+                                        <span className={`font-bold text-2xl ${tone(coverage.weighted)}`}>{coverage.weighted}%</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-3">
+                                    {coverage.entries.map((entry) => (
+                                      <div key={entry.id} className="text-[10px]">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <span className="opacity-80 truncate" title={entry.reason}>
+                                            <span className="font-bold">{entry.label}</span>
+                                            <span className="opacity-50"> · {entry.weight}%{entry.primary ? ' · Primary' : ''}</span>
+                                          </span>
+                                          <span className="font-bold tabular-nums whitespace-nowrap">
+                                            {entry.scored ? (
+                                              <>
+                                                {entry.baseline !== null && entry.baseline !== entry.coverage && (
+                                                  <span className="opacity-50 line-through mr-1">{entry.baseline}%</span>
+                                                )}
+                                                <span className={tone(entry.coverage)}>{entry.coverage}%</span>
+                                              </>
+                                            ) : (
+                                              <span className="opacity-50" title="Custom readers have no signal set to check">Not scored</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                        {entry.scored && (
+                                          <div className="mt-1 flex flex-wrap gap-1">
+                                            {entry.matched.map((label) => {
+                                              const gained = entry.gained.includes(label);
+                                              return (
+                                                <span
+                                                  key={label}
+                                                  title={gained ? 'Newly evidenced by this version' : 'Evidenced in this version'}
+                                                  className={`px-1.5 py-0.5 rounded ${gained ? 'bg-emerald-500/20 text-emerald-500' : (isDarkMode ? 'bg-white/10 opacity-80' : 'bg-black/5 opacity-80')}`}
+                                                >
+                                                  {gained ? '+ ' : ''}{label}
+                                                </span>
+                                              );
+                                            })}
+                                            {entry.missing.map((label) => {
+                                              const lost = entry.lost.includes(label);
+                                              return (
+                                                <span
+                                                  key={label}
+                                                  title={lost
+                                                    ? 'In your original resume but not in this version - check whether it was trimmed'
+                                                    : 'Not evidenced - add it to your resume only if it is true'}
+                                                  className={`px-1.5 py-0.5 rounded border border-dashed ${lost ? 'border-rose-500 text-rose-500' : 'border-current opacity-50'}`}
+                                                >
+                                                  {label}
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <p className="mt-3 text-[10px] opacity-50">
+                                    Keyword evidence of what each reader scans for. Dashed signals are absent from the text - add one only if it is true.
+                                  </p>
+                                </div>
+                              );
+                            })()}
                             {autoSelection && (                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
@@ -3976,7 +4075,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             )}
                             <div className="relative" ref={audienceDropdownRef}>
                               <div className="flex items-center justify-between mb-2">
-                                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Audiences (Multi-select)</label>
+                                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Audiences (blend up to {MAX_BLENDED_AUDIENCES})</label>
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3995,14 +4094,16 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 }`}
                               >
                                 <span className="truncate flex items-center gap-2">
-                                  {selectedAudiences.length > 0
+                                  {audienceMix
                                     ? (
                                       <>
-                                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">Auto</span>
-                                        {selectedAudiences.map(id => id === 'custom' ? (customAudience || 'Custom Persona') : (AUDIENCES.find(a => a.id === id)?.label || id)).join(', ')}
+                                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                                          {audienceMix.source === 'manual' ? 'Manual' : 'Auto'}
+                                        </span>
+                                        <span className="truncate">{audienceHeadline(audienceMix)}</span>
                                       </>
                                     )
-                                    : 'Select audiences...'}
+                                    : 'Select audiences, or leave empty to auto-select'}
                                 </span>
                                 <ChevronDown className="w-4 h-4 opacity-50" />
                               </button>
@@ -4015,6 +4116,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedAudiences(['microsoft']);
+                                        setAudienceSuggestion(null);
                                       }}
                                       className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-500 rounded hover:bg-emerald-500/20 transition-colors"
                 >
@@ -4024,27 +4126,57 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedAudiences([]);
+                                        setAudienceSuggestion(null);
                                       }}
                                       className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-red-500/10 text-red-500 rounded hover:bg-red-500/20 transition-colors"
                                     >
                                       Clear
                                     </button>
                                   </div>
-                                  {AUDIENCES.map((audience) => (
-                                    <button
-                                      key={audience.id}
-                                      onClick={() => toggleAudience(audience.id)}
-                                      className={`w-full px-3 py-2 text-xs flex items-center gap-2 ${
-                                        selectedAudiences.includes(audience.id)
-                                          ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
-                                          : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
-                                      }`}
-                                    >
-                                      <span>{audience.icon}</span>
-                                      {audience.label}
-                                      {selectedAudiences.includes(audience.id) && <CheckCircle2 className="w-4 h-4 ml-auto" />}
-                                    </button>
-                                  ))}
+                                  {AUDIENCES.map((audience) => {
+                                    const isSelected = selectedAudiences.includes(audience.id);
+                                    const mixEntry = audienceMix?.entries.find(entry => entry.id === audience.id);
+                                    const isPrimary = !!mixEntry && audienceMix?.entries[0]?.id === audience.id;
+                                    return (
+                                      <div
+                                        key={audience.id}
+                                        className={`flex items-center ${
+                                          isSelected
+                                            ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
+                                            : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
+                                        }`}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleAudience(audience.id)}
+                                          title={mixEntry?.reason}
+                                          className="flex-1 min-w-0 px-3 py-2 text-xs flex items-center gap-2 text-left"
+                                        >
+                                          <span>{audience.icon}</span>
+                                          <span className="truncate">{audience.label}</span>
+                                          {mixEntry && (
+                                            <span className="ml-auto text-[10px] font-bold tabular-nums whitespace-nowrap">
+                                              {mixEntry.weight}%{isPrimary ? ' · Primary' : ''}
+                                            </span>
+                                          )}
+                                          {isSelected && <CheckCircle2 className={`w-4 h-4 shrink-0 ${mixEntry ? '' : 'ml-auto'}`} />}
+                                        </button>
+                                        {mixEntry && !isPrimary && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              makePrimaryAudience(audience.id);
+                                            }}
+                                            title="Make this the primary reader: it frames the summary and each role's opening bullet"
+                                            className="px-2 py-1 mr-2 text-[9px] font-bold uppercase tracking-widest rounded border border-current opacity-70 hover:opacity-100 whitespace-nowrap"
+                                          >
+                                            Make primary
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                               {selectedAudiences.includes('custom') && (
@@ -4063,6 +4195,25 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     }`}
                                   />
                                 </motion.div>
+                              )}
+                              {audienceMix && (
+                                <div className={`mt-2 p-2 rounded-lg border text-[10px] ${isDarkMode ? 'border-white/10 bg-white/5' : 'border-black/5 bg-black/5'}`}>
+                                  <p className="opacity-60 mb-1">
+                                    One resume is written for this blend. The primary reader frames the summary and each role's opening bullet; the others decide what else earns a place.
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {audienceMix.entries.map((entry, idx) => (
+                                      <li key={entry.id} className="leading-snug">
+                                        <span className="font-bold">{entry.label}</span>
+                                        <span className="opacity-60"> · {entry.weight}%{idx === 0 ? ' · Primary' : ''}</span>
+                                        {entry.reason && <span className="block opacity-50 italic">{entry.reason}</span>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  {selectedAudiences.length > MAX_BLENDED_AUDIENCES && (
+                                    <p className="mt-1 text-amber-500">Only the first {MAX_BLENDED_AUDIENCES} selected audiences are blended.</p>
+                                  )}
+                                </div>
                               )}
                             </div>
                             

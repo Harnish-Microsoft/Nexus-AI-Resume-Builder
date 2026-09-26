@@ -25,6 +25,7 @@ import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
 import { applyMatchScores } from "./src/lib/matchScore";
 import { applyImpactAudit } from "./src/lib/impactScore";
 import { computeBulletBudgets, enforceBulletBudgets } from "./src/lib/bulletBudget";
+import { audienceHeadline, buildAudienceBrief, normalizeAudienceMix } from "./src/lib/audienceProfiles";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
@@ -864,6 +865,7 @@ async function startServer() {
       targetRole, 
       mode, 
       audience, 
+      audienceMix,
       customPrompt, 
       pipelineType,
       targetCompany,
@@ -874,6 +876,14 @@ async function startServer() {
     if (!resumeText || !jobDescription) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+
+    // Every selected reader is written for in ONE run: the weighted mix becomes a
+    // brief in each prompt. The brief is rebuilt here from the validated mix, never
+    // taken from the client as prompt text.
+    const blend = normalizeAudienceMix(audienceMix);
+    const audienceText = blend ? audienceHeadline(blend) : audience;
+    const documentAudienceBrief = buildAudienceBrief(blend, "document");
+    const roleAudienceBrief = buildAudienceBrief(blend, "role");
 
     try {
       // 1. Fetch keys securely from Firestore
@@ -930,7 +940,8 @@ async function startServer() {
         jobDescription: jobDescription,
         targetRole, 
         mode, 
-        audience, 
+        audience: audienceText, 
+        audienceMix: blend ? blend.entries : null,
         customPrompt,
         pipelineType: selectedPipeline,
         hasGemini: !!geminiKey,
@@ -988,7 +999,8 @@ async function startServer() {
       const roleCount = optimizedInput.experience.length;
       const finalPrompt = buildResumeGenerationPrompt({
         targetRole,
-        audience,
+        audience: audienceText,
+        audienceBrief: documentAudienceBrief,
         mode,
         targetCompany,
         customPrompt,
@@ -1119,9 +1131,10 @@ async function startServer() {
           Optimize the meta-sections of this resume for factual realism and believable operational ownership.
 
           Target Role: ${targetRole}.
-          Audience: ${audience}. Mode: ${mode}.
+          Audience: ${audienceText}. Mode: ${mode}.
           Keywords: ${optimizedInput.jd_keywords.join(', ')}.
           ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}` : ''}
+          ${documentAudienceBrief}
           
           INPUT DATA:
           ${JSON.stringify({
@@ -1180,7 +1193,7 @@ async function startServer() {
             geminiKey, 
             targetCompany, 
             targetRole,
-            audience,
+            audienceText,
             mode,
             customPrompt,
             brainDump,
@@ -1188,6 +1201,7 @@ async function startServer() {
               // Each role is tailored against the real posting, like the whole-document path.
               jobDescription: Optimization.trimInput(jobDescription, 6000),
               jdKeywords: optimizedInput.jd_keywords,
+              audienceBrief: roleAudienceBrief,
             }
           )
         ]);
