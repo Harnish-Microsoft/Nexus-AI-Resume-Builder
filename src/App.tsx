@@ -3765,34 +3765,78 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           {/* Analysis Content */}
                           <div className="space-y-4">
                             <h3 className="text-xs font-bold uppercase tracking-widest text-white/80">2. Job Analysis</h3>
-                            {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (
+                            {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (() => {
+                              const result = results[activeAudience];
+                              const breakdown = result.score_breakdown;
+                              const optimizedBreakdown = breakdown?.optimized;
+                              const baselineBreakdown = breakdown?.baseline;
+                              const readiness = optimizedBreakdown?.readiness;
+                              const required = optimizedBreakdown?.required;
+                              const preferred = optimizedBreakdown?.preferred;
+                              const readinessTone: Record<string, string> = {
+                                strong: 'bg-emerald-500/15 text-emerald-500',
+                                good: 'bg-sky-500/15 text-sky-500',
+                                partial: 'bg-amber-500/15 text-amber-500',
+                                low: 'bg-rose-500/15 text-rose-500',
+                              };
+                              const tierRow = (label: string, hint: string, now?: { total: number; matched: string[]; partial: string[] }, before?: { matched: string[] }) =>
+                                now && now.total > 0 ? (
+                                  <div className="flex items-center justify-between gap-3 text-[11px]">
+                                    <span className="font-bold truncate" title={hint}>{label}</span>
+                                    <span className="font-bold tabular-nums whitespace-nowrap">
+                                      {before && before.matched.length !== now.matched.length && (
+                                        <span className="opacity-40 mr-1">{before.matched.length} →</span>
+                                      )}
+                                      <span className="text-emerald-500">{now.matched.length}</span>
+                                      <span className="opacity-60"> / {now.total}</span>
+                                      {now.partial.length > 0 && <span className="opacity-50"> (+{now.partial.length} partial)</span>}
+                                    </span>
+                                  </div>
+                                ) : null;
+                              const missingRequired = required ? required.missing : (optimizedBreakdown?.missing || []);
+                              const missingPreferred = preferred ? preferred.missing : [];
+                              return (
                               <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
                                 <div className="flex items-center justify-between">
                                   <div>
-                                    <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                                    <div className="flex items-center gap-2">
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                                      {readiness && (
+                                        <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${readinessTone[readiness.level] || ''}`} title={readiness.guidance}>
+                                          {readiness.label}
+                                        </span>
+                                      )}
+                                    </div>
                                     <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>
-                                      {results[activeAudience].score_breakdown
-                                        ? `Measured against ${results[activeAudience].score_breakdown!.jd_keywords_evaluated} requirements extracted from this JD`
+                                      {breakdown
+                                        ? `Measured against ${breakdown.jd_keywords_evaluated} requirements extracted from this JD`
                                         : 'Based on current JD'}
                                     </p>
                                   </div>
                                   <div className="flex items-center gap-3">
-                                    {results[activeAudience].baseline_score !== undefined && (
+                                    {result.baseline_score !== undefined && (
                                       <div className="text-right">
                                         <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
-                                        <span className={`font-bold text-lg opacity-60 line-through`}>{results[activeAudience].baseline_score}%</span>
+                                        <span className={`font-bold text-lg opacity-60 line-through`}>{result.baseline_score}%</span>
                                       </div>
                                     )}
                                     <div className="text-right">
                                       <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
-                                      <span className={`font-bold text-2xl text-emerald-500`}>{results[activeAudience].match_score}%</span>
+                                      <span className={`font-bold text-2xl text-emerald-500`}>{result.match_score}%</span>
                                     </div>
                                   </div>
                                 </div>
-                                {results[activeAudience].score_breakdown && (
+                                {(required || preferred) && (
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
+                                    {tierRow('Required skills covered', 'Skills the posting requires. Recruiters filter on these first.', required, baselineBreakdown?.required)}
+                                    {tierRow('Nice-to-have covered', 'Skills the posting lists as preferred or desirable. Each counts half as much as a required skill.', preferred, baselineBreakdown?.preferred)}
+                                    {readiness && <p className="text-[10px] opacity-70 pt-1">{readiness.guidance}</p>}
+                                  </div>
+                                )}
+                                {breakdown && (
                                   <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
-                                    {results[activeAudience].score_breakdown!.optimized.components.map((component) => {
-                                      const baselineComponent = results[activeAudience].score_breakdown!.baseline.components
+                                    {breakdown.optimized.components.map((component) => {
+                                      const baselineComponent = breakdown.baseline.components
                                         .find((c) => c.id === component.id);
                                       return (
                                         <div key={component.id} className="flex items-center justify-between gap-3 text-[10px]">
@@ -3809,15 +3853,26 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                         </div>
                                       );
                                     })}
-                                    {results[activeAudience].score_breakdown!.optimized.missing.length > 0 && (
-                                      <p className="text-[10px] opacity-60 pt-1">
-                                        Still missing: {results[activeAudience].score_breakdown!.optimized.missing.slice(0, 6).join(', ')}
+                                    {missingRequired.length > 0 && (
+                                      <p className="text-[10px] opacity-70 pt-1">
+                                        <span className="font-bold">{required ? 'Missing required' : 'Still missing'}:</span> {missingRequired.slice(0, 10).join(', ')}
+                                        {missingRequired.length > 10 && <span className="opacity-60"> +{missingRequired.length - 10} more</span>}
                                       </p>
                                     )}
+                                    {missingPreferred.length > 0 && (
+                                      <p className="text-[10px] opacity-50">
+                                        <span className="font-bold">Missing nice-to-have:</span> {missingPreferred.slice(0, 8).join(', ')}
+                                        {missingPreferred.length > 8 && <span> +{missingPreferred.length - 8} more</span>}
+                                      </p>
+                                    )}
+                                    <p className="text-[10px] opacity-40 pt-1">
+                                      No ATS applies one universal cutoff such as 80% - recruiters filter on the required skills. Add a missing skill to your master resume or brain dump only if you have it.
+                                    </p>
                                   </div>
                                 )}
                               </div>
-                            )}
+                              );
+                            })()}
                             {activeAudience && results[activeAudience]?.impact_audit && (() => {
                               const audit = results[activeAudience].impact_audit!;
                               const tone = audit.score >= 75 ? 'text-emerald-500' : audit.score >= 55 ? 'text-amber-500' : 'text-rose-500';
@@ -4861,14 +4916,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 <h3 className="font-bold text-sm">Optimization Insights</h3>
                               </div>
                               <div className="p-4 text-xs leading-relaxed opacity-80 space-y-4">
-                                {results[activeAudience].match_score !== undefined && (
+                                {results[activeAudience].match_score !== undefined && (() => {
+                                  const insight = results[activeAudience];
+                                  const level = insight.score_breakdown?.optimized?.readiness?.level
+                                    || (insight.match_score >= 70 ? 'strong' : insight.match_score >= 55 ? 'good' : insight.match_score >= 40 ? 'partial' : 'low');
+                                  const tone = level === 'strong' ? 'text-emerald-500' : level === 'good' ? 'text-sky-500' : level === 'partial' ? 'text-yellow-500' : 'text-red-500';
+                                  return (
                                   <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
                                     <span className="font-bold">Match Score</span>
-                                    <span className={`font-bold text-sm ${results[activeAudience].match_score >= 80 ? 'text-emerald-500' : results[activeAudience].match_score >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
-                                      {results[activeAudience].match_score}%
+                                    <span className={`font-bold text-sm ${tone}`} title={insight.score_breakdown?.optimized?.readiness?.label}>
+                                      {insight.match_score}%
                                     </span>
                                   </div>
-                                )}
+                                  );
+                                })()}
                                 
                                 {Array.isArray(results[activeAudience].rejection_reasons) && results[activeAudience].rejection_reasons!.length > 0 && (
                                   <div className="space-y-2">

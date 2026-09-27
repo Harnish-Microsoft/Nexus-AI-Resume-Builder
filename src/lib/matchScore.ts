@@ -21,12 +21,37 @@ export interface ScoreComponent {
   detail: string;
 }
 
+/** Required skills carry full weight; nice-to-haves count at PREFERRED_WEIGHT of it. */
+export type RequirementTier = "required" | "preferred";
+
+export interface TierCoverage {
+  total: number;
+  matched: string[];
+  partial: string[];
+  missing: string[];
+}
+
+export type ReadinessLevel = "strong" | "good" | "partial" | "low";
+
+/** A plain-language reading of the score. There is no universal ATS cutoff, so this is not a pass mark. */
+export interface MatchReadiness {
+  level: ReadinessLevel;
+  label: string;
+  /** Share of the required skills evidenced (partial matches count half), or null when the JD lists none separately. */
+  required_coverage: number | null;
+  guidance: string;
+}
+
 export interface MatchScoreBreakdown {
   score: number;
   components: ScoreComponent[];
   matched: string[];
   partial: string[];
   missing: string[];
+  /** Optional only because results saved before v2 scoring lack them. */
+  required?: TierCoverage;
+  preferred?: TierCoverage;
+  readiness?: MatchReadiness;
 }
 
 export interface MatchScoreResult {
@@ -84,6 +109,12 @@ const NOISE_TERMS = new Set([
   "person", "position", "preferred", "proficiency", "qualifications", "remote", "requirement",
   "requirements", "responsibilities", "responsibility", "salary", "skill", "skills", "team",
   "teams", "type", "we are", "workplace",
+  // Generic nouns that surface as phrase fragments ("sites & services") but name no skill.
+  "service", "services", "solution", "solutions", "system", "systems", "platform", "platforms",
+  "tool", "tools", "tooling", "technology", "technologies", "process", "processes", "project",
+  "projects", "product", "products", "function", "functions", "module", "modules", "concept",
+  "concepts", "pattern", "patterns", "practice", "practices", "standard", "standards", "workload",
+  "workloads", "environments", "capabilities", "fundamentals", "basics",
 ]);
 
 /**
@@ -134,17 +165,97 @@ const ALIAS_GROUPS: string[][] = [
   ["sql server", "mssql", "microsoft sql server"],
   ["power bi", "powerbi"],
   ["excel", "microsoft excel"],
+  // Microsoft / Azure infrastructure: postings and resumes mix old and new product names freely.
+  ["entra id", "azure ad", "azure active directory", "aad", "microsoft entra id", "microsoft entra"],
+  ["active directory", "ad", "ad ds", "active directory domain services"],
+  ["ad cs", "adcs", "active directory certificate services"],
+  ["pki", "public key infrastructure"],
+  ["adfs", "ad fs", "active directory federation services"],
+  ["group policy", "gpo", "gpos", "group policies", "group policy objects"],
+  [
+    "sccm", "mecm", "configmgr", "configuration manager", "system center configuration manager",
+    "microsoft endpoint configuration manager",
+  ],
+  ["scom", "system center operations manager"],
+  ["wsus", "windows server update services"],
+  ["azure site recovery", "asr"],
+  ["disaster recovery", "dr"],
+  ["high availability", "ha"],
+  ["root cause analysis", "rca"],
+  ["kql", "kusto", "kusto query language"],
+  ["log analytics", "log analytics workspace", "log analytics workspaces"],
+  ["sentinel", "microsoft sentinel", "azure sentinel"],
+  ["defender for cloud", "microsoft defender for cloud", "azure security center", "azure defender"],
+  ["mde", "defender for endpoint", "microsoft defender for endpoint"],
+  ["key vault", "azure key vault", "keyvault"],
+  ["arm templates", "arm", "arm template", "azure resource manager"],
+  ["dsc", "desired state configuration", "powershell dsc"],
+  ["vm", "virtual machine", "virtual machines"],
+  ["vmss", "virtual machine scale sets", "virtual machine scale set", "scale sets"],
+  ["vnet", "virtual network", "virtual networks"],
+  ["nsg", "network security group", "network security groups"],
+  ["asg", "application security group", "application security groups"],
+  ["waf", "web application firewall"],
+  ["application gateway", "app gateway", "azure application gateway"],
+  ["load balancing", "load balancer", "load balancers"],
+  ["expressroute", "express route"],
+  ["iis", "internet information services"],
+  ["laps", "local administrator password solution"],
+  ["jit", "just in time", "just-in-time"],
+  ["jea", "just enough administration"],
+  ["mfa", "multi-factor authentication", "multifactor authentication"],
+  ["intune", "microsoft intune", "endpoint manager", "microsoft endpoint manager"],
+  ["autopilot", "windows autopilot"],
+  ["m365", "microsoft 365", "office 365", "o365"],
+  ["azure devops", "vsts"],
+  ["failover clustering", "failover cluster", "failover clusters", "wsfc"],
+  ["azure update manager", "update manager", "update management"],
+  ["itsm", "it service management"],
+  ["infrastructure", "infra"],
+  ["applications", "apps"],
 ];
 
-const ALIAS_LOOKUP: Map<string, string[]> = (() => {
-  const map = new Map<string, string[]>();
+/**
+ * Short forms that are also ordinary words ("ad hoc", "Dr.", "ha", an arm).
+ * They only count as the acronym when written in capitals in the resume.
+ */
+const CASE_SENSITIVE_FORMS = new Set(["ad", "dr", "ha", "arm"]);
+
+/**
+ * Every member of a synonym family, merged transitively: groups that share a
+ * member are one concept, so a posting's "Azure AD" and a resume's "Entra ID"
+ * are the same requirement.
+ */
+const { ALIAS_LOOKUP, FAMILY_OF } = (() => {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root) as string;
+    parent.set(x, root);
+    return root;
+  };
   for (const group of ALIAS_GROUPS) {
-    for (const member of group) {
-      const existing = map.get(member) || [];
-      map.set(member, Array.from(new Set([...existing, ...group])));
+    for (const member of group) if (!parent.has(member)) parent.set(member, member);
+    for (const member of group.slice(1)) {
+      const a = find(group[0]);
+      const b = find(member);
+      if (a !== b) parent.set(b, a);
     }
   }
-  return map;
+  const families = new Map<string, string[]>();
+  for (const member of parent.keys()) {
+    const root = find(member);
+    families.set(root, [...(families.get(root) || []), member]);
+  }
+  const lookup = new Map<string, string[]>();
+  const familyOf = new Map<string, string>();
+  for (const [root, members] of families) {
+    for (const member of members) {
+      lookup.set(member, members);
+      familyOf.set(member, root);
+    }
+  }
+  return { ALIAS_LOOKUP: lookup, FAMILY_OF: familyOf };
 })();
 
 /**
@@ -157,7 +268,7 @@ const SKILL_DICTIONARY = [
   "scala", "kotlin", "swift", "perl", "bash", "powershell", "shell scripting", "sql", "nosql",
   "html", "css", "sass", "react", "angular", "vue", "svelte", "next.js", "node.js", "express",
   "django", "flask", "fastapi", "spring boot", "spring", ".net", "asp.net", "laravel", "rails",
-  "aws", "azure", "gcp", "google cloud", "kubernetes", "docker", "terraform", "ansible", "puppet",
+  "aws", "azure", "gcp", "google cloud", "kubernetes", "docker", "terraform", "ansible", "puppet", "pulumi",
   "chef", "jenkins", "github actions", "gitlab ci", "argocd", "helm", "openshift", "vmware",
   "linux", "windows server", "active directory", "networking", "tcp/ip", "dns", "vpn", "firewall",
   "load balancing", "microservices", "serverless", "lambda", "ec2", "s3", "rds", "eks", "aks",
@@ -184,6 +295,18 @@ const SKILL_DICTIONARY = [
   "financial modeling", "accounting", "payroll", "recruiting", "onboarding", "training",
   "supply chain", "logistics", "inventory management", "procurement", "quality assurance",
   "lean", "six sigma", "root cause analysis",
+  // Microsoft / Azure infrastructure. Capitalised product names ("Sentinel", "Intune",
+  // "Bicep") never pass the looks-technical test, so they must be listed to be found.
+  "entra id", "azure ad", "intune", "autopilot", "conditional access", "identity governance",
+  "microsoft 365", "exchange online", "sharepoint", "sentinel", "defender for cloud",
+  "defender for endpoint", "key vault", "bicep", "arm templates", "log analytics", "azure monitor",
+  "kql", "group policy", "gpo", "pki", "ad cs", "ad ds", "adfs", "dhcp", "iis", "sccm", "mecm", "wsus",
+  "scom", "azure site recovery", "azure backup", "azure files", "azure policy", "azure update manager",
+  "azure automation", "azure functions", "azure devops", "azure arc", "azure migrate", "vmss",
+  "virtual machines", "vnet", "private dns", "private endpoints", "nsg", "application gateway",
+  "waf", "expressroute", "failover clustering", "dsc", "pester", "laps", "credential guard",
+  "hyper-v", "mfa", "zero trust", "cis benchmarks", "cyber essentials", "problem management",
+  "major incident", "vulnerability remediation", "backup", "clustering", "servicenow", "itsm",
 ];
 
 const DICTIONARY_SET = new Set(SKILL_DICTIONARY);
@@ -193,15 +316,38 @@ const TOKEN_BLOCKLIST = new Set([
   "i", "a", "us", "uk", "eu", "ok", "ceo", "cto", "cfo", "coo", "vp", "jr", "sr", "phd", "bs",
   "ba", "ma", "ms", "mba", "am", "pm", "eod", "eta", "faq", "tbd", "n/a", "e.g", "i.e", "etc",
   "inc", "llc", "ltd", "corp", "co", "and/or", "24/7", "401k", "pto", "eeo", "id",
+  // Posting and HR shorthand that names no skill.
+  "sme", "fte", "wfh", "ctc", "lpa", "hq", "jd", "asap", "fyi", "usa", "uae", "apac", "emea", "amer",
 ]);
 
+/** Slash compounds that name ONE thing. Every other "a/b" is read as two terms, the way a recruiter reads it. */
+const SLASH_COMPOUNDS = new Set(["ci/cd", "tcp/ip", "udp/ip", "i/o", "a/b", "pl/sql", "s/4hana", "24/7", "and/or", "n/a"]);
+
+/** Non-breaking, en and em dashes, minus signs. "AZ‑104" must read like "AZ-104". */
+const UNICODE_DASHES = /[\u2010-\u2015\u2212]/g;
+
+function separateSlashes(text: string): string {
+  return text.replace(/[^\s/]*\/[^\s]*/g, (token) =>
+    SLASH_COMPOUNDS.has(token.replace(/[.-]+$/, "")) ? token : token.split("/").join(" / ")
+  );
+}
+
 function normalize(text: string): string {
-  return (text || "")
+  const basic = (text || "")
     .toLowerCase()
+    .replace(/\u00ad/g, "")
+    .replace(UNICODE_DASHES, "-")
     .replace(/[\u2018\u2019\u201c\u201d]/g, " ")
-    .replace(/[^a-z0-9+#./\s-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/[^a-z0-9+#./\s-]/g, " ");
+  return (
+    separateSlashes(basic)
+      // Sentence punctuation is not part of a word: "Azure." must match "Azure".
+      // Inner dots survive ("node.js", ".net"); lookahead only - no lookbehind (Safari 14).
+      .replace(/[.-]+(?=\s|$)/g, " ")
+      .replace(/(^|\s)-+/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 }
 
 /** Space-padded so `indexOf(" term ")` acts as a word-boundary test. */
@@ -249,16 +395,20 @@ function splitLines(text: string): string[] {
 interface TermCandidate {
   term: string;
   sources: Set<string>;
+  /** Other spellings the posting uses for this exact term ("vms" for "vm"). */
+  surfaces: Set<string>;
 }
 
-function addCandidate(map: Map<string, TermCandidate>, rawTerm: string, source: string): void {
+function addCandidate(map: Map<string, TermCandidate>, rawTerm: string, source: string, rawSurface?: string): void {
   const term = trimTermEdges(normalize(rawTerm));
   if (!isMeaningful(term)) return;
+  const surface = rawSurface ? normalize(rawSurface) : "";
   const existing = map.get(term);
   if (existing) {
     existing.sources.add(source);
+    if (surface && surface !== term) existing.surfaces.add(surface);
   } else {
-    map.set(term, { term, sources: new Set([source]) });
+    map.set(term, { term, sources: new Set([source]), surfaces: new Set(surface && surface !== term ? [surface] : []) });
   }
 }
 
@@ -268,7 +418,7 @@ function addCandidate(map: Map<string, TermCandidate>, rawTerm: string, source: 
  * that only appear in tool names (c++, c#, node.js, ci/cd).
  */
 function looksTechnical(rawToken: string): boolean {
-  const token = rawToken.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9+#.]+$/g, "");
+  const token = rawToken.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9+#]+$/g, "");
   if (token.length < 2 || token.length > 24) return false;
   if (TOKEN_BLOCKLIST.has(token.toLowerCase())) return false;
   if (STOPWORDS.has(token.toLowerCase())) return false;
@@ -276,13 +426,57 @@ function looksTechnical(rawToken: string): boolean {
   if (/[a-z][A-Z]/.test(token)) return true;
   if (/^[A-Za-z]+[0-9]+$/.test(token) && token.length > 3) return true;
   if (/[+#]/.test(token)) return true;
-  if (/^[A-Za-z]+\.[A-Za-z]{2,4}$/.test(token)) return true;
+  // Library-style names ("Node.js", "Socket.io"). An allowlist of extensions, because a
+  // missing space after a full stop ("here.You") has the same shape.
+  if (/^[A-Za-z0-9]+\.(?:js|ts|jsx|tsx|net|io|py|rb|sh|ai|db)$/i.test(token)) return true;
   return false;
 }
 
+/**
+ * The technical terms one raw posting token contributes. Slash compounds are
+ * split ("Sentinel/Defender", "PKI/Certificates"), sentence punctuation is
+ * dropped, plural acronyms are singularised ("VMs", "NSGs") and certification
+ * codes are kept whole ("AZ-104").
+ */
+function technicalTerms(rawToken: string): { term: string; surface?: string }[] {
+  const token = rawToken.replace(/[.-]+$/, "");
+  const parts = SLASH_COMPOUNDS.has(token.toLowerCase()) ? [token] : token.split("/");
+  const out: { term: string; surface?: string }[] = [];
+  for (const rawPart of parts) {
+    const part = rawPart.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9+#]+$/g, "");
+    if (!part || TOKEN_BLOCKLIST.has(part.toLowerCase())) continue;
+    if (/^[A-Z]{2,4}-\d{2,4}$/.test(part)) {
+      out.push({ term: part });
+    } else if (/^[A-Z]{2,6}s$/.test(part)) {
+      // The posting only ever says "VMs": keep that spelling so sections and counts still find it.
+      out.push({ term: part.slice(0, -1), surface: part });
+    } else if (looksTechnical(part)) {
+      out.push({ term: part });
+    }
+  }
+  return out;
+}
+
+/** Trailing words that make a phrase fragment longer without naming a different skill. */
+const GENERIC_TAIL_WORDS = new Set([
+  "patterns", "pattern", "concepts", "concept", "fundamentals", "basics", "practices", "practice",
+  "fixes", "principles", "experience", "skills", "knowledge", "tooling", "capabilities",
+]);
+
+function trimGenericTail(term: string): string {
+  const words = term.split(" ");
+  while (words.length > 1 && GENERIC_TAIL_WORDS.has(words[words.length - 1])) words.pop();
+  return words.join(" ");
+}
+
+/** Phrase fragments are read up to this many characters; a fragment that hits the cap may end mid-word. */
+const PHRASE_MAX = 160;
+
 const PHRASE_PATTERNS = [
-  /(?:experience\s+(?:with|in|using|of)|proficien\w*\s+(?:in|with)|knowledge\s+of|expertise\s+in|familiarity\s+with|skilled\s+in|background\s+in|hands[-\s]?on\s+(?:with|experience\s+with)|working\s+with|strong\s+(?:in|with)|understanding\s+of)\s+([^.;:\n]{3,80})/gi,
+  /(?:experience\s+(?:with|in|using|of)|proficien\w*\s+(?:in|with)|knowledge\s+of|expertise\s+in|familiarity\s+with|skilled\s+in|background\s+in|hands[-\s]?on\s+(?:with|experience\s+with)|working\s+with|strong\s+(?:in|with)|understanding\s+of)\s+([^.;:\n]{3,160})/gi,
 ];
+
+const PHRASE_SPLIT = /,|;|\(|\)|\/|&|\||\band\b|\bor\b|\bas well as\b|\bsuch as\b|\bincluding\b|\be\.g\b/i;
 
 function extractPhraseTerms(jd: string): string[] {
   const out: string[] = [];
@@ -291,36 +485,301 @@ function extractPhraseTerms(jd: string): string[] {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(jd)) !== null) {
       const fragment = match[1];
-      for (const part of fragment.split(/,|\band\b|\bor\b|\/|&|\||\bas well as\b/i)) {
-        const cleaned = trimTermEdges(normalize(part));
-        if (cleaned && cleaned.split(" ").length <= 4) out.push(cleaned);
+      const parts = fragment.split(PHRASE_SPLIT);
+      // A fragment cut off at the length cap ends mid-word ("... Defender for Cloud, Sentine"):
+      // its last part is never a real term.
+      if (fragment.length >= PHRASE_MAX) parts.pop();
+      for (const part of parts) {
+        const cleaned = trimGenericTail(trimTermEdges(normalize(part)));
+        if (!cleaned || cleaned.split(" ").length > 4) continue;
+        // A lone lowercase word in a sub-list ("sites & services, trusts") is a qualifier, not a
+        // skill. Capitalised names ("Figma") and known skills ("backup") are kept.
+        if (!cleaned.includes(" ") && !DICTIONARY_SET.has(cleaned)) {
+          const original = (part.match(/[A-Za-z0-9][A-Za-z0-9+#.-]*/g) || []).find((w) => w.toLowerCase() === cleaned);
+          if (original && /^[a-z]/.test(original)) continue;
+        }
+        out.push(cleaned);
       }
     }
   }
   return out;
 }
 
+/* ------------------------------------------------------------------ *
+ * Posting sections: what is required, what is nice to have, and what is
+ * company boilerplate that names no requirement at all.
+ * ------------------------------------------------------------------ */
+
+type SectionKind = RequirementTier | "ignored";
+
+/** Nice-to-haves still count, at this share of a required skill's weight. */
+const PREFERRED_WEIGHT = 0.5;
+/**
+ * Runaway guards, per tier so nice-to-haves never crowd out required skills.
+ * Dense postings legitimately name 60+ requirements; these only stop a
+ * pathological extraction, never trim a real posting.
+ */
+const MAX_REQUIRED_TERMS = 90;
+const MAX_PREFERRED_TERMS = 30;
+
+/** Every word a pure section heading can be made of ("Required Skills & Experience", "Nice to Have"). */
+const HEADING_WORDS = new Set([
+  "key", "core", "main", "primary", "minimum", "basic", "required", "requirement", "requirements",
+  "essential", "technical", "professional", "job", "role", "position", "description", "summary",
+  "overview", "responsibilities", "responsibility", "duties", "qualifications", "qualification",
+  "must", "have", "haves", "skills", "skill", "experience", "experiences", "what", "you", "youll",
+  "you'll", "bring", "need", "we're", "looking", "who", "tools", "tool", "technologies",
+  "technology", "tech", "stack", "about", "opportunity", "nice", "good", "preferred", "desirable",
+  "desired", "bonus", "points", "point", "pluses", "plus", "optional", "advantageous",
+  "certifications", "certification", "certs", "knowledge", "education", "abilities", "ability",
+  "competencies", "competency", "expertise", "background", "additional", "other", "extra",
+  "extras", "profile", "ideal", "candidate", "mandatory", "criteria", "your", "tasks", "task",
+  "impact", "mission", "day", "life",
+]);
+const PREFERRED_HEADING_WORDS = new Set([
+  "nice", "good", "preferred", "desirable", "desired", "bonus", "pluses", "plus", "optional", "advantageous",
+]);
+const ROLE_HEADING_WORDS = new Set(["job", "role", "position", "opportunity", "you", "yourself", "candidate", "team"]);
+/** Whole-line company/HR headings. Anchored at both ends, so "Benefits administration using Workday" stays content. */
+const IGNORED_HEADING =
+  /^(?:about\s+(?:us|the\s+company|our\s+company)|who\s+we\s+are|our\s+(?:company|culture|story|mission|values|benefits)|company\s+(?:description|profile|overview|information)|benefits(?:\s+(?:and|&)\s+perks)?|perks(?:\s+(?:and|&)\s+benefits)?|what\s+we\s+offer|why\s+(?:join|work\s+(?:with|for|at))(?:\s+\S+){0,3}|compensation(?:\s+(?:and|&)\s+benefits)?|salary(?:\s+range)?|equal\s+(?:opportunity|employment)(?:\s+\S+){0,3}|eeo(?:\s+statement)?|diversity(?:\s+(?:and|&)\s+inclusion)?(?:\s+statement)?|additional\s+information|how\s+to\s+apply|life\s+at(?:\s+\S+){1,3})$/i;
+
+/** Marks a segment of an otherwise required line as optional: "Terraform (desirable)", "Python is a plus". */
+const PREFERRED_INLINE_SOURCE =
+  "\\b(?:nice[\\s-]to[\\s-]have|good[\\s-]to[\\s-]have|preferred|preferably|desirable|bonus|a\\s+plus|plus\\s+points?|advantageous|an\\s+advantage|would\\s+be\\s+(?:a\\s+)?(?:plus|bonus|advantage|beneficial|nice)|not\\s+(?:required|mandatory|essential))\\b|\\(\\s*desired\\s*\\)|\\bis\\s+desired\\b";
+const PREFERRED_INLINE = new RegExp(PREFERRED_INLINE_SOURCE, "i");
+/** Words that qualify an optional marker without naming anything ("legacy familiarity a plus"). */
+const INLINE_FILLER = new Set([
+  "legacy", "familiarity", "experience", "knowledge", "exposure", "understanding", "basic", "some",
+  "highly", "strongly", "very", "also", "would", "nice", "good", "have", "desired",
+]);
+
+/** The heading a line opens, or null when the line is content. */
+function headingKind(line: string): SectionKind | null {
+  // Word processors and job boards write "What You’ll Do" with a curly apostrophe.
+  const trimmed = line.replace(/[\u2018\u2019\u02bc]/g, "'").trim();
+  if (!trimmed || trimmed.length > 60 || /[.!,;]$/.test(trimmed)) return null;
+  const text = trimmed.replace(/[:?\s-]+$/, "").trim();
+  const words = text.toLowerCase().replace(/[^a-z0-9\s']/g, " ").split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 7) return null;
+
+  if (IGNORED_HEADING.test(text)) return "ignored";
+  // A heading is made entirely of heading vocabulary: "Terraform experience preferred" is content.
+  if (words.every((w) => HEADING_WORDS.has(w) || STOPWORDS.has(w))) {
+    return words.some((w) => PREFERRED_HEADING_WORDS.has(w)) ? "preferred" : "required";
+  }
+  // "About KPMG", "KPMG Overview" are company boilerplate; "About the team" is not, and
+  // "About 25% travel required" is content.
+  if ((words[0] === "about" || words[words.length - 1] === "overview") && words.length <= 4 && !/\d/.test(text)) {
+    return words.some((w) => ROLE_HEADING_WORDS.has(w)) ? "required" : "ignored";
+  }
+  return null;
+}
+
+function splitInlinePreferred(line: string): { required: string; preferred: string } {
+  const preferred: string[] = [];
+  const withoutParens = line.replace(/([^,;()]*)\(([^()]*)\)/g, (whole: string, before: string, inner: string) => {
+    if (!PREFERRED_INLINE.test(inner)) return whole;
+    const rest = inner.replace(new RegExp(PREFERRED_INLINE_SOURCE, "gi"), " ");
+    const named = (rest.toLowerCase().match(/[a-z][a-z0-9+#.-]*/g) || []).filter(
+      (w) => !STOPWORDS.has(w) && !INLINE_FILLER.has(w)
+    );
+    if (named.length > 0) {
+      // "Bicep/ARM (Terraform desirable)": only Terraform is optional.
+      preferred.push(rest);
+      return before;
+    }
+    // "Intune (desirable)": the thing before the parenthesis is optional.
+    preferred.push(before);
+    return " ";
+  });
+  const required: string[] = [];
+  for (const part of withoutParens.split(/[,;]/)) {
+    if (PREFERRED_INLINE.test(part)) preferred.push(part);
+    else required.push(part);
+  }
+  return { required: required.join(", "), preferred: preferred.join(", ") };
+}
+
+interface PostingSections {
+  required: string[];
+  preferred: string[];
+  ignored: string[];
+  /** Required lines phrased as a hard requirement, or written as bullets. */
+  emphasised: string[];
+}
+
+function classifySections(jobDescription: string): PostingSections {
+  const sections: PostingSections = { required: [], preferred: [], ignored: [], emphasised: [] };
+  let state: SectionKind = "required";
+  for (const line of splitLines(jobDescription)) {
+    const kind = headingKind(line);
+    if (kind) {
+      state = kind;
+      continue;
+    }
+    // "Nice to have: Python, Go" - a one-line section.
+    const labelled = line.match(/^([^:]{2,50}):\s*(\S.*)$/);
+    const labelKind = labelled ? headingKind(labelled[1]) : null;
+    const lineState: SectionKind = labelKind || state;
+    const body = labelKind && labelled ? labelled[2] : line;
+
+    if (lineState === "ignored") {
+      sections.ignored.push(body);
+    } else if (lineState === "preferred") {
+      sections.preferred.push(body);
+    } else {
+      const split = splitInlinePreferred(body);
+      sections.required.push(split.required);
+      if (split.preferred) sections.preferred.push(split.preferred);
+      if (REQUIREMENT_HINT.test(body) || /^[-*\u2022\u25cf\d]/.test(body)) sections.emphasised.push(split.required);
+    }
+  }
+  // Safety net: if a boilerplate heading swallowed the whole posting (a requirements heading
+  // this parser does not recognise), score it as unclassified rather than drop every requirement.
+  if (sections.required.every((line) => !line.trim()) && sections.ignored.length > 0) {
+    sections.required.push(...sections.ignored);
+    sections.ignored = [];
+  }
+  return sections;
+}
+
+/** Normalized, space-padded text with a de-hyphenated twin, so "SRE-style" still evidences "SRE". */
+interface PaddedText {
+  plain: string;
+  dehyphen: string;
+}
+
+function paddedText(text: string): PaddedText {
+  const plain = padded(text);
+  return { plain, dehyphen: plain.replace(/-/g, " ") };
+}
+
+function hasForm(text: PaddedText, form: string): boolean {
+  const needle = ` ${form} `;
+  return text.plain.includes(needle) || text.dehyphen.includes(needle);
+}
+
+function countForm(text: PaddedText, form: string): number {
+  return Math.max(countOccurrences(text.plain, form), countOccurrences(text.dehyphen, form));
+}
+
+/** Replaces every whole-word occurrence of `form` with a placeholder. */
+function maskForm(paddedValue: string, form: string): string {
+  const needle = ` ${form} `;
+  let out = paddedValue;
+  let index = out.indexOf(needle);
+  while (index !== -1) {
+    out = `${out.slice(0, index)} \u00a7 ${out.slice(index + needle.length)}`;
+    index = out.indexOf(needle, index + 2);
+  }
+  return out;
+}
+
+/** One requirement: every wording of it the posting uses, shown to the user in the posting's own words. */
+interface Concept {
+  term: string;
+  forms: string[];
+  sources: Set<string>;
+}
+
+function displayForm(forms: string[], jd: PaddedText): string {
+  return [...forms].sort(
+    (a, b) =>
+      Number(CASE_SENSITIVE_FORMS.has(a)) - Number(CASE_SENSITIVE_FORMS.has(b)) ||
+      countForm(jd, b) - countForm(jd, a) ||
+      Number(DICTIONARY_SET.has(b)) - Number(DICTIONARY_SET.has(a)) ||
+      b.length - a.length ||
+      a.localeCompare(b)
+  )[0];
+}
+
+/** "Azure AD" and "Entra ID" in one posting are one requirement, not two; so are "VM" and "VMs". */
+function mergeSynonyms(candidates: TermCandidate[], jd: PaddedText): Concept[] {
+  // A plural the posting also produced as its own candidate ("slas" from a phrase) joins its singular.
+  const singularOf = new Map<string, string>();
+  for (const candidate of candidates) {
+    for (const surface of candidate.surfaces) singularOf.set(surface, candidate.term);
+  }
+  const familyKey = (term: string): string => {
+    const base = singularOf.get(term) ?? term;
+    return FAMILY_OF.get(base) ?? base;
+  };
+
+  const byFamily = new Map<string, Concept>();
+  for (const candidate of candidates) {
+    const family = familyKey(candidate.term);
+    const forms = [candidate.term, ...candidate.surfaces];
+    const existing = byFamily.get(family);
+    if (existing) {
+      for (const form of forms) if (!existing.forms.includes(form)) existing.forms.push(form);
+      candidate.sources.forEach((source) => existing.sources.add(source));
+    } else {
+      byFamily.set(family, { term: candidate.term, forms, sources: new Set(candidate.sources) });
+    }
+  }
+  const concepts = Array.from(byFamily.values());
+  for (const concept of concepts) {
+    // Display a canonical spelling, never an inflected surface form the matcher does not know.
+    const displayable = concept.forms.filter((form) => !singularOf.has(form) || FAMILY_OF.has(form));
+    if (displayable.length > 1) concept.term = displayForm(displayable, jd);
+    else if (displayable.length === 1) concept.term = displayable[0];
+  }
+  return concepts;
+}
+
+/**
+ * Drops a requirement the posting only ever mentions inside a longer one:
+ * "SQL" when every mention is "SQL Server", "SOC" inside "SOC 2". Otherwise one
+ * missing skill is penalised twice.
+ */
+function dropSubsumed(concepts: Concept[], jd: PaddedText): Concept[] {
+  const allForms = concepts.flatMap((owner) => owner.forms.map((form) => ({ form, owner })));
+  return concepts.filter((concept) => {
+    const present = concept.forms.filter((form) => hasForm(jd, form));
+    // Verified word-by-word rather than verbatim: nothing to compare against.
+    if (present.length === 0) return true;
+    const containers = allForms
+      .filter(
+        ({ form, owner }) =>
+          owner !== concept && present.some((f) => form.length > f.length && ` ${form} `.includes(` ${f} `))
+      )
+      .map(({ form }) => form)
+      .sort((a, b) => b.length - a.length);
+    if (containers.length === 0) return true;
+    let plain = jd.plain;
+    let dehyphen = jd.dehyphen;
+    for (const form of containers) {
+      plain = maskForm(plain, form);
+      dehyphen = maskForm(dehyphen, form.replace(/-/g, " "));
+    }
+    return present.some((form) => hasForm({ plain, dehyphen }, form));
+  });
+}
+
+interface JdTerm {
+  weight: number;
+  tier: RequirementTier;
+}
+
+type JdTerms = Map<string, JdTerm>;
+
 /**
  * Builds the requirement list the resume is scored against, from the JD itself.
  * Model-supplied keywords are accepted only when they actually occur in the JD,
  * so a hallucinated keyword can never inflate or deflate the score.
  */
-function extractJdTerms(
-  jobDescription: string,
-  targetRole: string,
-  providedKeywords: string[]
-): Map<string, number> {
+function extractJdTerms(jobDescription: string, targetRole: string, providedKeywords: string[]): JdTerms {
   const candidates = new Map<string, TermCandidate>();
-  const normJd = normalize(jobDescription);
-  const paddedJd = ` ${normJd} `;
+  const jd = paddedText(jobDescription);
 
   for (const skill of SKILL_DICTIONARY) {
-    if (paddedJd.includes(` ${skill} `)) addCandidate(candidates, skill, "dictionary");
+    if (hasForm(jd, skill)) addCandidate(candidates, skill, "dictionary");
   }
 
-  const rawTokens = jobDescription.match(/[A-Za-z][A-Za-z0-9+#./-]*/g) || [];
+  const rawTokens = jobDescription.replace(UNICODE_DASHES, "-").match(/[A-Za-z][A-Za-z0-9+#./-]*/g) || [];
   for (const token of rawTokens) {
-    if (looksTechnical(token)) addCandidate(candidates, token, "pattern");
+    for (const { term, surface } of technicalTerms(token)) addCandidate(candidates, term, "pattern", surface);
   }
 
   for (const phrase of extractPhraseTerms(jobDescription)) {
@@ -331,17 +790,16 @@ function extractJdTerms(
     const norm = trimTermEdges(normalize(keyword));
     if (!norm) continue;
     const words = norm.split(" ");
-    const verified =
-      paddedJd.includes(` ${norm} `) ||
-      (words.length > 1 && words.every((w) => paddedJd.includes(` ${w} `)));
+    const verified = hasForm(jd, norm) || (words.length > 1 && words.every((w) => hasForm(jd, w)));
     if (verified) addCandidate(candidates, norm, "extracted");
   }
 
-  const lines = splitLines(jobDescription);
-  const requirementText = padded(
-    lines.filter((l) => REQUIREMENT_HINT.test(l) || /^[-*\u2022\u25cf\d]/.test(l)).join(" ")
-  );
-  const headText = padded(jobDescription.slice(0, Math.max(200, Math.floor(jobDescription.length * 0.15))));
+  const sections = classifySections(jobDescription);
+  const requiredText = paddedText(sections.required.join("\n"));
+  const preferredText = paddedText(sections.preferred.join("\n"));
+  const ignoredText = paddedText(sections.ignored.join("\n"));
+  const emphasisedText = paddedText(sections.emphasised.join("\n"));
+  const headText = paddedText(jobDescription.slice(0, Math.max(200, Math.floor(jobDescription.length * 0.15))));
   const roleTokens = new Set(tokenize(targetRole || "").filter((t) => !STOPWORDS.has(t)));
 
   // Collapse redundant phrasings onto the canonical concept. Without this,
@@ -363,24 +821,42 @@ function extractJdTerms(
     }
   }
 
-  const weights = new Map<string, number>();
-  for (const { term, sources } of candidates.values()) {
+  const concepts = dropSubsumed(mergeSynonyms(Array.from(candidates.values()), jd), jd);
+
+  const placed = concepts.map((concept) => ({
+    concept,
+    inRequired: concept.forms.some((f) => hasForm(requiredText, f)),
+    inPreferred: concept.forms.some((f) => hasForm(preferredText, f)),
+    inIgnored: concept.forms.some((f) => hasForm(ignoredText, f)),
+  }));
+  const boilerplateOnly = placed.filter((p) => !p.inRequired && !p.inPreferred && p.inIgnored).length;
+  // More requirements "only in boilerplate" than anywhere else means a requirements heading
+  // this parser did not recognise was swallowed by a company section: stop trusting it.
+  const trustIgnored = boilerplateOnly <= placed.length - boilerplateOnly;
+
+  const scored: { term: string; info: JdTerm; occurrences: number }[] = [];
+  for (const { concept, inRequired, inPreferred, inIgnored } of placed) {
+    // Named only in the company blurb ("KPMG Overview"): not a requirement of the job.
+    if (trustIgnored && !inRequired && !inPreferred && inIgnored) continue;
+    const tier: RequirementTier = inRequired || !inPreferred ? "required" : "preferred";
+
     let weight = 1;
-    if (requirementText.includes(` ${term} `)) weight += 1;
-    const occurrences = countOccurrences(paddedJd, term);
+    if (concept.forms.some((f) => hasForm(emphasisedText, f))) weight += 1;
+    const occurrences = concept.forms.reduce((sum, f) => sum + countForm(jd, f), 0);
     if (occurrences >= 3) weight += 0.5;
-    if (headText.includes(` ${term} `)) weight += 0.5;
-    if (term.split(" ").some((w) => roleTokens.has(w))) weight += 0.5;
-    if (sources.has("dictionary") || sources.has("extracted")) weight += 0.5;
-    weights.set(term, Math.min(3, weight));
+    if (concept.forms.some((f) => hasForm(headText, f))) weight += 0.5;
+    if (concept.forms.some((f) => f.split(" ").some((w) => roleTokens.has(w)))) weight += 0.5;
+    if (concept.sources.has("dictionary") || concept.sources.has("extracted")) weight += 0.5;
+    weight = Math.min(3, weight);
+    if (tier === "preferred") weight *= PREFERRED_WEIGHT;
+    scored.push({ term: concept.term, info: { weight, tier }, occurrences });
   }
 
-  // Keep the strongest signals; a 200-term list dilutes every individual miss.
-  const ranked = Array.from(weights.entries()).sort((a, b) => {
-    if (b[1] !== a[1]) return b[1] - a[1];
-    return a[0].localeCompare(b[0]);
-  });
-  return new Map(ranked.slice(0, 45));
+  // Strongest first; among equals, the more often the posting repeats a term the more it matters.
+  scored.sort((a, b) => b.info.weight - a.info.weight || b.occurrences - a.occurrences || a.term.localeCompare(b.term));
+  const required = scored.filter((s) => s.info.tier === "required").slice(0, MAX_REQUIRED_TERMS);
+  const preferred = scored.filter((s) => s.info.tier === "preferred").slice(0, MAX_PREFERRED_TERMS);
+  return new Map([...required, ...preferred].map((s) => [s.term, s.info] as [string, JdTerm]));
 }
 
 function countOccurrences(paddedText: string, term: string): number {
@@ -394,15 +870,27 @@ function countOccurrences(paddedText: string, term: string): number {
   return count;
 }
 
+/** Plurals of short forms that are other words: "CIS benchmarks" is not CI, "its" is not IT. */
+const PLURAL_COLLISIONS = new Set(["cis", "ads", "drs", "has", "arms", "its", "ins", "ons", "ups", "as", "is", "us"]);
+
 function variantsOf(term: string): string[] {
   const variants = new Set<string>([term]);
   for (const alias of ALIAS_LOOKUP.get(term) || []) variants.add(alias);
   for (const base of Array.from(variants)) {
-    if (base.endsWith("s")) variants.add(base.slice(0, -1));
-    else variants.add(`${base}s`);
+    // "ads", "drs": derived forms of an ambiguous short form are only ordinary words.
+    if (CASE_SENSITIVE_FORMS.has(base)) continue;
+    const words = base.split(" ");
+    const last = words[words.length - 1];
+    if (base.endsWith("s")) {
+      // Short acronyms ending in "s" are not plurals: VMSS is not "VMs", LAPS is not "lap", AD DS is not "ad d".
+      if (last.length > 4) variants.add(base.slice(0, -1));
+    } else if (!PLURAL_COLLISIONS.has(`${base}s`)) {
+      variants.add(`${base}s`);
+    }
     if (base.endsWith("y")) variants.add(`${base.slice(0, -1)}ies`);
     if (base.includes("-")) variants.add(base.replace(/-/g, " "));
-    if (base.includes(" ")) variants.add(base.replace(/ /g, ""));
+    // "sqlserver", but never "adds" from "ad ds": joined short forms read as ordinary words.
+    if (words.length > 1 && words.every((w) => w.length >= 3)) variants.add(base.replace(/ /g, ""));
   }
   return Array.from(variants).filter((v) => v.length >= 2);
 }
@@ -435,14 +923,43 @@ function wordPresent(word: string, paddedCorpus: string): boolean {
   return new RegExp(`\\s${stem}[a-z]{0,5}\\s`).test(paddedCorpus);
 }
 
+/** A resume's text, prepared once for every requirement it is checked against. */
+interface Corpus {
+  text: PaddedText;
+  /** Tokens written in capitals ("AD", "DR"), for short forms that are also ordinary words. */
+  upper: Set<string>;
+}
+
+function makeCorpus(raw: string): Corpus {
+  const upper = new Set<string>();
+  for (const token of String(raw || "").match(/[A-Za-z0-9]+/g) || []) {
+    if (/[A-Z]/.test(token) && token === token.toUpperCase()) upper.add(token.toLowerCase());
+  }
+  return { text: paddedText(raw), upper };
+}
+
+function corpusHas(corpus: Corpus, form: string): boolean {
+  if (CASE_SENSITIVE_FORMS.has(form)) return corpus.upper.has(form);
+  return hasForm(corpus.text, form);
+}
+
+function wordEvidenced(word: string, corpus: Corpus): boolean {
+  if (CASE_SENSITIVE_FORMS.has(word)) return corpus.upper.has(word);
+  return wordPresent(word, corpus.text.plain) || wordPresent(word, corpus.text.dehyphen);
+}
+
 /** 1 = present verbatim (or via alias/word form), 0.5 = all words present but not adjacent, 0 = absent. */
-function termCredit(term: string, paddedCorpus: string): number {
-  for (const variant of variantsOf(term)) {
-    if (paddedCorpus.includes(` ${variant} `)) return 1;
+function termCredit(term: string, corpus: Corpus): number {
+  const variants = variantsOf(term);
+  for (const variant of variants) {
+    if (corpusHas(corpus, variant)) return 1;
+  }
+  // Word forms of single-word synonyms too: "monitoring" (observability) is evidenced by "Azure Monitor".
+  for (const variant of variants) {
+    if (!variant.includes(" ") && wordEvidenced(variant, corpus)) return 1;
   }
   const words = term.split(" ").filter((w) => !STOPWORDS.has(w));
-  if (words.length === 1) return wordPresent(words[0], paddedCorpus) ? 1 : 0;
-  if (words.length > 1 && words.every((w) => wordPresent(w, paddedCorpus))) return 0.5;
+  if (words.length > 1 && words.every((w) => wordEvidenced(w, corpus))) return 0.5;
   return 0;
 }
 
@@ -604,23 +1121,39 @@ interface CoverageOutcome {
   matched: string[];
   partial: string[];
   missing: string[];
+  required: TierCoverage;
+  preferred: TierCoverage;
 }
 
-function coverage(terms: Map<string, number>, corpus: string): CoverageOutcome {
-  const paddedCorpus = padded(corpus);
+function emptyTier(): TierCoverage {
+  return { total: 0, matched: [], partial: [], missing: [] };
+}
+
+function coverage(terms: JdTerms, rawCorpus: string): CoverageOutcome {
+  const corpus = makeCorpus(rawCorpus);
   let earned = 0;
   let total = 0;
   const matched: string[] = [];
   const partial: string[] = [];
   const missing: string[] = [];
+  const tiers: Record<RequirementTier, TierCoverage> = { required: emptyTier(), preferred: emptyTier() };
 
-  for (const [term, weight] of terms) {
+  for (const [term, { weight, tier }] of terms) {
     total += weight;
-    const credit = termCredit(term, paddedCorpus);
+    const credit = termCredit(term, corpus);
     earned += weight * credit;
-    if (credit === 1) matched.push(term);
-    else if (credit > 0) partial.push(term);
-    else missing.push(term);
+    const bucket = tiers[tier];
+    bucket.total += 1;
+    if (credit === 1) {
+      matched.push(term);
+      bucket.matched.push(term);
+    } else if (credit > 0) {
+      partial.push(term);
+      bucket.partial.push(term);
+    } else {
+      missing.push(term);
+      bucket.missing.push(term);
+    }
   }
 
   return {
@@ -628,13 +1161,25 @@ function coverage(terms: Map<string, number>, corpus: string): CoverageOutcome {
     matched,
     partial,
     missing,
+    required: tiers.required,
+    preferred: tiers.preferred,
   };
 }
 
+/** The posting's title: its first line that is neither a heading ("About the job") nor a "Label: value" pair. */
+function jdTitleLine(jobDescription: string): string {
+  const lines = splitLines(jobDescription);
+  for (const line of lines.slice(0, 8)) {
+    if (headingKind(line)) continue;
+    if (/^[^:]{2,30}:\s/.test(line)) continue;
+    return line;
+  }
+  return lines[0] || "";
+}
+
 function roleAlignment(targetRole: string, jobDescription: string, roleText: string): number {
-  const jdTitleLine = splitLines(jobDescription)[0] || "";
   const tokens = new Set(
-    [...tokenize(targetRole || ""), ...tokenize(jdTitleLine).slice(0, 8)].filter(
+    [...tokenize(targetRole || ""), ...tokenize(jdTitleLine(jobDescription)).slice(0, 8)].filter(
       (t) => !STOPWORDS.has(t) && !NOISE_TERMS.has(t) && t.length > 2
     )
   );
@@ -647,22 +1192,81 @@ function roleAlignment(targetRole: string, jobDescription: string, roleText: str
   return hits / tokens.size;
 }
 
+/** Readiness bands. Not a pass mark: no ATS applies one universal cutoff. */
+const READINESS_BANDS: { level: ReadinessLevel; label: string; minScore: number; minRequired: number; guidance: string }[] = [
+  {
+    level: "strong",
+    label: "Strong match",
+    minScore: 70,
+    minRequired: 70,
+    guidance: "Covers most of what this posting requires.",
+  },
+  {
+    level: "good",
+    label: "Good match",
+    minScore: 55,
+    minRequired: 55,
+    guidance: "Covers the core of this posting. Close the remaining required gaps only with experience you really have.",
+  },
+  {
+    level: "partial",
+    label: "Partial match",
+    minScore: 40,
+    minRequired: 0,
+    guidance:
+      "Several required skills are not evidenced. If you have them, add them to your master resume or brain dump and re-run.",
+  },
+  {
+    level: "low",
+    label: "Low match",
+    minScore: 0,
+    minRequired: 0,
+    guidance: "Most required skills are not evidenced - this posting may not be a close fit for this resume.",
+  },
+];
+
+function readinessFor(score: number, required: TierCoverage): MatchReadiness {
+  const requiredCoverage =
+    required.total > 0
+      ? Math.round(((required.matched.length + 0.5 * required.partial.length) / required.total) * 100)
+      : null;
+  const requiredBar = requiredCoverage ?? score;
+  const band =
+    READINESS_BANDS.find((b) => score >= b.minScore && requiredBar >= b.minRequired) ||
+    READINESS_BANDS[READINESS_BANDS.length - 1];
+  return { level: band.level, label: band.label, required_coverage: requiredCoverage, guidance: band.guidance };
+}
+
 function buildBreakdown(components: ScoreComponent[], cov: CoverageOutcome): MatchScoreBreakdown {
   const totalWeight = components.reduce((sum, c) => sum + c.weight, 0);
   const raw = totalWeight > 0
     ? components.reduce((sum, c) => sum + c.weight * c.score, 0) / totalWeight
     : 0;
+  const score = Math.max(5, Math.min(99, Math.round(raw * 100)));
   return {
-    score: Math.max(5, Math.min(99, Math.round(raw * 100))),
+    score,
     components,
     matched: cov.matched,
     partial: cov.partial,
     missing: cov.missing,
+    required: cov.required,
+    preferred: cov.preferred,
+    readiness: readinessFor(score, cov.required),
   };
 }
 
 function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+function coverageDetail(cov: CoverageOutcome): string {
+  const required = `${cov.required.matched.length} of ${cov.required.total} required skills matched`;
+  const partial = cov.required.partial.length > 0 ? ` (+${cov.required.partial.length} partial)` : "";
+  const preferred =
+    cov.preferred.total > 0
+      ? `; ${cov.preferred.matched.length} of ${cov.preferred.total} nice-to-haves (each counts half)`
+      : "";
+  return `${required}${partial}${preferred}`;
 }
 
 /**
@@ -671,7 +1275,7 @@ function pct(value: number): string {
  * and a match score are produced by identical weighting and are comparable.
  */
 function scoreDocument(params: {
-  terms: Map<string, number>;
+  terms: JdTerms;
   fullText: string;
   evidenceText: string;
   roleText: string;
@@ -692,7 +1296,7 @@ function scoreDocument(params: {
       label: "JD requirement coverage",
       weight: 0.5,
       score: cov.score,
-      detail: `${cov.matched.length} of ${terms.size} weighted requirements matched (${cov.partial.length} partial)`,
+      detail: coverageDetail(cov),
     },
     {
       id: "evidence_depth",
@@ -794,9 +1398,10 @@ export function computeMatchScores(input: MatchScoreInput): MatchScoreResult | n
     baseline_score: baseline.score,
     ats_keywords_from_jd: Array.from(terms.keys()),
     ats_keywords_added_to_resume: addedKeywords,
-    keyword_gap: optimizedScored.cov.missing,
+    // Required gaps first: they are the ones worth closing.
+    keyword_gap: [...optimizedScored.cov.required.missing, ...optimizedScored.cov.preferred.missing],
     score_breakdown: {
-      method: "deterministic-jd-coverage-v1",
+      method: "deterministic-jd-coverage-v2",
       jd_keywords_evaluated: terms.size,
       required_years: needYears,
       candidate_years: haveYears,
