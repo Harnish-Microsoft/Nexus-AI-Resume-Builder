@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { pipelineCache } from './cacheUtility';
+import { computeBulletBudgets } from "../src/lib/bulletBudget";
 
 /**
  * Token Optimization Strategy
@@ -253,87 +254,6 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   }
 }
 
-const MONTHS: Record<string, number> = {
-  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-};
-
-/**
- * Best-effort parse of one endpoint of a duration string into a Date.
- * Handles "Jan 2024", "January 2024", "01/2024", "2024-01" and bare "2024".
- * Returns null when nothing recognisable is found.
- */
-function parseDurationEndpoint(part: string, isEnd: boolean): Date | null {
-  const s = part.trim().toLowerCase();
-  if (!s) return null;
-  if (/present|current|now|till date|to date|ongoing/.test(s)) return new Date();
-
-  const monthName = s.match(/([a-z]{3,9})\.?\s*,?\s*(\d{4})/);
-  if (monthName && MONTHS[monthName[1].slice(0, 3)] !== undefined) {
-    return new Date(Number(monthName[2]), MONTHS[monthName[1].slice(0, 3)], 1);
-  }
-
-  const numeric = s.match(/(\d{1,2})[\/\-.](\d{4})/);
-  if (numeric) {
-    const m = Number(numeric[1]);
-    if (m >= 1 && m <= 12) return new Date(Number(numeric[2]), m - 1, 1);
-  }
-
-  const isoish = s.match(/(\d{4})[\/\-.](\d{1,2})/);
-  if (isoish) {
-    const m = Number(isoish[2]);
-    if (m >= 1 && m <= 12) return new Date(Number(isoish[1]), m - 1, 1);
-  }
-
-  const yearOnly = s.match(/\b(19|20)\d{2}\b/);
-  if (yearOnly) {
-    const y = Number(yearOnly[0]);
-    return isEnd ? new Date(y, 11, 31) : new Date(y, 0, 1);
-  }
-
-  return null;
-}
-
-/**
- * Tenure of a role in whole months, or null when the duration cannot be parsed.
- */
-export function parseTenureMonths(duration: string): number | null {
-  if (!duration || typeof duration !== "string") return null;
-
-  const parts = duration.split(/\s*(?:-|–|—|\bto\b|\buntil\b)\s*/i).filter(Boolean);
-  if (parts.length < 2) return null;
-
-  const start = parseDurationEndpoint(parts[0], false);
-  const end = parseDurationEndpoint(parts[parts.length - 1], true);
-  if (!start || !end || end < start) return null;
-
-  const months =
-    (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
-  return Math.max(1, months + 1);
-}
-
-/**
- * Bullet allowance for a role, driven by tenure first and recency second.
- *
- * Tenure dominates deliberately: a long bullet list under a very short stint
- * reads as padding and undermines the credibility of the whole document.
- * Returns null when the duration cannot be parsed, letting the model fall back
- * to the prompt's own heuristics rather than acting on a bad guess.
- */
-export function suggestBulletBudget(duration: string, isMostRecent: boolean): string | null {
-  const months = parseTenureMonths(duration);
-  if (months === null) return null;
-
-  if (months <= 2) return "1";
-  if (months <= 6) return "1-2";
-  if (months <= 12) return "2-3";
-
-  const endsNow = /present|current|now|till date|to date|ongoing/i.test(duration);
-  if (isMostRecent || endsNow) return months >= 24 ? "6-7" : "4-5";
-  if (months >= 24) return "3-4";
-  return "2-3";
-}
-
 export function trimContentForAI(resumeData: any, keywords: string[]) {
   // Remove duplicates from skills and achievements
   const seenSkills = new Set<string>();
@@ -344,36 +264,50 @@ export function trimContentForAI(resumeData: any, keywords: string[]) {
     return true;
   });
 
+  const roles = (Array.isArray(resumeData.experience) ? resumeData.experience : []).map(
+    (exp: any, index: number) => {
+      const seenBullets = new Set<string>();
+      return {
+        id: `role_${index + 1}`,
+        role: exp?.role,
+        company: exp?.company,
+        duration: exp?.duration,
+        // Remove duplicate bullets and provide more context for AI selection
+        original_bullets: (Array.isArray(exp?.achievements) ? exp.achievements : [])
+          .filter((a: unknown): a is string => typeof a === "string" && a.trim().length > 0)
+          .filter((a: string) => {
+            const normalized = a.toLowerCase().trim();
+            if (seenBullets.has(normalized)) return false;
+            seenBullets.add(normalized);
+            return true;
+          })
+          .slice(0, 50),
+      };
+    }
+  );
+
+  // Computed here rather than left to the model, which is unreliable at date
+  // arithmetic, and over the whole list so recency follows the real end dates.
+  // Omitted entirely when the duration is unparseable.
+  const budgets = computeBulletBudgets(roles);
+  const experience = roles.map((role: any, index: number) => {
+    const budget = budgets[index];
+    const { original_bullets, ...rest } = role;
+    return {
+      ...rest,
+      ...(budget.tenureMonths !== null ? { tenure_months: budget.tenureMonths } : {}),
+      ...(budget.label !== null ? { bullet_budget: budget.label } : {}),
+      original_bullets,
+    };
+  });
+
     // Ensure we don't exceed reasonable limits but provide enough for Step 3
     return {
       personal_info: resumeData.personal_info || {},
       // Trim summary to reasonable length for prompt safety
       summary: resumeData.summary?.substring(0, 1200),
       skills: uniqueSkills.slice(0, 100),
-      experience: (resumeData.experience || []).map((exp: any, index: number) => {
-        const seenBullets = new Set<string>();
-        const tenureMonths = parseTenureMonths(exp.duration);
-        const bulletBudget = suggestBulletBudget(exp.duration, index === 0);
-        return {
-          id: `role_${index + 1}`,
-          role: exp.role,
-          company: exp.company,
-          duration: exp.duration,
-          // Computed here rather than left to the model, which is unreliable at
-          // date arithmetic. Omitted entirely when the duration is unparseable.
-          ...(tenureMonths !== null ? { tenure_months: tenureMonths } : {}),
-          ...(bulletBudget !== null ? { bullet_budget: bulletBudget } : {}),
-          // Remove duplicate bullets and provide more context for AI selection
-          original_bullets: (exp.achievements || [])
-            .filter((a: string) => {
-              const normalized = a.toLowerCase().trim();
-              if (seenBullets.has(normalized)) return false;
-              seenBullets.add(normalized);
-              return true;
-            })
-            .slice(0, 50)
-        };
-      }),
+      experience,
       projects: (resumeData.projects || []).slice(0, 20),
       education: resumeData.education,
       certifications: resumeData.certifications,

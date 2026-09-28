@@ -18,10 +18,14 @@ import { renderResumeToHTML } from "./server/resumeTemplate.ts";
 import { pipelineCache } from "./server/cacheUtility";
 import { calculateCost, UsageLog } from "./server/analytics";
 import { runAgents } from "./server/agents";
-import { generatePerRole } from "./server/roleGenerator";
+import { generatePerRole, selectStarStories } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
 import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
+import { applyMatchScores } from "./src/lib/matchScore";
+import { applyImpactAudit } from "./src/lib/impactScore";
+import { computeBulletBudgets, enforceBulletBudgets } from "./src/lib/bulletBudget";
+import { audienceHeadline, buildAudienceBrief, normalizeAudienceMix } from "./src/lib/audienceProfiles";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
@@ -112,6 +116,55 @@ async function getApiKeys(idToken: string) {
       console.warn("[Server] Token verification or key fetch failed, falling back to system keys:", error instanceof Error ? error.message : String(error));
       return null;
     }
+}
+
+/**
+ * Reference material from the caller's OTHER master resumes, scoped to the caller.
+ *
+ * These previously came from a top-level `master_resumes` collection read with
+ * no user filter, so on a shared Firestore every optimization was seeded with
+ * other people's resumes. A user's own resumes are synced to their user
+ * document by the client (App.tsx syncAllData), which is the correct source.
+ *
+ * The resume currently being rewritten is excluded: it is already supplied as
+ * the input document, and re-supplying it as reference material would sit under
+ * an instruction telling the model not to reuse its facts.
+ */
+const MAX_MASTER_RESUME_REFERENCES = 5;
+
+async function getUserMasterResumes(idToken: string, excludeResumeText = ""): Promise<any[]> {
+  if (!idToken || idToken === "SYSTEM_PIPELINE" || idToken === "undefined" || idToken === "null") {
+    return [];
+  }
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const snapshot = await db.collection("users").doc(decodedToken.uid).get();
+    const stored = snapshot.exists ? snapshot.data()?.masterResumes : null;
+    if (!Array.isArray(stored)) return [];
+
+    const excluded = String(excludeResumeText || "").trim();
+    const references = stored
+      .filter((entry: any) => {
+        if (!entry) return false;
+        if (!excluded) return true;
+        try {
+          return JSON.stringify(entry.data ?? entry, null, 2).trim() !== excluded;
+        } catch {
+          return true;
+        }
+      })
+      .slice(0, MAX_MASTER_RESUME_REFERENCES)
+      .map((entry: any) => (entry.data ? { name: entry.name, data: entry.data } : entry));
+
+    console.log(`[Pipeline] Using ${references.length} reference resumes for user ${decodedToken.uid}.`);
+    return references;
+  } catch (err) {
+    console.warn(
+      "[Pipeline] Failed to fetch user master resumes, proceeding without them:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return [];
+  }
 }
 
 // Function to log usage to Firestore
@@ -212,6 +265,67 @@ function decrypt(text: string) {
 
   console.error("Decryption Error: DECRYPTION_FAILED");
   throw new Error("DECRYPTION_FAILED: The encryption key has changed or the data is corrupted. Please re-save your API keys in your profile.");
+}
+
+/**
+ * Deterministic post-processing shared by every generation branch (OpenAI
+ * premium, Gemini split-gen, and the fallbacks) before the response is cached:
+ *
+ *   1. enforce each role's tenure-based bullet budget (trims, never pads),
+ *   2. replace the model's guessed match_score/baseline_score with values
+ *      computed from the real job description and the real resume,
+ *   3. run the impact audit, tracing every figure back to the candidate's own
+ *      material.
+ *
+ * Budgets run first so the scores and the audit describe the document the
+ * candidate actually receives. The source text deliberately excludes the
+ * reference resumes so that the client, which re-runs the same steps, agrees.
+ */
+function finalizeResumeResult(
+  result: any,
+  params: {
+    jobDescription: string;
+    originalResumeText: string;
+    targetRole?: string;
+    jdKeywords?: string[];
+    brainDump?: string;
+    customPrompt?: string;
+  }
+): any {
+  if (!result || typeof result.result !== "string") return result;
+  try {
+    const parsed = JSON.parse(result.result);
+    const { brainDump, customPrompt, ...scoreParams } = params;
+    const sourceText = [params.originalResumeText, brainDump, customPrompt]
+      .filter((part) => typeof part === "string" && part.trim().length > 0)
+      .join("\n\n");
+
+    const budget = enforceBulletBudgets(parsed, { sourceText });
+    applyMatchScores(parsed, scoreParams);
+    applyImpactAudit(parsed, { sourceText });
+    if (budget) {
+      const outside = budget.roles.filter((r) => r.status === "trimmed" || r.status === "under");
+      console.log(
+        `[Budget] ${budget.roles.length} roles, ${budget.trimmed} bullet(s) trimmed, compliant=${budget.compliant}` +
+          (outside.length > 0
+            ? ` (${outside.map((r) => `${r.role || "role"}: ${r.delivered}/${r.budget ?? `max ${r.max}`} ${r.status}`).join("; ")})`
+            : "")
+      );
+    }
+    console.log(
+      `[Scoring] baseline=${parsed.baseline_score ?? "n/a"} match=${parsed.match_score ?? "n/a"} ` +
+        `(${parsed.score_breakdown?.jd_keywords_evaluated ?? 0} JD requirements evaluated) ` +
+        `impact=${parsed.impact_audit?.score ?? "n/a"} ` +
+        `(${parsed.impact_audit?.bullets_evaluated ?? 0} bullets, ` +
+        `${parsed.impact_audit?.findings?.length ?? 0} findings, ` +
+        `${parsed.impact_audit?.unverified_figure_bullets ?? 0} with unverified figures, ` +
+        `${parsed.impact_audit?.star_dropped ?? 0} STAR dropped)`
+    );
+    return { ...result, result: JSON.stringify(parsed) };
+  } catch (e: any) {
+    console.warn("[Scoring] Could not finalize the generated resume:", e?.message || e);
+    return result;
+  }
 }
 
 async function startServer() {
@@ -751,6 +865,7 @@ async function startServer() {
       targetRole, 
       mode, 
       audience, 
+      audienceMix,
       customPrompt, 
       pipelineType,
       targetCompany,
@@ -762,21 +877,22 @@ async function startServer() {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // Every selected reader is written for in ONE run: the weighted mix becomes a
+    // brief in each prompt. The brief is rebuilt here from the validated mix, never
+    // taken from the client as prompt text.
+    const blend = normalizeAudienceMix(audienceMix);
+    const audienceText = blend ? audienceHeadline(blend) : audience;
+    const documentAudienceBrief = buildAudienceBrief(blend, "document");
+    const roleAudienceBrief = buildAudienceBrief(blend, "role");
+
     try {
       // 1. Fetch keys securely from Firestore
       const keys = await getApiKeys(idToken);
       let geminiKey = keys?.gemini || "";
       let openaiKey = keys?.openai || "";
       
-      // 1.1 Fetch Master Resumes from Firestore
-      let masterResumes: any[] = [];
-      try {
-        const snapshot = await db.collection("master_resumes").get();
-        masterResumes = snapshot.docs.map(doc => doc.data());
-        console.log(`[Pipeline] Fetched ${masterResumes.length} master resumes.`);
-      } catch (err) {
-        console.warn("[Pipeline] Failed to fetch master resumes, proceeding without them:", err);
-      }
+      // 1.1 Fetch this user's own master resumes, minus the one being rewritten
+      const masterResumes = await getUserMasterResumes(idToken, resumeText);
       
       // Only fall back to system key if NO identity is provided (Guest Mode)
       if (!idToken) {
@@ -824,7 +940,8 @@ async function startServer() {
         jobDescription: jobDescription,
         targetRole, 
         mode, 
-        audience, 
+        audience: audienceText, 
+        audienceMix: blend ? blend.entries : null,
         customPrompt,
         pipelineType: selectedPipeline,
         hasGemini: !!geminiKey,
@@ -882,7 +999,8 @@ async function startServer() {
       const roleCount = optimizedInput.experience.length;
       const finalPrompt = buildResumeGenerationPrompt({
         targetRole,
-        audience,
+        audience: audienceText,
+        audienceBrief: documentAudienceBrief,
         mode,
         targetCompany,
         customPrompt,
@@ -890,6 +1008,7 @@ async function startServer() {
         roleCount,
         jdKeywords: optimizedInput.jd_keywords,
         masterResumes,
+        bulletBudgets: computeBulletBudgets(optimizedInput.experience),
         // The extracted keyword list alone is too lossy to differentiate two job
         // descriptions for similar roles, which caused near-identical output across
         // different JDs. The model needs the actual posting to tailor against.
@@ -1012,9 +1131,10 @@ async function startServer() {
           Optimize the meta-sections of this resume for factual realism and believable operational ownership.
 
           Target Role: ${targetRole}.
-          Audience: ${audience}. Mode: ${mode}.
+          Audience: ${audienceText}. Mode: ${mode}.
           Keywords: ${optimizedInput.jd_keywords.join(', ')}.
           ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}` : ''}
+          ${documentAudienceBrief}
           
           INPUT DATA:
           ${JSON.stringify({
@@ -1036,6 +1156,7 @@ async function startServer() {
           6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
           7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
           8. COMPLETE DATA: You MUST process and include EVERY SINGLE section provided in the INPUT DATA. Do not omit any roles, projects, or certifications.
+          9. SCORING: Return "match_score" as null. JD-alignment scoring is computed deterministically by the platform from the real job description and the real resume - any number you guess is discarded. Populate "ats_keywords_from_jd" and "keyword_gap" only with terms that literally appear in the job description.
           
           OUTPUT JSON SCHEMA:
           {
@@ -1049,10 +1170,9 @@ async function startServer() {
             "ats_keywords_from_jd": [...],
             "ats_keywords_added_to_resume": [...],
             "keyword_gap": [...],
-            "match_score": 85,
+            "match_score": null,
             "improvement_notes": [...],
             "audience_alignment_notes": "...",
-            "star_stories": [...],
             "audit_report": { ... }
           }
         `;
@@ -1073,10 +1193,16 @@ async function startServer() {
             geminiKey, 
             targetCompany, 
             targetRole,
-            audience,
+            audienceText,
             mode,
             customPrompt,
-            brainDump
+            brainDump,
+            {
+              // Each role is tailored against the real posting, like the whole-document path.
+              jobDescription: Optimization.trimInput(jobDescription, 6000),
+              jdKeywords: optimizedInput.jd_keywords,
+              audienceBrief: roleAudienceBrief,
+            }
           )
         ]);
 
@@ -1088,11 +1214,16 @@ async function startServer() {
         
         // 3. Deduplicate and Score
         console.log("[Pipeline] Deduplicating and Scoring...");
-        const finalExperience = deduplicateAndScore(roleResults);
+        const finalExperience = deduplicateAndScore(
+          roleResults.map(({ star_stories, generation, ...role }) => role)
+        );
 
         const finalResult = {
           ...metaData,
-          experience: finalExperience
+          experience: finalExperience,
+          // Drafted per role, next to the evidence and the bullets they expand.
+          // The meta call never sees the bullets, so it cannot write stories that link.
+          star_stories: selectStarStories(roleResults),
         };
 
         // STEP 4: Agentic Review (Multi-Agent Refinement)
@@ -1125,8 +1256,16 @@ async function startServer() {
       }
     }
     
-    // STEP 5: Cache Result (Merged/Unified)
+    // STEP 5: Deterministic budget, scoring and audit, then cache (Merged/Unified)
     if (result) {
+      result = finalizeResumeResult(result, {
+        jobDescription,
+        originalResumeText: resumeText,
+        targetRole,
+        jdKeywords,
+        brainDump,
+        customPrompt,
+      });
       Optimization.saveToCache(cacheKey, result);
       res.json(result);
     }

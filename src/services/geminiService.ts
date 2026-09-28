@@ -7,6 +7,19 @@ import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
+import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
+import { applyImpactAudit, ImpactScoreResult } from "../lib/impactScore";
+import { computeBulletBudgets, enforceBulletBudgets } from "../lib/bulletBudget";
+import type { BulletBudget, BulletBudgetReport } from "../lib/bulletBudget";
+import {
+  AUDIENCE_PROFILES,
+  applyAudienceCoverage,
+  audienceHeadline,
+  buildAudienceBrief,
+  keywordAudienceMix,
+  normalizeAudienceMix,
+} from "../lib/audienceProfiles";
+import type { AudienceCoverageReport, AudienceMix } from "../lib/audienceProfiles";
 
 export interface OptimizationResult {
   personal_info: {
@@ -38,11 +51,19 @@ export interface OptimizationResult {
   keyword_gap: string[];
   match_score: number;
   baseline_score: number;
+  /** How match_score and baseline_score were derived. Absent when the JD is too thin to score. */
+  score_breakdown?: MatchScoreResult["score_breakdown"];
   improvement_notes: string[];
   audience_alignment_notes: string;
   why_this_job?: string;
   rejection_reasons?: string[];
   star_stories?: StarStory[];
+  /** Deterministic bullet-quality audit. Absent when there are too few bullets to score. */
+  impact_audit?: ImpactScoreResult;
+  /** Per-role tenure budget and what enforcement delivered against it. */
+  bullet_budget_report?: BulletBudgetReport;
+  /** The blended readers and how much of what each scans for the final resume evidences. */
+  audience_coverage?: AudienceCoverageReport;
   audit_report?: AuditReport;
   _usage?: {
     promptTokenCount: number;
@@ -510,6 +531,58 @@ function reconcileExperience(resumeText: string, aiExperience: any): any[] {
   return output;
 }
 
+/**
+ * The candidate's own material, against which every generated figure is traced.
+ * Must match finalizeResumeResult in server.ts so both sides reach the same audit.
+ */
+function candidateSourceText(resumeText: string, brainDump?: string, customPrompt?: string): string {
+  return [resumeText, brainDump, customPrompt]
+    .filter((part) => typeof part === "string" && part.trim().length > 0)
+    .join("\n\n");
+}
+
+/** Budgets for a JSON master resume; undefined for free-form text, whose roles are unknown. */
+function budgetsFromResumeText(resumeText: string): BulletBudget[] | undefined {
+  try {
+    const source = JSON.parse(resumeText);
+    const roles = source?.experience || source?.work_experience;
+    return Array.isArray(roles) && roles.length > 0 ? computeBulletBudgets(roles) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Deterministic post-processing on the FINAL document, in the same order as the
+ * server: bullet budgets first, so the scores and the audit describe what the
+ * candidate actually receives. Every step is idempotent, so re-running it on a
+ * server result that was already processed is safe.
+ */
+function finalizeResume(
+  parsed: any,
+  params: {
+    resumeText: string;
+    jobDescription: string;
+    targetRole: string;
+    jdKeywords?: string[];
+    brainDump?: string;
+    customPrompt?: string;
+    audienceMix?: AudienceMix | null;
+  }
+): void {
+  const sourceText = candidateSourceText(params.resumeText, params.brainDump, params.customPrompt);
+  enforceBulletBudgets(parsed, { sourceText });
+  applyMatchScores(parsed, {
+    jobDescription: params.jobDescription,
+    originalResumeText: params.resumeText,
+    targetRole: params.targetRole,
+    jdKeywords: params.jdKeywords,
+  });
+  applyImpactAudit(parsed, { sourceText });
+  // Baseline is the resume alone: what each reader would have seen before optimization.
+  applyAudienceCoverage(parsed, params.audienceMix, { sourceText: params.resumeText });
+}
+
 export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
@@ -525,9 +598,14 @@ export async function optimizeResume(
   customPrompt?: string,
   pipelineType?: string,
   targetCompany?: string,
-  brainDump?: string
+  brainDump?: string,
+  audienceMix?: AudienceMix | null
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
+
+  // All selected readers are written for in this ONE run, as a weighted brief.
+  const blend = normalizeAudienceMix(audienceMix);
+  const audienceText = blend ? audienceHeadline(blend) : audience;
   
   // Cost-saving logic: If fastMode is enabled, prefer Gemini Flash even in Hybrid mode to reduce OpenAI costs
   let modelToUse = routedConfig.model;
@@ -561,7 +639,8 @@ export async function optimizeResume(
           jobDescription,
           targetRole,
           mode,
-          audience,
+          audience: audienceText,
+          audienceMix: blend,
           customPrompt,
           apiKey: config.openaiConfig.apiKey,
           pipelineType,
@@ -634,6 +713,20 @@ export async function optimizeResume(
           return obj;
         };
 
+        // Recompute against the FINAL document. The server already did this, but
+        // reconcileExperience above can restore roles the model dropped, and a
+        // cached server response may predate it. Every step is deterministic
+        // and idempotent, so recomputing is safe.
+        finalizeResume(parsed, {
+          resumeText,
+          jobDescription,
+          targetRole,
+          jdKeywords: parsed._intermediateData?.jdKeywords,
+          brainDump,
+          customPrompt,
+          audienceMix: blend,
+        });
+
         return fixTitle(parsed);
       }
     } catch (e) {
@@ -643,7 +736,8 @@ export async function optimizeResume(
 
   const prompt = buildResumeGenerationPrompt({
     targetRole,
-    audience,
+    audience: audienceText,
+    audienceBrief: buildAudienceBrief(blend, "document"),
     mode,
     targetCompany,
     customPrompt,
@@ -652,6 +746,9 @@ export async function optimizeResume(
     jobDescription,
     inputLabel: "SOURCE RESUME (raw text)",
     inputData: resumeText,
+    // Computed from the real dates when the master resume is structured; for
+    // free-form text the prompt derives them from the tiers instead.
+    bulletBudgets: budgetsFromResumeText(resumeText),
   });
 
   const maxRetries = 5;
@@ -672,14 +769,6 @@ export async function optimizeResume(
 
       try {
         const parsed = JSON.parse(resultText);
-        
-        // Ensure scores are present and numeric
-        if (typeof parsed.match_score !== 'number') {
-          parsed.match_score = parseInt(parsed.match_score) || 70;
-        }
-        if (typeof parsed.baseline_score !== 'number') {
-          parsed.baseline_score = parseInt(parsed.baseline_score) || 50;
-        }
 
         // Skills must be grouped into categories.
         let parsedSkills = parsed.skills || {};
@@ -712,6 +801,19 @@ export async function optimizeResume(
 
         // Guarantee no role was silently dropped to satisfy the page budget.
         parsed.experience = reconcileExperience(resumeText, parsed.experience);
+
+        // Budgets, scores and the audit are computed from the finished document,
+        // never taken from the model. Asking an LLM to score against a schema
+        // example just returns the example, which is why every resume used to
+        // report the same number.
+        finalizeResume(parsed, {
+          resumeText,
+          jobDescription,
+          targetRole,
+          brainDump,
+          customPrompt,
+          audienceMix: blend,
+        });
 
         if (data.usage) {
           parsed._usage = data.usage;
@@ -920,98 +1022,69 @@ export async function performSkillAssessment(
 }
 
 
-export async function analyzeBestAudiences(
+/**
+ * Auto-Select: the 1-3 readers who will decide this application, weighted and
+ * with a reason each, blended into one resume downstream. Falls back to a
+ * deterministic keyword match when the model is unavailable or returns nothing
+ * usable, so it always returns at least one reader.
+ */
+export async function analyzeAudienceMix(
   jobDescription: string,
   targetRole: string,
   config: RouterConfig,
   fastMode: boolean = false
-): Promise<string[]> {
+): Promise<AudienceMix> {
   const routedConfig = routeTask('multi_audience', config);
-  console.log('analyzeBestAudiences called', { jobDescription, targetRole });
-  
+
   let modelToUse = routedConfig.model;
   if (fastMode && routedConfig.engine === 'gemini') {
     modelToUse = 'gemini-3.6-flash';
   } else if (!modelToUse) {
     modelToUse = 'gemini-3.6-flash';
   }
+
+  const catalog = AUDIENCE_PROFILES
+    .map((profile) => `- ${profile.id}: ${profile.label} - ${profile.reader}`)
+    .join('\n');
+
   const prompt = `
-    Analyze the following Job Description and Target Role.
-    Select the MOST SPECIFIC and appropriate audiences from the following list that match the actual seniority and technical focus of the role:
-    - microsoft (If Azure/Microsoft stack is primary)
-    - leadership (If people management is mentioned)
-    - cloud-architect (For strategy/design roles)
-    - solution-architect (For client-facing/solution roles)
-    - consulting (For agency/consultancy roles)
-    - cloud-eng-mgr (Engineering management)
-    - infra-mgr (Infrastructure management)
-    - assoc-director (Junior leadership)
-    - director-mid (Middle management / Head of Cloud for mid-size)
-    - director-large (Head of Cloud for large enterprise)
-    - principal-architect (Highest level individual contributor)
-    - cto-vp (Executive leadership)
-    - digital-transform (Strategic transformation)
-    - platform-dir (Platform engineering leadership)
-    
-    CRITICAL: 
-    - Do NOT default to "Director" or "Head" roles if the JD is for an Engineer, Senior Engineer, or Architect.
-    - If the role is an Individual Contributor (IC), prefer "cloud-architect", "solution-architect", or "principal-architect".
-    - Only suggest a CUSTOM audience name if NONE of the above IDs fit at all.
-    
-    Return ONLY a JSON array of the IDs. Example: ["microsoft", "cloud-architect"]
-    
-    JOB DESCRIPTION: ${jobDescription}
+    Choose the readers whose judgment will decide this application, from the job description and target role below.
+    One resume will be written for the blend you choose.
+
+    READERS (use these ids):
+    ${catalog}
+
+    RULES:
+    - Return 1 to 3 readers. The first, with the highest weight, is the PRIMARY reader: the person who most shapes the hiring decision for this posting. Add a secondary reader only when the posting clearly asks for that perspective too.
+    - Weights are integers that sum to 100.
+    - Match the real seniority of the role. Do NOT choose manager, director, head, VP or CTO readers when the posting is for an individual contributor (engineer, senior engineer, architect); prefer cloud-architect, solution-architect or principal-architect for those.
+    - Choose "microsoft" only when the posting centres on Azure or the Microsoft stack.
+    - "reason": at most 20 words, citing what in the posting points at this reader.
+    - Use {"id": "custom", "label": "<reader title>"} only when none of the ids fit at all.
+
+    Return ONLY JSON, for example:
+    {"audiences": [{"id": "cloud-architect", "weight": 70, "reason": "Posting centres on landing zones and reference architectures"}, {"id": "microsoft", "weight": 30, "reason": "Azure-only estate with Entra ID and Intune"}]}
+
+    JOB DESCRIPTION: ${String(jobDescription || '').slice(0, 8000)}
     TARGET ROLE: ${targetRole}
   `;
-
-  const getKeywordFallback = () => {
-    const jd = jobDescription.toLowerCase();
-    const role = targetRole.toLowerCase();
-    const selected: string[] = [];
-
-    if (jd.includes('leadership') || jd.includes('manager') || jd.includes('director') || role.includes('lead') || role.includes('manager')) {
-      selected.push('leadership');
-    }
-    if (jd.includes('microsoft') || jd.includes('azure')) {
-      selected.push('microsoft');
-    }
-    if (jd.includes('cloud') && (jd.includes('architect') || role.includes('architect'))) {
-      selected.push('cloud-architect');
-    }
-    if (jd.includes('consulting') || jd.includes('client')) {
-      selected.push('consulting');
-    }
-    if (role.includes('director')) {
-      selected.push('director-mid');
-    }
-    if (role.includes('cto') || role.includes('vp')) {
-      selected.push('cto-vp');
-    }
-    if (jd.includes('platform')) {
-      selected.push('platform-dir');
-    }
-    
-    return selected.length > 0 ? selected : [targetRole];
-  };
 
   try {
     const data = await callAI(prompt, modelToUse, 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
-    const parsed = JSON.parse(resultText || '[]');
-    return Array.isArray(parsed) ? parsed : (parsed.audiences || [targetRole]);
+    const mix = normalizeAudienceMix(JSON.parse(resultText || 'null'), 'ai');
+    if (mix) return mix;
+    console.warn("Auto-audience selection returned no usable readers. Using keyword-based fallback.");
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
     const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
-    
     if (isQuotaError) {
       console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using keyword-based fallback.");
-      return getKeywordFallback();
     } else {
       console.error("Error analyzing best audiences:", errorMsg);
-      // Even for other errors, try keyword fallback to provide a better UX than just returning targetRole
-      return getKeywordFallback();
     }
   }
+  return keywordAudienceMix(jobDescription, targetRole);
 }
 
 

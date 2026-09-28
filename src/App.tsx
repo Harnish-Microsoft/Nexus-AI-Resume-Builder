@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import { 
   FileText, 
@@ -68,7 +68,7 @@ import { useResumeStore } from './store';
 import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeAudienceMix, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
@@ -105,6 +105,16 @@ import { TermsModal } from './components/TermsModal';
 import { formatCertification } from './lib/certifications';
 
 import defaultMasterResume from './services/master_resume.json';
+import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
+import {
+  BLENDED_RESULT_KEY,
+  CUSTOM_AUDIENCE_ID,
+  MAX_BLENDED_AUDIENCES,
+  audienceHeadline,
+  postingFingerprint,
+  resolveAudienceMix,
+  type AudienceMix,
+} from './lib/audienceProfiles';
 
 // Lazy load heavy components for better initial performance
 const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ default: m.CareerTools })));
@@ -386,12 +396,28 @@ export default function App() {
       return saved || 'default';
   });
 
+  // 'auto' lets Optimize pick the master resume that already scores highest
+  // against the JD. Any deliberate pick by the user flips this to 'manual' so
+  // their choice is never silently overridden.
+  const [resumeSelectionMode, setResumeSelectionMode] = useState<'auto' | 'manual'>(() => {
+      const saved = localStorage.getItem('resumeSelectionMode');
+      return saved === 'manual' ? 'manual' : 'auto';
+  });
+  const [autoSelection, setAutoSelection] = useState<ResumeRankingResult | null>(null);
+
+  const setResumeSelectionModePersisted = (mode: 'auto' | 'manual') => {
+    setResumeSelectionMode(mode);
+    localStorage.setItem('resumeSelectionMode', mode);
+  };
+
   const handleSetActiveResume = (id: string) => {
     setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === id })));
     setSelectedResumeId(id);
     const selected = masterResumes.find(r => r.id === id) || masterResumes[0];
     localStorage.setItem('selectedResumeId', id);
     setResumeText(JSON.stringify(selected.data, null, 2));
+    setResumeSelectionModePersisted('manual');
+    setAutoSelection(null);
   };
 
   const handleDuplicateResume = (id: string) => {
@@ -435,6 +461,15 @@ export default function App() {
   const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const [customAudience, setCustomAudience] = useState('');
+  // The last Auto-Select and the posting it was made for. Its weights and reasons describe
+  // that posting only, so they stop applying as soon as the job description changes.
+  const [audienceSuggestion, setAudienceSuggestion] = useState<{ mix: AudienceMix; posting: string } | null>(null);
+  // Selected readers in priority order (first = primary), blended into ONE resume.
+  const audienceMix = useMemo(() => {
+    const suggested =
+      audienceSuggestion && audienceSuggestion.posting === postingFingerprint(jobDescription) ? audienceSuggestion.mix : null;
+    return resolveAudienceMix(selectedAudiences, { customLabel: customAudience, suggested });
+  }, [selectedAudiences, customAudience, audienceSuggestion, jobDescription]);
   const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement>(null);
@@ -1300,6 +1335,8 @@ export default function App() {
         results,
         activeAudience,
         selectedAudiences,
+        customAudience,
+        audienceSuggestion,
         formatting: formattingState
       }
     };
@@ -2008,6 +2045,9 @@ export default function App() {
       setActiveAudience(Object.keys(version.data.results)[0]);
     }
     if (version.data.selectedAudiences) setSelectedAudiences(version.data.selectedAudiences);
+    // Older versions predate blending: without a stored suggestion the blend is treated as hand-picked.
+    setAudienceSuggestion(version.data.audienceSuggestion || null);
+    if (typeof version.data.customAudience === 'string') setCustomAudience(version.data.customAudience);
     if (version.data.targetRole) setTargetRole(version.data.targetRole);
     if (version.data.companyName) setCompanyName(version.data.companyName);
     if (version.data.formatting) {
@@ -2017,13 +2057,26 @@ export default function App() {
     navigate('/build');
   };
 
+  const applyAudienceMix = (mix: AudienceMix, forJobDescription: string) => {
+    const custom = mix.entries.find(entry => entry.id === CUSTOM_AUDIENCE_ID);
+    if (custom) setCustomAudience(custom.label);
+    setSelectedAudiences(mix.entries.map(entry => entry.id));
+    setAudienceSuggestion({ mix, posting: postingFingerprint(forJobDescription) });
+  };
+
   const handleAutoSelectAudiences = async () => {
-    if (!jobDescription) return;
+    if (!jobDescription) {
+      showToast('Paste a job description first - the audience is chosen from it.', 'info');
+      return;
+    }
     setIsAutoSelectingAudiences(true);
     try {
-      const bestAudiences = await analyzeBestAudiences(jobDescription, targetRole, getRouterConfig());
-      setSelectedAudiences(bestAudiences);
-      showToast('Audience auto-selected!', 'success');
+      const mix = await analyzeAudienceMix(jobDescription, targetRole, getRouterConfig());
+      applyAudienceMix(mix, jobDescription);
+      showToast(
+        `${mix.source === 'ai' ? 'Blending' : 'Blending (keyword match - AI unavailable)'}: ${audienceHeadline(mix)}`,
+        'success'
+      );
     } catch (e) {
       console.error(e);
       showToast('Failed to auto-select audience', 'error');
@@ -2033,9 +2086,19 @@ export default function App() {
   };
 
   const toggleAudience = (id: string) => {
-    setSelectedAudiences(prev => 
-      prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
-    );
+    if (selectedAudiences.includes(id)) {
+      setSelectedAudiences(prev => prev.filter(a => a !== id));
+      return;
+    }
+    if (selectedAudiences.length >= MAX_BLENDED_AUDIENCES) {
+      showToast(`Blend up to ${MAX_BLENDED_AUDIENCES} audiences into one resume. Remove one first.`, 'info');
+      return;
+    }
+    setSelectedAudiences(prev => [...prev, id]);
+  };
+
+  const makePrimaryAudience = (id: string) => {
+    setSelectedAudiences(prev => (prev.includes(id) ? [id, ...prev.filter(a => a !== id)] : prev));
   };
 
   const getRouterConfig = (): RouterConfig => {
@@ -2244,25 +2307,18 @@ export default function App() {
       return;
     }
 
-    let currentAudiences = [...selectedAudiences];
-    console.log("[Nexus AI] Current Audiences:", currentAudiences);
+    let runAudienceMix = audienceMix;
+    console.log("[Nexus AI] Audience blend:", runAudienceMix ? audienceHeadline(runAudienceMix) : "(none selected)");
 
-    if (currentAudiences.length === 0) {
-      console.log("[Nexus AI] No audiences selected, analyzing best audiences...");
+    if (!runAudienceMix) {
+      console.log("[Nexus AI] No audiences selected, choosing a blend from the JD...");
       setIsOptimizing(true);
       
       try {
-        const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
-        console.log("[Nexus AI] Best Audiences matched:", bestAudiences);
-        if (bestAudiences && bestAudiences.length > 0) {
-          setSelectedAudiences(bestAudiences);
-          currentAudiences = bestAudiences;
-        } else {
-          console.warn("[Nexus AI] Could not auto-select audience");
-          setError('Could not auto-select audience. Please select at least one manually.');
-          setIsOptimizing(false);
-          return;
-        }
+        const mix = await analyzeAudienceMix(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
+        console.log("[Nexus AI] Audience blend chosen:", audienceHeadline(mix));
+        applyAudienceMix(mix, jobDescription);
+        runAudienceMix = mix;
       } catch (err) {
         console.error("[Nexus AI] Auto-selection failed:", err);
         setError('Auto-selection failed. Please select an audience manually.');
@@ -2273,7 +2329,9 @@ export default function App() {
       setIsOptimizing(true);
     }
 
-    console.log("[Nexus AI] Optimization state active. Proceeding with", currentAudiences.length, "audiences");
+    console.log("[Nexus AI] Optimization state active. Writing one resume for", runAudienceMix.entries.length, "blended audience(s)");
+    const blend: AudienceMix = runAudienceMix;
+    const blendHeadline = audienceHeadline(blend);
     setCurrentOptimizingEngine(selectedEngine);
     setResults({});
     setActiveAudience(null);
@@ -2311,6 +2369,50 @@ export default function App() {
     // were just added.
     let finalResumeText = overrideResumeText || resumeText || "";
 
+    // Auto-select the master resume that already scores highest against this JD.
+    // Ranking is deterministic and local - no model call.
+    //
+    // Skipped whenever the text in the editor is not simply the currently
+    // selected master resume: a caller-supplied document, an uploaded/imported
+    // file, a restored version or a hand-edit all represent a deliberate choice
+    // of document, and swapping a master resume in would destroy it.
+    const selectedMaster = masterResumes.find(r => r.id === selectedResumeId);
+    const editorHoldsSelectedMaster =
+      !!selectedMaster && resumeText === JSON.stringify(selectedMaster.data, null, 2);
+
+    let selection: ResumeRankingResult | null = null;
+    if (
+      !overrideResumeText &&
+      resumeSelectionMode === 'auto' &&
+      editorHoldsSelectedMaster &&
+      masterResumes.length > 1
+    ) {
+      selection = rankResumesByJd({
+        jobDescription,
+        targetRole,
+        resumes: masterResumes.map(r => ({ id: r.id, name: r.name, content: r.data })),
+      });
+
+      if (selection) {
+        const winner = masterResumes.find(r => r.id === selection!.winner.id);
+        if (winner) {
+          finalResumeText = JSON.stringify(winner.data, null, 2);
+          setSelectedResumeId(winner.id);
+          localStorage.setItem('selectedResumeId', winner.id);
+          setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === winner.id })));
+          setResumeText(finalResumeText);
+          console.log(
+            `[Nexus AI] Auto-selected "${winner.name}" (${selection.winner.score}%)` +
+            (selection.runnerUp ? ` over "${selection.runnerUp.name}" (${selection.runnerUp.score}%)` : '')
+          );
+        } else {
+          selection = null;
+        }
+      }
+    }
+    // A thin JD returns null; keep whatever the user already had rather than guess.
+    setAutoSelection(selection);
+
     try {
       const finalTargetRole = targetRole || "Professional Candidate";
       let finalMode = mode;
@@ -2325,122 +2427,96 @@ export default function App() {
       }
       
       const routerConfig = getRouterConfig();
-      let completedAudiences = 0;
-      const totalAudiences = currentAudiences.length;
-      const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
 
-      // Set a combined status for all audiences to avoid rapid overwriting
-      const allAudienceLabels = currentAudiences.map(audienceId => 
-        audienceId === 'custom' 
-          ? (customAudience || 'Custom Persona') 
-          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId)
+      // ONE run for the whole blend: every selected reader shapes the same document
+      // through a weighted brief, instead of one full optimization per audience.
+      setOptimizationStatus(`Writing one resume for: \n${blendHeadline}`);
+
+      // Progress reporting for hybrid mode
+      if (selectedEngine.includes('hybrid')) {
+        setTimeout(() => {
+          if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming...`);
+        }, 4000);
+        setTimeout(() => {
+          if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
+        }, 8000);
+      }
+
+      const data = await optimizeResume(
+        finalResumeText, 
+        jobDescription, 
+        finalTargetRole, 
+        finalMode, 
+        blendHeadline, 
+        routerConfig, 
+        linkedInUrl, 
+        linkedInPdfText, 
+        jobUrl, 
+        fastMode, 
+        recruiterSimulationMode,
+        customPrompt,
+        selectedEngine.includes('hybrid') ? selectedEngine : undefined,
+        targetCompany,
+        brainDump,
+        blend
       );
-      setOptimizationStatus(`Optimizing for: \n${allAudienceLabels.join(', ')}`);
 
-      // Run all audience optimizations in parallel
-      const optimizationPromises = currentAudiences.map(async (audienceId, index) => {
-        const audienceLabel = audienceId === 'custom' 
-          ? (customAudience || 'Custom Persona') 
-          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId);
-        
-        // Progress reporting for hybrid mode (only set by first one to prevent overlap)
-        if (selectedEngine.includes('hybrid') && index === 0) {
-          setTimeout(() => {
-            if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming for ${allAudienceLabels.length} audiences...`);
-          }, 4000);
-          setTimeout(() => {
-            if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
-          }, 8000);
-        }
-        
-        const data = await optimizeResume(
-          finalResumeText, 
-          jobDescription, 
-          finalTargetRole, 
-          finalMode, 
-          audienceLabel, 
-          routerConfig, 
-          linkedInUrl, 
-          linkedInPdfText, 
-          jobUrl, 
-          fastMode, 
-          recruiterSimulationMode,
-          customPrompt,
-          selectedEngine.includes('hybrid') ? selectedEngine : undefined,
-          targetCompany,
-          brainDump
-        );
-        
-        completedAudiences++;
-        setOptimizationProgress(Math.min(95, (completedAudiences / currentAudiences.length) * 100));
-        
-        // Update token usage
-        if (data._engine === 'hybrid-v2') {
-          // Handle V2 Pipeline (OpenAI + Gemini)
-          if (data._usage) {
-            const openaiInput = data._usage.promptTokenCount || 0;
-            const openaiOutput = data._usage.candidatesTokenCount || 0;
-            setTokenUsage(prev => ({
-              ...prev,
-              openai: {
-                input: (prev.openai.input || 0) + openaiInput,
-                output: (prev.openai.output || 0) + openaiOutput
-              }
-            }));
-            syncTokenUsage('openai', openaiInput, openaiOutput);
-          }
-          if (data._geminiUsage) {
-            const geminiInput = data._geminiUsage.promptTokenCount || 0;
-            const geminiOutput = data._geminiUsage.candidatesTokenCount || 0;
-            setTokenUsage(prev => ({
-              ...prev,
-              gemini: {
-                input: (prev.gemini.input || 0) + geminiInput,
-                output: (prev.gemini.output || 0) + geminiOutput
-              }
-            }));
-            syncTokenUsage('gemini', geminiInput, geminiOutput);
-          }
-        } else if (data._usage && data._engine) {
-          // Handle Legacy Pipeline
-          const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
-          const inputDelta = data._usage!.promptTokenCount || 0;
-          const outputDelta = data._usage!.candidatesTokenCount || 0;
-          
+      setOptimizationProgress(95);
+
+      // Update token usage
+      if (data._engine === 'hybrid-v2') {
+        // Handle V2 Pipeline (OpenAI + Gemini)
+        if (data._usage) {
+          const openaiInput = data._usage.promptTokenCount || 0;
+          const openaiOutput = data._usage.candidatesTokenCount || 0;
           setTokenUsage(prev => ({
             ...prev,
-            [engine]: {
-              input: (prev[engine].input || 0) + inputDelta,
-              output: (prev[engine].output || 0) + outputDelta
+            openai: {
+              input: (prev.openai.input || 0) + openaiInput,
+              output: (prev.openai.output || 0) + openaiOutput
             }
           }));
-          
-          syncTokenUsage(engine, inputDelta, outputDelta);
+          syncTokenUsage('openai', openaiInput, openaiOutput);
         }
-
-        // Update results
-        setResults(prev => {
-          const newResults = { 
-            ...prev, 
-            [audienceId]: { 
-              ...data, 
-              _engine: selectedEngine, 
-              _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
-            } as any
-          };
-          
-          if (!activeAudience) {
-            setActiveAudience(audienceId);
+        if (data._geminiUsage) {
+          const geminiInput = data._geminiUsage.promptTokenCount || 0;
+          const geminiOutput = data._geminiUsage.candidatesTokenCount || 0;
+          setTokenUsage(prev => ({
+            ...prev,
+            gemini: {
+              input: (prev.gemini.input || 0) + geminiInput,
+              output: (prev.gemini.output || 0) + geminiOutput
+            }
+          }));
+          syncTokenUsage('gemini', geminiInput, geminiOutput);
+        }
+      } else if (data._usage && data._engine) {
+        // Handle Legacy Pipeline
+        const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
+        const inputDelta = data._usage!.promptTokenCount || 0;
+        const outputDelta = data._usage!.candidatesTokenCount || 0;
+        
+        setTokenUsage(prev => ({
+          ...prev,
+          [engine]: {
+            input: (prev[engine].input || 0) + inputDelta,
+            output: (prev[engine].output || 0) + outputDelta
           }
-          
-          return newResults;
-        });
+        }));
+        
+        syncTokenUsage(engine, inputDelta, outputDelta);
+      }
 
-        return data;
+      setResults({
+        [BLENDED_RESULT_KEY]: {
+          ...data,
+          _engine: selectedEngine,
+          _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
+        } as any
       });
+      setActiveAudience(BLENDED_RESULT_KEY);
 
-      const optimizationResults = await Promise.all(optimizationPromises);
-      const matchScore = optimizationResults[0]?.match_score || 0;
+      const matchScore = data?.match_score || 0;
       
       // Save version immediately after optimization
       saveResumeVersion(`Optimized - ${companyName} - ${new Date().toLocaleString()}`);
@@ -2936,6 +3012,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     setSuitabilityResult(null);
     setOptimizationProgress(0);
     setSelectedAudiences(['microsoft']);
+    setAudienceSuggestion(null);
     
     // Clear the backend cache
     fetch('/api/cache/clear', { method: 'POST' }).catch(err => console.error("Failed to clear backend cache", err));
@@ -3688,29 +3765,372 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           {/* Analysis Content */}
                           <div className="space-y-4">
                             <h3 className="text-xs font-bold uppercase tracking-widest text-white/80">2. Job Analysis</h3>
-                            {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (
-                              <div className={`p-4 rounded-xl border flex items-center justify-between ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
-                                <div>
-                                  <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
-                                  <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>Based on current JD</p>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  {results[activeAudience].baseline_score !== undefined && (
-                                    <div className="text-right">
-                                      <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
-                                      <span className={`font-bold text-lg opacity-60 line-through`}>{results[activeAudience].baseline_score}%</span>
+                            {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (() => {
+                              const result = results[activeAudience];
+                              const breakdown = result.score_breakdown;
+                              const optimizedBreakdown = breakdown?.optimized;
+                              const baselineBreakdown = breakdown?.baseline;
+                              const readiness = optimizedBreakdown?.readiness;
+                              const required = optimizedBreakdown?.required;
+                              const preferred = optimizedBreakdown?.preferred;
+                              const readinessTone: Record<string, string> = {
+                                strong: 'bg-emerald-500/15 text-emerald-500',
+                                good: 'bg-sky-500/15 text-sky-500',
+                                partial: 'bg-amber-500/15 text-amber-500',
+                                low: 'bg-rose-500/15 text-rose-500',
+                              };
+                              const tierRow = (label: string, hint: string, now?: { total: number; matched: string[]; partial: string[] }, before?: { matched: string[] }) =>
+                                now && now.total > 0 ? (
+                                  <div className="flex items-center justify-between gap-3 text-[11px]">
+                                    <span className="font-bold truncate" title={hint}>{label}</span>
+                                    <span className="font-bold tabular-nums whitespace-nowrap">
+                                      {before && before.matched.length !== now.matched.length && (
+                                        <span className="opacity-40 mr-1">{before.matched.length} →</span>
+                                      )}
+                                      <span className="text-emerald-500">{now.matched.length}</span>
+                                      <span className="opacity-60"> / {now.total}</span>
+                                      {now.partial.length > 0 && <span className="opacity-50"> (+{now.partial.length} partial)</span>}
+                                    </span>
+                                  </div>
+                                ) : null;
+                              const missingRequired = required ? required.missing : (optimizedBreakdown?.missing || []);
+                              const missingPreferred = preferred ? preferred.missing : [];
+                              return (
+                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                                      {readiness && (
+                                        <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${readinessTone[readiness.level] || ''}`} title={readiness.guidance}>
+                                          {readiness.label}
+                                        </span>
+                                      )}
                                     </div>
-                                  )}
-                                  <div className="text-right">
-                                    <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
-                                    <span className={`font-bold text-2xl text-emerald-500`}>{results[activeAudience].match_score}%</span>
+                                    <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>
+                                      {breakdown
+                                        ? `Measured against ${breakdown.jd_keywords_evaluated} requirements extracted from this JD`
+                                        : 'Based on current JD'}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    {result.baseline_score !== undefined && (
+                                      <div className="text-right">
+                                        <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
+                                        <span className={`font-bold text-lg opacity-60 line-through`}>{result.baseline_score}%</span>
+                                      </div>
+                                    )}
+                                    <div className="text-right">
+                                      <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
+                                      <span className={`font-bold text-2xl text-emerald-500`}>{result.match_score}%</span>
+                                    </div>
                                   </div>
                                 </div>
+                                {(required || preferred) && (
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
+                                    {tierRow('Required skills covered', 'Skills the posting requires. Recruiters filter on these first.', required, baselineBreakdown?.required)}
+                                    {tierRow('Nice-to-have covered', 'Skills the posting lists as preferred or desirable. Each counts half as much as a required skill.', preferred, baselineBreakdown?.preferred)}
+                                    {readiness && <p className="text-[10px] opacity-70 pt-1">{readiness.guidance}</p>}
+                                  </div>
+                                )}
+                                {breakdown && (
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
+                                    {breakdown.optimized.components.map((component) => {
+                                      const baselineComponent = breakdown.baseline.components
+                                        .find((c) => c.id === component.id);
+                                      return (
+                                        <div key={component.id} className="flex items-center justify-between gap-3 text-[10px]">
+                                          <span className="opacity-70 truncate" title={component.detail}>
+                                            {component.label}
+                                            <span className="opacity-50"> · {Math.round(component.weight * 100)}% weight</span>
+                                          </span>
+                                          <span className="font-bold tabular-nums whitespace-nowrap">
+                                            {baselineComponent && (
+                                              <span className="opacity-40 mr-1">{Math.round(baselineComponent.score * 100)}% →</span>
+                                            )}
+                                            <span className="text-emerald-500">{Math.round(component.score * 100)}%</span>
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                    {missingRequired.length > 0 && (
+                                      <p className="text-[10px] opacity-70 pt-1">
+                                        <span className="font-bold">{required ? 'Missing required' : 'Still missing'}:</span> {missingRequired.slice(0, 10).join(', ')}
+                                        {missingRequired.length > 10 && <span className="opacity-60"> +{missingRequired.length - 10} more</span>}
+                                      </p>
+                                    )}
+                                    {missingPreferred.length > 0 && (
+                                      <p className="text-[10px] opacity-50">
+                                        <span className="font-bold">Missing nice-to-have:</span> {missingPreferred.slice(0, 8).join(', ')}
+                                        {missingPreferred.length > 8 && <span> +{missingPreferred.length - 8} more</span>}
+                                      </p>
+                                    )}
+                                    <p className="text-[10px] opacity-40 pt-1">
+                                      No ATS applies one universal cutoff such as 80% - recruiters filter on the required skills. Add a missing skill to your master resume or brain dump only if you have it.
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                              );
+                            })()}
+                            {activeAudience && results[activeAudience]?.impact_audit && (() => {
+                              const audit = results[activeAudience].impact_audit!;
+                              const tone = audit.score >= 75 ? 'text-emerald-500' : audit.score >= 55 ? 'text-amber-500' : 'text-rose-500';
+                              return (
+                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-sky-400' : 'text-sky-700'}`}>Impact Audit</h3>
+                                      <p className="text-[10px] mt-1 opacity-70">
+                                        FAANG-style bullet quality across {audit.bullets_evaluated} bullets · {Math.round(audit.quantified_ratio * 100)}% quantified
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <span className="text-[10px] uppercase tracking-widest opacity-60 block">Score</span>
+                                      <span className={`font-bold text-2xl ${tone}`}>{audit.score}</span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
+                                    {audit.components.map((component) => (
+                                      <div key={component.id} className="flex items-center justify-between gap-3 text-[10px]">
+                                        <span className="opacity-70 truncate" title={component.detail}>
+                                          {component.label}
+                                          <span className="opacity-50"> · {Math.round(component.weight * 100)}% weight</span>
+                                        </span>
+                                        <span className="font-bold tabular-nums whitespace-nowrap">
+                                          {Math.round(component.score * 100)}%
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {audit.findings.length > 0 && (
+                                    <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">
+                                        Top fixes ({audit.findings.length} found)
+                                      </p>
+                                      {audit.findings.slice(0, 4).map((finding, idx) => (
+                                        <div key={`${finding.id}-${idx}`} className="text-[10px] leading-relaxed">
+                                          <span className={`font-bold uppercase tracking-wider mr-1 ${
+                                            finding.severity === 'high' ? 'text-rose-500'
+                                              : finding.severity === 'medium' ? 'text-amber-500' : 'opacity-50'
+                                          }`}>{finding.severity}</span>
+                                          <span className="opacity-80">{finding.issue}</span>
+                                          <span className="opacity-50"> → {finding.fix}</span>
+                                          {finding.bullet && (
+                                            <p className="opacity-40 italic truncate mt-0.5" title={finding.bullet}>“{finding.bullet}”</p>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {activeAudience && results[activeAudience]?.bullet_budget_report && (() => {
+                              const report = results[activeAudience].bullet_budget_report!;
+                              const statusTone: Record<string, string> = {
+                                within: 'text-emerald-500',
+                                trimmed: 'text-amber-500',
+                                under: 'text-sky-500',
+                                unbudgeted: 'opacity-50',
+                              };
+                              const statusLabel: Record<string, string> = {
+                                within: 'Within',
+                                trimmed: 'Trimmed',
+                                under: 'Under',
+                                unbudgeted: 'Model decided',
+                              };
+                              const statusHint: Record<string, string> = {
+                                within: 'Inside the budget for this tenure.',
+                                trimmed: 'The model wrote more than the ceiling; the weakest bullets were removed.',
+                                under: 'Fewer bullets than the budget. The platform never pads a role - add more detail about this role to your resume to reach it.',
+                                unbudgeted: 'The dates could not be read, so the count was left to the model (never more than the maximum).',
+                              };
+                              return (
+                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-teal-400' : 'text-teal-700'}`}>Bullet Budget</h3>
+                                      <p className="text-[10px] mt-1 opacity-70">
+                                        Bullets per role follow tenure, then recency ·{' '}
+                                        {report.trimmed > 0
+                                          ? `${report.trimmed} over-budget bullet${report.trimmed === 1 ? '' : 's'} removed`
+                                          : 'nothing removed'}
+                                      </p>
+                                    </div>
+                                    <span className={`text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${report.compliant ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                      {report.compliant ? 'Compliant' : 'Review'}
+                                    </span>
+                                  </div>
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                                    {report.roles.map((role, idx) => (
+                                      <div key={`${role.company}-${role.role}-${idx}`} className="text-[10px]">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <span className="opacity-80 truncate" title={[role.role, role.company, role.duration].filter(Boolean).join(' · ')}>
+                                            {[role.role, role.company].filter(Boolean).join(' · ') || `Role ${idx + 1}`}
+                                            <span className="opacity-50"> · {role.tenure_months !== null ? `${role.tenure_months} mo` : 'dates unreadable'}</span>
+                                          </span>
+                                          <span className="font-bold tabular-nums whitespace-nowrap" title={`${role.reason}. ${statusHint[role.status] || ''}`}>
+                                            {role.delivered} / {role.budget ?? `max ${role.max}`}
+                                            <span className={`ml-2 uppercase tracking-wider ${statusTone[role.status] || ''}`}>
+                                              {statusLabel[role.status] || role.status}
+                                            </span>
+                                          </span>
+                                        </div>
+                                        {role.removed.length > 0 && (
+                                          <details className="mt-1">
+                                            <summary className="cursor-pointer opacity-50">
+                                              {role.removed.length} removed to fit the budget
+                                            </summary>
+                                            <ul className="mt-1 space-y-0.5">
+                                              {role.removed.map((bullet, bIdx) => (
+                                                <li key={bIdx} className="opacity-40 italic truncate" title={bullet}>“{bullet}”</li>
+                                              ))}
+                                            </ul>
+                                          </details>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                            {activeAudience && results[activeAudience]?.audience_coverage && (() => {
+                              const coverage = results[activeAudience].audience_coverage!;
+                              const tone = (value: number | null) =>
+                                value === null ? 'opacity-50' : value >= 70 ? 'text-emerald-500' : value >= 45 ? 'text-amber-500' : 'text-rose-500';
+                              return (
+                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-fuchsia-400' : 'text-fuchsia-700'}`}>Audience Coverage</h3>
+                                      <p className="text-[10px] mt-1 opacity-70 truncate" title={coverage.headline}>
+                                        One resume for: {coverage.headline}
+                                      </p>
+                                    </div>
+                                    {coverage.weighted !== null && (
+                                      <div className="text-right whitespace-nowrap">
+                                        <span className="text-[10px] uppercase tracking-widest opacity-60 block">Weighted</span>
+                                        {coverage.baseline_weighted !== null && coverage.baseline_weighted !== coverage.weighted && (
+                                          <span className="font-bold text-sm opacity-50 line-through mr-2">{coverage.baseline_weighted}%</span>
+                                        )}
+                                        <span className={`font-bold text-2xl ${tone(coverage.weighted)}`}>{coverage.weighted}%</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-3">
+                                    {coverage.entries.map((entry) => (
+                                      <div key={entry.id} className="text-[10px]">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <span className="opacity-80 truncate" title={entry.reason}>
+                                            <span className="font-bold">{entry.label}</span>
+                                            <span className="opacity-50"> · {entry.weight}%{entry.primary ? ' · Primary' : ''}</span>
+                                          </span>
+                                          <span className="font-bold tabular-nums whitespace-nowrap">
+                                            {entry.scored ? (
+                                              <>
+                                                {entry.baseline !== null && entry.baseline !== entry.coverage && (
+                                                  <span className="opacity-50 line-through mr-1">{entry.baseline}%</span>
+                                                )}
+                                                <span className={tone(entry.coverage)}>{entry.coverage}%</span>
+                                              </>
+                                            ) : (
+                                              <span className="opacity-50" title="Custom readers have no signal set to check">Not scored</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                        {entry.scored && (
+                                          <div className="mt-1 flex flex-wrap gap-1">
+                                            {entry.matched.map((label) => {
+                                              const gained = entry.gained.includes(label);
+                                              return (
+                                                <span
+                                                  key={label}
+                                                  title={gained ? 'Newly evidenced by this version' : 'Evidenced in this version'}
+                                                  className={`px-1.5 py-0.5 rounded ${gained ? 'bg-emerald-500/20 text-emerald-500' : (isDarkMode ? 'bg-white/10 opacity-80' : 'bg-black/5 opacity-80')}`}
+                                                >
+                                                  {gained ? '+ ' : ''}{label}
+                                                </span>
+                                              );
+                                            })}
+                                            {entry.missing.map((label) => {
+                                              const lost = entry.lost.includes(label);
+                                              return (
+                                                <span
+                                                  key={label}
+                                                  title={lost
+                                                    ? 'In your original resume but not in this version - check whether it was trimmed'
+                                                    : 'Not evidenced - add it to your resume only if it is true'}
+                                                  className={`px-1.5 py-0.5 rounded border border-dashed ${lost ? 'border-rose-500 text-rose-500' : 'border-current opacity-50'}`}
+                                                >
+                                                  {label}
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <p className="mt-3 text-[10px] opacity-50">
+                                    Keyword evidence of what each reader scans for. Dashed signals are absent from the text - add one only if it is true.
+                                  </p>
+                                </div>
+                              );
+                            })()}
+                            {autoSelection && (                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>Auto-selected Master Resume</h3>
+                                    <p className="text-[10px] mt-1 opacity-70">
+                                      Ranked {autoSelection.ranked.length} resumes against {autoSelection.jd_keywords_evaluated} JD requirements
+                                    </p>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="text-[10px] uppercase tracking-widest text-indigo-400 block">Winner</span>
+                                    <span className="font-bold text-lg text-indigo-400">{autoSelection.winner.score}%</span>
+                                  </div>
+                                </div>
+                                <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
+                                  {autoSelection.ranked.slice(0, 5).map((entry, index) => (
+                                    <div key={entry.id} className="flex items-center justify-between gap-3 text-[10px]">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetActiveResume(entry.id)}
+                                        title={`Pin "${entry.name}" and stop auto-selecting`}
+                                        className={`truncate text-left hover:underline ${index === 0 ? 'font-bold' : 'opacity-70'}`}
+                                      >
+                                        {index === 0 ? '★ ' : `${index + 1}. `}{entry.name}
+                                      </button>
+                                      <span className="font-bold tabular-nums whitespace-nowrap opacity-80">{entry.score}%</span>
+                                    </div>
+                                  ))}
+                                  {autoSelection.closeCall && (
+                                    <p className="text-[10px] text-amber-500 pt-1">
+                                      Close call — only {autoSelection.margin} point{autoSelection.margin === 1 ? '' : 's'} separate the top two. Review both.
+                                    </p>
+                                  )}
+                                  <p className="text-[10px] opacity-50 pt-1">Click any resume above to pin it and turn auto-selection off.</p>
+                                </div>
+                              </div>
+                            )}
+                            {resumeSelectionMode === 'manual' && masterResumes.length > 1 && (
+                              <div className="flex items-center justify-between gap-3 px-1">
+                                <p className="text-[10px] opacity-60">
+                                  Auto-selection is off — optimizing your pinned resume.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setResumeSelectionModePersisted('auto')}
+                                  className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 hover:underline whitespace-nowrap"
+                                >
+                                  Enable auto-select
+                                </button>
                               </div>
                             )}
                             <div className="relative" ref={audienceDropdownRef}>
                               <div className="flex items-center justify-between mb-2">
-                                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Audiences (Multi-select)</label>
+                                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Audiences (blend up to {MAX_BLENDED_AUDIENCES})</label>
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3729,14 +4149,16 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 }`}
                               >
                                 <span className="truncate flex items-center gap-2">
-                                  {selectedAudiences.length > 0
+                                  {audienceMix
                                     ? (
                                       <>
-                                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">Auto</span>
-                                        {selectedAudiences.map(id => id === 'custom' ? (customAudience || 'Custom Persona') : (AUDIENCES.find(a => a.id === id)?.label || id)).join(', ')}
+                                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                                          {audienceMix.source === 'manual' ? 'Manual' : 'Auto'}
+                                        </span>
+                                        <span className="truncate">{audienceHeadline(audienceMix)}</span>
                                       </>
                                     )
-                                    : 'Select audiences...'}
+                                    : 'Select audiences, or leave empty to auto-select'}
                                 </span>
                                 <ChevronDown className="w-4 h-4 opacity-50" />
                               </button>
@@ -3749,6 +4171,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedAudiences(['microsoft']);
+                                        setAudienceSuggestion(null);
                                       }}
                                       className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-500 rounded hover:bg-emerald-500/20 transition-colors"
                 >
@@ -3758,27 +4181,57 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedAudiences([]);
+                                        setAudienceSuggestion(null);
                                       }}
                                       className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-red-500/10 text-red-500 rounded hover:bg-red-500/20 transition-colors"
                                     >
                                       Clear
                                     </button>
                                   </div>
-                                  {AUDIENCES.map((audience) => (
-                                    <button
-                                      key={audience.id}
-                                      onClick={() => toggleAudience(audience.id)}
-                                      className={`w-full px-3 py-2 text-xs flex items-center gap-2 ${
-                                        selectedAudiences.includes(audience.id)
-                                          ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
-                                          : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
-                                      }`}
-                                    >
-                                      <span>{audience.icon}</span>
-                                      {audience.label}
-                                      {selectedAudiences.includes(audience.id) && <CheckCircle2 className="w-4 h-4 ml-auto" />}
-                                    </button>
-                                  ))}
+                                  {AUDIENCES.map((audience) => {
+                                    const isSelected = selectedAudiences.includes(audience.id);
+                                    const mixEntry = audienceMix?.entries.find(entry => entry.id === audience.id);
+                                    const isPrimary = !!mixEntry && audienceMix?.entries[0]?.id === audience.id;
+                                    return (
+                                      <div
+                                        key={audience.id}
+                                        className={`flex items-center ${
+                                          isSelected
+                                            ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
+                                            : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
+                                        }`}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleAudience(audience.id)}
+                                          title={mixEntry?.reason}
+                                          className="flex-1 min-w-0 px-3 py-2 text-xs flex items-center gap-2 text-left"
+                                        >
+                                          <span>{audience.icon}</span>
+                                          <span className="truncate">{audience.label}</span>
+                                          {mixEntry && (
+                                            <span className="ml-auto text-[10px] font-bold tabular-nums whitespace-nowrap">
+                                              {mixEntry.weight}%{isPrimary ? ' · Primary' : ''}
+                                            </span>
+                                          )}
+                                          {isSelected && <CheckCircle2 className={`w-4 h-4 shrink-0 ${mixEntry ? '' : 'ml-auto'}`} />}
+                                        </button>
+                                        {mixEntry && !isPrimary && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              makePrimaryAudience(audience.id);
+                                            }}
+                                            title="Make this the primary reader: it frames the summary and each role's opening bullet"
+                                            className="px-2 py-1 mr-2 text-[9px] font-bold uppercase tracking-widest rounded border border-current opacity-70 hover:opacity-100 whitespace-nowrap"
+                                          >
+                                            Make primary
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                               {selectedAudiences.includes('custom') && (
@@ -3797,6 +4250,25 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     }`}
                                   />
                                 </motion.div>
+                              )}
+                              {audienceMix && (
+                                <div className={`mt-2 p-2 rounded-lg border text-[10px] ${isDarkMode ? 'border-white/10 bg-white/5' : 'border-black/5 bg-black/5'}`}>
+                                  <p className="opacity-60 mb-1">
+                                    One resume is written for this blend. The primary reader frames the summary and each role's opening bullet; the others decide what else earns a place.
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {audienceMix.entries.map((entry, idx) => (
+                                      <li key={entry.id} className="leading-snug">
+                                        <span className="font-bold">{entry.label}</span>
+                                        <span className="opacity-60"> · {entry.weight}%{idx === 0 ? ' · Primary' : ''}</span>
+                                        {entry.reason && <span className="block opacity-50 italic">{entry.reason}</span>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  {selectedAudiences.length > MAX_BLENDED_AUDIENCES && (
+                                    <p className="mt-1 text-amber-500">Only the first {MAX_BLENDED_AUDIENCES} selected audiences are blended.</p>
+                                  )}
+                                </div>
                               )}
                             </div>
                             
@@ -4444,14 +4916,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 <h3 className="font-bold text-sm">Optimization Insights</h3>
                               </div>
                               <div className="p-4 text-xs leading-relaxed opacity-80 space-y-4">
-                                {results[activeAudience].match_score !== undefined && (
+                                {results[activeAudience].match_score !== undefined && (() => {
+                                  const insight = results[activeAudience];
+                                  const level = insight.score_breakdown?.optimized?.readiness?.level
+                                    || (insight.match_score >= 70 ? 'strong' : insight.match_score >= 55 ? 'good' : insight.match_score >= 40 ? 'partial' : 'low');
+                                  const tone = level === 'strong' ? 'text-emerald-500' : level === 'good' ? 'text-sky-500' : level === 'partial' ? 'text-yellow-500' : 'text-red-500';
+                                  return (
                                   <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
                                     <span className="font-bold">Match Score</span>
-                                    <span className={`font-bold text-sm ${results[activeAudience].match_score >= 80 ? 'text-emerald-500' : results[activeAudience].match_score >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
-                                      {results[activeAudience].match_score}%
+                                    <span className={`font-bold text-sm ${tone}`} title={insight.score_breakdown?.optimized?.readiness?.label}>
+                                      {insight.match_score}%
                                     </span>
                                   </div>
-                                )}
+                                  );
+                                })()}
                                 
                                 {Array.isArray(results[activeAudience].rejection_reasons) && results[activeAudience].rejection_reasons!.length > 0 && (
                                   <div className="space-y-2">
