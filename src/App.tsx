@@ -3415,14 +3415,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   if (!user) {
     return (
       <Suspense fallback={
-        <div 
-          className={`h-screen flex flex-col items-center justify-center ${isDarkMode ? 'text-white' : 'text-neutral-900'} relative`}
-          style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-        >
-          <div className="absolute inset-0 bg-black/20 pointer-events-none" />
-          <div className="liquid-container z-0 opacity-30">
-            <div className="liquid-blob w-[110vw] h-[110vh] bg-blue-500/20 -top-1/2 -left-1/4" />
-          </div>
+        <div className={`h-dvh flex flex-col items-center justify-center px-4 text-center ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-slate-100 text-slate-900'}`}>
           <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
           <h2 className="text-xl font-bold tracking-tighter opacity-50 uppercase">Loading Welcome Suite...</h2>
         </div>
