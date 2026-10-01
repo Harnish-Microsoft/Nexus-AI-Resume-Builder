@@ -24,6 +24,9 @@
   --color-omni-purple: #a142f4;
 }
 
+/* Desktop-width windows with limited height (e.g. laptop browsers, docked windows) */
+@custom-variant lg-short (@media (min-width: 64rem) and (max-height: 720px));
+
 :root {
   --glass-bg-image: url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop');
   --theme-primary: #10b981; /* Default Emerald */
