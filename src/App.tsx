@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useDeferredValue, Suspense, lazy } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import { 
   FileText, 
@@ -64,6 +64,7 @@ import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { ResumeHealthScore } from './components/ResumeHealthScore';
 import { BulletRulesSettings } from './components/BulletRulesSettings';
 import { BulletBudgetReportCard } from './components/BulletBudgetReportCard';
+import { LinkedInTrendsCard } from './components/LinkedInTrendsCard';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
@@ -110,6 +111,7 @@ import defaultMasterResume from './services/master_resume.json';
 import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
 import { defaultBulletRules, normalizeBulletRules, type BulletRules } from './lib/bulletBudget';
 import { bulletRulesSummary } from './lib/bulletRulesPreview';
+import { curatedTrends } from './lib/linkedinTrends';
 import {
   BLENDED_RESULT_KEY,
   CUSTOM_AUDIENCE_ID,
@@ -135,6 +137,17 @@ function loadSavedBulletRules(): BulletRules {
     return (saved && normalizeBulletRules(JSON.parse(saved))) || defaultBulletRules();
   } catch {
     return defaultBulletRules();
+  }
+}
+
+const LINKEDIN_TRENDS_STORAGE_KEY = 'nexus_follow_linkedin_trends';
+
+/** Whether to follow the curated LinkedIn trends: on unless the candidate switched it off. */
+function loadFollowLinkedInTrends(): boolean {
+  try {
+    return localStorage.getItem(LINKEDIN_TRENDS_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
   }
 }
 
@@ -437,6 +450,17 @@ export default function App() {
     }
   }, [bulletRules]);
 
+  // Follow the curated LinkedIn trends for the target role. Only trending skills the
+  // candidate's own material supports are used; the rest are reported as gaps.
+  const [followLinkedInTrends, setFollowLinkedInTrends] = useState<boolean>(loadFollowLinkedInTrends);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LINKEDIN_TRENDS_STORAGE_KEY, String(followLinkedInTrends));
+    } catch {
+      // Storage unavailable: the choice still applies for this session.
+    }
+  }, [followLinkedInTrends]);
+
   const handleSetActiveResume = (id: string) => {
     setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === id })));
     setSelectedResumeId(id);
@@ -471,7 +495,7 @@ export default function App() {
   useEffect(() => {
     if (isInitialLoad.current) return;
     if (user) setHasUnsavedChanges(true);
-  }, [resumeText, customPrompt, bulletRules, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
+  }, [resumeText, customPrompt, bulletRules, followLinkedInTrends, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
   const [jobDescription, setJobDescription] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
@@ -482,6 +506,13 @@ export default function App() {
   const [targetRole, setTargetRole] = useState('');
   const [targetCompany, setTargetCompany] = useState('none');
   const [brainDump, setBrainDump] = useState('');
+  // The trend list the next run will follow: the same role fallback and posting as the
+  // optimize call. Deferred, so matching a long posting never slows typing.
+  const deferredJobDescription = useDeferredValue(jobDescription);
+  const trendPreview = useMemo(
+    () => (followLinkedInTrends ? curatedTrends(targetRole || 'Professional Candidate', deferredJobDescription) : null),
+    [followLinkedInTrends, targetRole, deferredJobDescription]
+  );
   const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [fastMode, setFastMode] = useState(false);
@@ -576,6 +607,9 @@ export default function App() {
             const savedBulletRules = normalizeBulletRules(data.bulletRules);
             if (savedBulletRules) {
               setBulletRules(savedBulletRules);
+            }
+            if (typeof data.followLinkedInTrends === 'boolean') {
+              setFollowLinkedInTrends(data.followLinkedInTrends);
             }
             if (data.settings) {
               if (typeof data.settings.versioningEnabled === 'boolean') {
@@ -904,6 +938,7 @@ export default function App() {
         masterResumes: masterResumes, // Sync array of resumes
         customPrompt: customPrompt || "",
         bulletRules,
+        followLinkedInTrends,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -940,7 +975,7 @@ export default function App() {
     }, 2000); // Sync 2 seconds after last change
 
     return () => clearTimeout(timeoutId);
-  }, [hasUnsavedChanges, user, resumeText, customPrompt, bulletRules, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
+  }, [hasUnsavedChanges, user, resumeText, customPrompt, bulletRules, followLinkedInTrends, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -1006,6 +1041,7 @@ export default function App() {
         masterResumes: masterResumes,
         customPrompt: customPrompt,
         bulletRules,
+        followLinkedInTrends,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -2492,7 +2528,7 @@ export default function App() {
         targetCompany,
         brainDump,
         blend,
-        { bulletRules }
+        { bulletRules, linkedinTrends: followLinkedInTrends }
       );
 
       setOptimizationProgress(95);
@@ -3956,6 +3992,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             {activeAudience && results[activeAudience]?.bullet_budget_report && (
                               <BulletBudgetReportCard report={results[activeAudience].bullet_budget_report!} isDarkMode={isDarkMode} />
                             )}
+                            {activeAudience && results[activeAudience]?.linkedin_trends && (
+                              <LinkedInTrendsCard report={results[activeAudience].linkedin_trends} isDarkMode={isDarkMode} />
+                            )}
                             {activeAudience && results[activeAudience]?.audience_coverage && (() => {
                               const coverage = results[activeAudience].audience_coverage!;
                               const tone = (value: number | null) =>
@@ -4720,6 +4759,35 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             <Link to="/profile" className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-emerald-500 hover:underline">
                               Edit
                             </Link>
+                          </div>
+
+                          {/* LinkedIn trends switch: curated trending skills for the target role */}
+                          <div className={`mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-[11px] ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                            <span
+                              className="min-w-0 truncate"
+                              title={trendPreview
+                                ? `Curated LinkedIn trends for ${trendPreview.label} (reviewed ${trendPreview.as_of}). Only trending skills your own material supports are used; the rest are listed as gaps after the run.`
+                                : 'Trending skills are not considered'}
+                            >
+                              <span className="text-[10px] font-bold uppercase tracking-widest">LinkedIn Trends: </span>
+                              <span className={isDarkMode ? 'opacity-60' : 'opacity-70'}>
+                                {trendPreview
+                                  ? `On - ${trendPreview.label} (curated, reviewed ${trendPreview.as_of}) - only skills your resume supports`
+                                  : 'Off - trending skills are not considered'}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={followLinkedInTrends}
+                              aria-label="Follow LinkedIn trends"
+                              onClick={() => setFollowLinkedInTrends(on => !on)}
+                              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                                followLinkedInTrends ? 'bg-emerald-500' : isDarkMode ? 'bg-white/15' : 'bg-black/15'
+                              }`}
+                            >
+                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${followLinkedInTrends ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                            </button>
                           </div>
                         
                         {/* Optimize Button Section */}
