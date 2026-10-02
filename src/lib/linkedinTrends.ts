@@ -6,10 +6,12 @@
  * supports them. Trending skills without evidence are reported as gaps and are
  * never written into the resume.
  *
- * Two sources feed the trend list:
- *  - a curated catalogue per role family (reviewed CURATED_TRENDS_REVIEWED), and
- *  - an optional live refresh (Gemini with Google Search grounding, server side)
- *    merged over the curated list by mergeTrends().
+ * The trend list comes from a curated catalogue per role family, reviewed
+ * against LinkedIn's published skill trends (CURATED_TRENDS_REVIEWED). There is
+ * deliberately no live refresh: LinkedIn has no public trends API, and the
+ * Gemini API terms for Grounding with Google Search forbid caching, sharing or
+ * modifying grounded results, so a search-grounded list cannot steer generation.
+ * To refresh the trends, edit the catalogue below and bump the review month.
  *
  * Everything in this module is pure and shared by the browser and the server.
  */
@@ -20,9 +22,6 @@ export const TREND_COVERAGE_METHOD = "linkedin-trend-coverage-v1";
 /** Month the curated catalogue was last reviewed against LinkedIn skill trends. */
 export const CURATED_TRENDS_REVIEWED = "2026-10";
 export const MAX_TREND_SKILLS = 32;
-export const MAX_LIVE_SKILLS = 20;
-/** A live refresh with fewer usable skills than this is ignored in favour of the curated list. */
-export const MIN_LIVE_SKILLS = 5;
 
 /** Never suggested, whatever the source says (mirrors the per-role generator's forbidden terms). */
 const BANNED_TREND_TERMS = /\bci\s*\/\s*cd\b|\bpipelines?\b|\bdevops\b|\bdevsecops\b/i;
@@ -33,8 +32,6 @@ const BANNED_TREND_TERMS = /\bci\s*\/\s*cd\b|\bpipelines?\b|\bdevops\b|\bdevseco
  * unsupported trending skill.
  */
 export const BANNED_TERM_REPLACEMENTS = ["Infrastructure Automation", "Workflow Orchestration", "Release Engineering"];
-
-export type TrendSource = "curated" | "live";
 
 export interface TrendSkill {
   /** Stable id shared by platform variants, e.g. "kubernetes" for AKS / EKS / GKE / Kubernetes. */
@@ -47,24 +44,15 @@ export interface TrendSkill {
   evidence?: string[];
 }
 
-export interface TrendCitation {
-  title: string;
-  uri: string;
-}
-
 export interface LinkedInTrends {
   method: string;
   role_family: string;
   families: string[];
   label: string;
   target_role: string;
-  source: TrendSource;
-  /** "YYYY-MM" for the curated catalogue, the refresh date for live trends. */
+  /** "YYYY-MM": the month the curated catalogue was reviewed. */
   as_of: string;
   skills: TrendSkill[];
-  citations: TrendCitation[];
-  /** Why a live refresh was not used, when one was attempted. */
-  reason?: string;
 }
 
 /**
@@ -94,10 +82,7 @@ export interface TrendCoverageReport {
   families: string[];
   label: string;
   target_role: string;
-  source: TrendSource;
   as_of: string;
-  citations: TrendCitation[];
-  reason?: string;
   entries: TrendCoverageEntry[];
   used: string[];
   available: string[];
@@ -972,10 +957,8 @@ export function curatedTrends(targetRole: unknown, jobDescription?: unknown): Li
     families: matches.map((match) => match.id),
     label: matches.map((match) => match.label).join(" + "),
     target_role: asText(targetRole).trim().slice(0, 160),
-    source: "curated",
     as_of: CURATED_TRENDS_REVIEWED,
     skills,
-    citations: [],
   };
 }
 
@@ -995,20 +978,8 @@ export function trendCatalogue(): TrendSkill[] {
 }
 
 /* ------------------------------------------------------------------ *
- * Normalisation and live merge
+ * Normalisation
  * ------------------------------------------------------------------ */
-
-/** Generic or ambiguous words a live (model-written) alias may not be, as they would match unrelated text. */
-const STOP_ALIASES = new Set([
-  "cloud", "ai", "it", "data", "security", "management", "microsoft", "google", "amazon", "governance", "compliance",
-  "automation", "networking", "network", "monitoring", "infrastructure", "architecture", "operations", "development",
-  "engineering", "analytics", "leadership", "strategy", "design", "testing", "support", "services", "service", "platform",
-  "platforms", "tools", "skills", "technology", "software", "systems", "identity", "access", "storage", "backup",
-  "integration", "migration", "cost", "optimization", "performance", "reliability", "scripting", "programming",
-  "communication", "collaboration", "react", "rest", "node", "go", "rag", "waf", "ids", "ips", "dr", "safe", "lean",
-  "teams", "exchange", "defender", "copilot", "hybrid", "pam", "arb", "segmentation", "caf", "policy", "policies",
-  "framework", "frameworks", "agents", "models", "apps", "applications", "excel", "office",
-]);
 
 function cleanLine(value: unknown, max: number): string {
   return asText(value)
@@ -1033,45 +1004,12 @@ export function sanitizeTrendDate(value: unknown): string {
   return match[3] ? `${match[1]}-${match[2]}-${match[3]}` : `${match[1]}-${match[2]}`;
 }
 
-/** Up to 8 unique http(s) citations; accepts {title, uri} or grounding chunks ({web: {title, uri}}). */
-export function sanitizeCitations(raw: unknown): TrendCitation[] {
-  const list = Array.isArray(raw) ? raw : [];
-  const out: TrendCitation[] = [];
-  const seen = new Set<string>();
-  for (const item of list) {
-    if (out.length >= 8) break;
-    if (!item || typeof item !== "object") continue;
-    const record = ((item as any).web && typeof (item as any).web === "object" ? (item as any).web : item) as Record<string, unknown>;
-    const uri = cleanLine(record.uri ?? record.url, 2048);
-    if (!/^https?:\/\/[^\s]+$/i.test(uri) || seen.has(uri)) continue;
-    let title = cleanLine(record.title, 200);
-    if (!title) {
-      try {
-        title = new URL(uri).hostname;
-      } catch {
-        continue;
-      }
-    }
-    seen.add(uri);
-    out.push({ title, uri });
-  }
-  return out;
-}
-
-function strictAliasAllowed(alias: string, nameWords: Set<string>): boolean {
-  if (alias.length < 3 || STOP_ALIASES.has(alias)) return false;
-  // A single word lifted from a multi-word name ("policy" for "Azure Policy") is too loose.
-  return !(nameWords.size > 1 && !alias.includes(" ") && nameWords.has(alias));
-}
-
 /**
- * Clean a skill list from the wire, a cache or a model. List markers are
- * stripped and parentheticals become aliases ("Microsoft Entra ID (Azure AD)").
- * `strictAliases` is for model-written lists: generic or partial aliases are
- * dropped and keys / evidence terms are ignored.
+ * Clean a skill list that crossed a trust boundary (a stored report). List
+ * markers are stripped and parentheticals become aliases ("Microsoft Entra ID
+ * (Azure AD)"); banned terms are dropped.
  */
-export function normalizeTrendSkills(raw: unknown, options: { strictAliases?: boolean } = {}): TrendSkill[] {
-  const strict = Boolean(options.strictAliases);
+export function normalizeTrendSkills(raw: unknown): TrendSkill[] {
   const list: unknown[] = Array.isArray(raw)
     ? raw
     : raw && typeof raw === "object" && Array.isArray((raw as any).skills)
@@ -1091,128 +1029,37 @@ export function normalizeTrendSkills(raw: unknown, options: { strictAliases?: bo
     if (!nameKey || seen.has(nameKey)) continue;
 
     const listOf = (value: unknown) => (Array.isArray(value) ? value : []);
-    const nameWords = new Set(nameKey.split(" "));
     const aliases = unique([...listOf(record?.aliases), ...listOf(record?.synonyms), ...inner].map(normalizeTerm))
       .filter((alias) => isUsableTerm(alias) && trendNameKey(alias) !== nameKey)
-      .filter((alias) => !strict || strictAliasAllowed(alias, nameWords))
       .slice(0, 24);
     const skill: TrendSkill = { name, aliases };
-    if (!strict) {
-      const key = sanitizeKey(record?.key);
-      if (key) skill.key = key;
-      const evidence = unique(listOf(record?.evidence).map(normalizeTerm)).filter(isUsableTerm).slice(0, 40);
-      if (evidence.length) skill.evidence = evidence;
-    }
+    const key = sanitizeKey(record?.key);
+    if (key) skill.key = key;
+    const evidence = unique(listOf(record?.evidence).map(normalizeTerm)).filter(isUsableTerm).slice(0, 40);
+    if (evidence.length) skill.evidence = evidence;
     out.push(skill);
     seen.add(nameKey);
   }
   return out;
 }
 
-/** Validate trends that crossed a trust boundary (request body, cache, stored report). */
+/** Validate trends that crossed a trust boundary (a stored report). */
 export function normalizeLinkedInTrends(raw: unknown): LinkedInTrends | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const skills = normalizeTrendSkills(record.skills).slice(0, MAX_TREND_SKILLS);
   if (!skills.length) return null;
-  const source: TrendSource = record.source === "live" ? "live" : "curated";
   const families = unique((Array.isArray(record.families) ? record.families : []).map(sanitizeKey).filter(Boolean)).slice(0, 3);
   const roleFamily = sanitizeKey(record.role_family) || families[0] || "general";
-  const trends: LinkedInTrends = {
+  return {
     method: TREND_METHOD,
     role_family: roleFamily,
     families: families.length ? families : [roleFamily],
     label: cleanLine(record.label, 120) || FAMILY_BY_ID.get(roleFamily)?.label || "Target role",
     target_role: cleanLine(record.target_role, 160),
-    source,
-    as_of: sanitizeTrendDate(record.as_of) || (source === "curated" ? CURATED_TRENDS_REVIEWED : ""),
+    as_of: sanitizeTrendDate(record.as_of) || CURATED_TRENDS_REVIEWED,
     skills,
-    citations: sanitizeCitations(record.citations),
   };
-  const reason = cleanLine(record.reason, 300);
-  if (reason) trends.reason = reason;
-  return trends;
-}
-
-export interface LiveTrendInput {
-  skills?: unknown;
-  citations?: unknown;
-  as_of?: unknown;
-}
-
-/**
- * Lay a live refresh over the curated list. Live skills lead (in the order
- * returned); one that matches a curated skill keeps the curated name, key and
- * evidence terms and gains the live aliases. Remaining curated skills follow.
- * Fewer than MIN_LIVE_SKILLS usable live skills keeps the curated list.
- */
-export function mergeTrends(curated: LinkedInTrends, live: LiveTrendInput | null | undefined, options: { now?: Date } = {}): LinkedInTrends {
-  const curatedSkills = curated.skills.map(cloneSkill);
-  const liveSkills = normalizeTrendSkills(live?.skills, { strictAliases: true }).slice(0, MAX_LIVE_SKILLS);
-  if (liveSkills.length < MIN_LIVE_SKILLS) {
-    const kept: LinkedInTrends = { ...curated, families: [...curated.families], skills: curatedSkills, citations: [...curated.citations] };
-    if (live) kept.reason = `Live refresh returned ${liveSkills.length} usable skill(s); using the curated list.`;
-    return kept;
-  }
-
-  const curatedNames = curatedSkills.map((skill) => new Set(nameTerms(skill.name)));
-  const curatedAliases = curatedSkills.map((skill) => new Set((skill.aliases || []).map(normalizeTerm)));
-  const liveNames = liveSkills.map((skill) => nameTerms(skill.name));
-  const liveAliases = liveSkills.map((skill) => skill.aliases.map(normalizeTerm));
-  const passes: Array<(live: number, cur: number) => boolean> = [
-    (l, c) => liveNames[l].some((term) => curatedNames[c].has(term)),
-    (l, c) => liveNames[l].some((term) => curatedAliases[c].has(term)),
-    (l, c) => liveAliases[l].some((term) => curatedNames[c].has(term)),
-  ];
-  const matchOf: number[] = liveSkills.map(() => -1);
-  const taken = new Set<number>();
-  for (const test of passes) {
-    liveSkills.forEach((_, l) => {
-      if (matchOf[l] >= 0) return;
-      const c = curatedSkills.findIndex((__, index) => !taken.has(index) && test(l, index));
-      if (c >= 0) {
-        matchOf[l] = c;
-        taken.add(c);
-      }
-    });
-  }
-
-  const merged: TrendSkill[] = [];
-  const names = new Set<string>();
-  const keys = new Set<string>();
-  const push = (skill: TrendSkill) => {
-    const nameKey = trendNameKey(skill.name);
-    if (merged.length >= MAX_TREND_SKILLS || names.has(nameKey) || (skill.key && keys.has(skill.key))) return;
-    merged.push(skill);
-    names.add(nameKey);
-    if (skill.key) keys.add(skill.key);
-  };
-  liveSkills.forEach((liveSkill, l) => {
-    const c = matchOf[l];
-    if (c < 0) {
-      push(liveSkill);
-      return;
-    }
-    const base = curatedSkills[c];
-    const baseKey = trendNameKey(base.name);
-    const extra = liveSkill.aliases.filter((alias) => trendNameKey(alias) !== baseKey);
-    push({ ...base, aliases: unique([...base.aliases, ...extra]).slice(0, 24) });
-  });
-  curatedSkills.forEach((skill, c) => {
-    if (!taken.has(c)) push(skill);
-  });
-
-  const today = (options.now instanceof Date && !Number.isNaN(options.now.getTime()) ? options.now : new Date()).toISOString().slice(0, 10);
-  const mergedTrends: LinkedInTrends = {
-    ...curated,
-    families: [...curated.families],
-    source: "live",
-    as_of: sanitizeTrendDate(live?.as_of) || today,
-    skills: merged,
-    citations: sanitizeCitations(live?.citations),
-  };
-  delete mergedTrends.reason;
-  return mergedTrends;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1478,10 +1325,7 @@ export function computeTrendCoverage(
     families: [...trends.families],
     label: trends.label,
     target_role: trends.target_role,
-    source: trends.source,
     as_of: trends.as_of,
-    citations: trends.citations.map((citation) => ({ ...citation })),
-    ...(trends.reason ? { reason: trends.reason } : {}),
     entries,
     used,
     available,
@@ -1546,19 +1390,13 @@ const PREFER_TERMS_MAX = 80;
 /** One line naming where the trend list came from, for prompts and the report UI. */
 export function describeTrendSource(trends: LinkedInTrends | null | undefined): string {
   if (!trends) return "";
-  const label = trends.label || "the target role";
-  if (trends.source === "live") {
-    const count = trends.citations.length;
-    const sources = count ? `, ${count} source${count === 1 ? "" : "s"}` : "";
-    return `LinkedIn trends for ${label} refreshed ${trends.as_of || "recently"}${sources}`;
-  }
-  return `Curated LinkedIn trends for ${label} (reviewed ${trends.as_of || CURATED_TRENDS_REVIEWED})`;
+  return `Curated LinkedIn trends for ${trends.label || "the target role"} (reviewed ${trends.as_of || CURATED_TRENDS_REVIEWED})`;
 }
 
 /** Stable text that changes whenever the trend list does (for cache keys). */
 export function trendFingerprint(trends: LinkedInTrends | null | undefined): string {
   if (!trends || !trends.skills.length) return "none";
-  return [trends.source, trends.as_of, trends.families.join("+"), trends.skills.map((skill) => trendNameKey(skill.name)).join("|")].join(":");
+  return [trends.as_of, trends.families.join("+"), trends.skills.map((skill) => trendNameKey(skill.name)).join("|")].join(":");
 }
 
 export interface TrendBriefOptions {
