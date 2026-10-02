@@ -453,6 +453,21 @@ export function roleEvidenceText(role: any): string {
   return [asText(role?.role ?? role?.title), ...roleSourceBullets(role)].filter(Boolean).join("\n");
 }
 
+/**
+ * The roles of a JSON master resume (`experience` or `work_experience`);
+ * undefined for free-form text, whose roles are only known after extraction.
+ */
+export function rolesFromResumeText(resumeText: unknown): any[] | undefined {
+  if (typeof resumeText !== "string") return undefined;
+  try {
+    const source = JSON.parse(resumeText);
+    const roles = source?.experience || source?.work_experience;
+    return Array.isArray(roles) && roles.length > 0 ? roles : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Date parsing
  * ------------------------------------------------------------------ */

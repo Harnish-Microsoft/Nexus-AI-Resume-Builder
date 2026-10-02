@@ -9,7 +9,7 @@ import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
 import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
 import { applyImpactAudit, ImpactScoreResult } from "../lib/impactScore";
-import { activeBulletRules, enforceBulletBudgets, planBulletBudgets } from "../lib/bulletBudget";
+import { activeBulletRules, enforceBulletBudgets, planBulletBudgets, rolesFromResumeText } from "../lib/bulletBudget";
 import type { BudgetPlan, BulletBudgetReport, BulletRules } from "../lib/bulletBudget";
 import {
   AUDIENCE_PROFILES,
@@ -541,23 +541,12 @@ function candidateSourceText(resumeText: string, brainDump?: string, customPromp
     .join("\n\n");
 }
 
-/** The roles of a JSON master resume; undefined for free-form text, whose roles are unknown. */
-function sourceRolesFromResumeText(resumeText: string): any[] | undefined {
-  try {
-    const source = JSON.parse(resumeText);
-    const roles = source?.experience || source?.work_experience;
-    return Array.isArray(roles) && roles.length > 0 ? roles : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** Budget plan for a JSON master resume; undefined for free-form text. */
 function budgetPlanFromResumeText(
   resumeText: string,
   options: { rules: BulletRules | null; jobDescription: string }
 ): BudgetPlan | undefined {
-  const roles = sourceRolesFromResumeText(resumeText);
+  const roles = rolesFromResumeText(resumeText);
   return roles ? planBulletBudgets(roles, options) : undefined;
 }
 
@@ -589,7 +578,7 @@ function finalizeResume(
     sourceText,
     rules: params.bulletRules,
     jobDescription: params.jobDescription,
-    sourceRoles: sourceRolesFromResumeText(params.resumeText),
+    sourceRoles: rolesFromResumeText(params.resumeText),
   });
   applyMatchScores(parsed, {
     jobDescription: params.jobDescription,

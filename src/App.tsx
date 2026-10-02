@@ -62,6 +62,7 @@ import { SortableSection } from './components/SortableSection';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { ResumeHealthScore } from './components/ResumeHealthScore';
+import { BulletRulesSettings } from './components/BulletRulesSettings';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
@@ -107,6 +108,7 @@ import { formatCertification } from './lib/certifications';
 import defaultMasterResume from './services/master_resume.json';
 import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
 import { defaultBulletRules, normalizeBulletRules, type BulletRules } from './lib/bulletBudget';
+import { bulletRulesSummary } from './lib/bulletRulesPreview';
 import {
   BLENDED_RESULT_KEY,
   CUSTOM_AUDIENCE_ID,
@@ -4769,6 +4771,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             />
                             <p className="text-[10px] opacity-40 mt-1">These instructions will be given high priority during the resume optimization process.</p>
                           </div>
+
+                          {/* Bullet Rules summary (edited on the Profile tab) */}
+                          <div className={`mt-4 flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-[11px] ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                            <span className="min-w-0 truncate" title={bulletRulesSummary(bulletRules).join(' \u00b7 ')}>
+                              <span className="text-[10px] font-bold uppercase tracking-widest">Bullet Rules: </span>
+                              <span className={isDarkMode ? 'opacity-60' : 'opacity-70'}>
+                                {!bulletRules.enabled
+                                  ? 'Off - the system sizes every role by tenure'
+                                  : bulletRulesSummary(bulletRules).join(' \u00b7 ') || 'On, but no rule is active - the system sizes every role by tenure'}
+                              </span>
+                            </span>
+                            <Link to="/profile" className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-emerald-500 hover:underline">
+                              Edit
+                            </Link>
+                          </div>
                         
                         {/* Optimize Button Section */}
                           <div className="pt-4 border-t border-black/5 dark:border-white/10">
@@ -5208,6 +5225,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       </div>
                     )}
                   </section>
+
+                  <BulletRulesSettings
+                    rules={bulletRules}
+                    onChange={setBulletRules}
+                    isDarkMode={isDarkMode}
+                    resumeText={resumeText}
+                    jobDescription={jobDescription}
+                  />
 
                   {/* Google Drive Status/Reconnect */}
                   {!driveAccessToken && user && (
