@@ -3,6 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { pipelineCache } from './cacheUtility';
 import { computeBulletBudgets } from "../src/lib/bulletBudget";
+import type { BudgetOptions } from "../src/lib/bulletBudget";
 
 /**
  * Token Optimization Strategy
@@ -254,7 +255,12 @@ export async function extractJDKeywords(jobDescription: string, geminiApiKey: st
   }
 }
 
-export function trimContentForAI(resumeData: any, keywords: string[]) {
+/**
+ * `budgetOptions` carries the candidate's bullet rules (and the posting the
+ * platform rule reads); pass the same options to planBulletBudgets over the
+ * returned experience to get the plan these labels came from.
+ */
+export function trimContentForAI(resumeData: any, keywords: string[], budgetOptions: BudgetOptions = {}) {
   // Remove duplicates from skills and achievements
   const seenSkills = new Set<string>();
   const uniqueSkills = (resumeData.skills || []).filter((s: string) => {
@@ -288,8 +294,9 @@ export function trimContentForAI(resumeData: any, keywords: string[]) {
 
   // Computed here rather than left to the model, which is unreliable at date
   // arithmetic, and over the whole list so recency follows the real end dates.
+  // The candidate's bullet rules, when given, come before the tenure tiers.
   // Omitted entirely when the duration is unparseable.
-  const budgets = computeBulletBudgets(roles);
+  const budgets = computeBulletBudgets(roles, budgetOptions);
   const experience = roles.map((role: any, index: number) => {
     const budget = budgets[index];
     const { original_bullets, ...rest } = role;

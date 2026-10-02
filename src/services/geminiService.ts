@@ -9,8 +9,8 @@ import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
 import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
 import { applyImpactAudit, ImpactScoreResult } from "../lib/impactScore";
-import { computeBulletBudgets, enforceBulletBudgets } from "../lib/bulletBudget";
-import type { BulletBudget, BulletBudgetReport } from "../lib/bulletBudget";
+import { activeBulletRules, enforceBulletBudgets, planBulletBudgets } from "../lib/bulletBudget";
+import type { BudgetPlan, BulletBudgetReport, BulletRules } from "../lib/bulletBudget";
 import {
   AUDIENCE_PROFILES,
   applyAudienceCoverage,
@@ -60,7 +60,7 @@ export interface OptimizationResult {
   star_stories?: StarStory[];
   /** Deterministic bullet-quality audit. Absent when there are too few bullets to score. */
   impact_audit?: ImpactScoreResult;
-  /** Per-role tenure budget and what enforcement delivered against it. */
+  /** Per-role budget (bullet rules, then tenure) and what enforcement delivered against it. */
   bullet_budget_report?: BulletBudgetReport;
   /** The blended readers and how much of what each scans for the final resume evidences. */
   audience_coverage?: AudienceCoverageReport;
@@ -541,15 +541,24 @@ function candidateSourceText(resumeText: string, brainDump?: string, customPromp
     .join("\n\n");
 }
 
-/** Budgets for a JSON master resume; undefined for free-form text, whose roles are unknown. */
-function budgetsFromResumeText(resumeText: string): BulletBudget[] | undefined {
+/** The roles of a JSON master resume; undefined for free-form text, whose roles are unknown. */
+function sourceRolesFromResumeText(resumeText: string): any[] | undefined {
   try {
     const source = JSON.parse(resumeText);
     const roles = source?.experience || source?.work_experience;
-    return Array.isArray(roles) && roles.length > 0 ? computeBulletBudgets(roles) : undefined;
+    return Array.isArray(roles) && roles.length > 0 ? roles : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Budget plan for a JSON master resume; undefined for free-form text. */
+function budgetPlanFromResumeText(
+  resumeText: string,
+  options: { rules: BulletRules | null; jobDescription: string }
+): BudgetPlan | undefined {
+  const roles = sourceRolesFromResumeText(resumeText);
+  return roles ? planBulletBudgets(roles, options) : undefined;
 }
 
 /**
@@ -568,10 +577,20 @@ function finalizeResume(
     brainDump?: string;
     customPrompt?: string;
     audienceMix?: AudienceMix | null;
+    /**
+     * Active bullet rules, or null for the tenure tiers alone. A server report made
+     * under the same rules is reused as is, so both sides agree.
+     */
+    bulletRules: BulletRules | null;
   }
 ): void {
   const sourceText = candidateSourceText(params.resumeText, params.brainDump, params.customPrompt);
-  enforceBulletBudgets(parsed, { sourceText });
+  enforceBulletBudgets(parsed, {
+    sourceText,
+    rules: params.bulletRules,
+    jobDescription: params.jobDescription,
+    sourceRoles: sourceRolesFromResumeText(params.resumeText),
+  });
   applyMatchScores(parsed, {
     jobDescription: params.jobDescription,
     originalResumeText: params.resumeText,
@@ -581,6 +600,11 @@ function finalizeResume(
   applyImpactAudit(parsed, { sourceText });
   // Baseline is the resume alone: what each reader would have seen before optimization.
   applyAudienceCoverage(parsed, params.audienceMix, { sourceText: params.resumeText });
+}
+
+export interface OptimizeResumeOptions {
+  /** The candidate's bullet rules; omitted, null or disabled for the tenure tiers alone. */
+  bulletRules?: BulletRules | null;
 }
 
 export async function optimizeResume(
@@ -599,9 +623,11 @@ export async function optimizeResume(
   pipelineType?: string,
   targetCompany?: string,
   brainDump?: string,
-  audienceMix?: AudienceMix | null
+  audienceMix?: AudienceMix | null,
+  options: OptimizeResumeOptions = {}
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
+  const bulletRules = activeBulletRules(options.bulletRules);
 
   // All selected readers are written for in this ONE run, as a weighted brief.
   const blend = normalizeAudienceMix(audienceMix);
@@ -645,7 +671,8 @@ export async function optimizeResume(
           apiKey: config.openaiConfig.apiKey,
           pipelineType,
           targetCompany,
-          brainDump
+          brainDump,
+          ...(bulletRules ? { bulletRules } : {})
         })
       });
 
@@ -725,6 +752,7 @@ export async function optimizeResume(
           brainDump,
           customPrompt,
           audienceMix: blend,
+          bulletRules,
         });
 
         return fixTitle(parsed);
@@ -733,6 +761,10 @@ export async function optimizeResume(
       console.warn("V2 Pipeline failed, falling back to legacy optimization:", e);
     }
   }
+
+  // Computed from the real dates when the master resume is structured; for
+  // free-form text the prompt states the rules and tiers for the model to apply.
+  const budgetPlan = budgetPlanFromResumeText(resumeText, { rules: bulletRules, jobDescription });
 
   const prompt = buildResumeGenerationPrompt({
     targetRole,
@@ -746,9 +778,9 @@ export async function optimizeResume(
     jobDescription,
     inputLabel: "SOURCE RESUME (raw text)",
     inputData: resumeText,
-    // Computed from the real dates when the master resume is structured; for
-    // free-form text the prompt derives them from the tiers instead.
-    bulletBudgets: budgetsFromResumeText(resumeText),
+    bulletBudgets: budgetPlan?.budgets,
+    bulletRules,
+    platformDecision: budgetPlan?.platform ?? null,
   });
 
   const maxRetries = 5;
@@ -813,6 +845,7 @@ export async function optimizeResume(
           brainDump,
           customPrompt,
           audienceMix: blend,
+          bulletRules,
         });
 
         if (data.usage) {

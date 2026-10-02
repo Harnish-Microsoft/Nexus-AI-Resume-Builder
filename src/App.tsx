@@ -106,6 +106,7 @@ import { formatCertification } from './lib/certifications';
 
 import defaultMasterResume from './services/master_resume.json';
 import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
+import { defaultBulletRules, normalizeBulletRules, type BulletRules } from './lib/bulletBudget';
 import {
   BLENDED_RESULT_KEY,
   CUSTOM_AUDIENCE_ID,
@@ -121,6 +122,18 @@ const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ d
 const AdditionalTools = lazy(() => import('./components/AdditionalTools').then(m => ({ default: m.AdditionalTools })));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const ProfessionalWelcomePage = lazy(() => import('./components/ProfessionalWelcomePage').then(m => ({ default: m.ProfessionalWelcomePage })));
+
+const BULLET_RULES_STORAGE_KEY = 'nexus_bullet_rules';
+
+/** Saved bullet rules, or the pre-filled defaults when none are saved or they are unreadable. */
+function loadSavedBulletRules(): BulletRules {
+  try {
+    const saved = localStorage.getItem(BULLET_RULES_STORAGE_KEY);
+    return (saved && normalizeBulletRules(JSON.parse(saved))) || defaultBulletRules();
+  } catch {
+    return defaultBulletRules();
+  }
+}
 
 const LoadingSpinner = () => (
   <div className="flex flex-col items-center justify-center p-12">
@@ -410,6 +423,17 @@ export default function App() {
     localStorage.setItem('resumeSelectionMode', mode);
   };
 
+  // The candidate's bullet rules (recent roles, pinned companies, platform roles,
+  // page fit), saved on this device and with the profile.
+  const [bulletRules, setBulletRules] = useState<BulletRules>(loadSavedBulletRules);
+  useEffect(() => {
+    try {
+      localStorage.setItem(BULLET_RULES_STORAGE_KEY, JSON.stringify(bulletRules));
+    } catch {
+      // Storage full or unavailable: the rules still apply for this session.
+    }
+  }, [bulletRules]);
+
   const handleSetActiveResume = (id: string) => {
     setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === id })));
     setSelectedResumeId(id);
@@ -444,7 +468,7 @@ export default function App() {
   useEffect(() => {
     if (isInitialLoad.current) return;
     if (user) setHasUnsavedChanges(true);
-  }, [resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
+  }, [resumeText, customPrompt, bulletRules, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
   const [jobDescription, setJobDescription] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
@@ -545,6 +569,10 @@ export default function App() {
             }
             if (data.customPrompt) {
               setCustomPrompt(data.customPrompt);
+            }
+            const savedBulletRules = normalizeBulletRules(data.bulletRules);
+            if (savedBulletRules) {
+              setBulletRules(savedBulletRules);
             }
             if (data.settings) {
               if (typeof data.settings.versioningEnabled === 'boolean') {
@@ -872,6 +900,7 @@ export default function App() {
         userId: user.uid,
         masterResumes: masterResumes, // Sync array of resumes
         customPrompt: customPrompt || "",
+        bulletRules,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -908,7 +937,7 @@ export default function App() {
     }, 2000); // Sync 2 seconds after last change
 
     return () => clearTimeout(timeoutId);
-  }, [hasUnsavedChanges, user, resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
+  }, [hasUnsavedChanges, user, resumeText, customPrompt, bulletRules, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -973,6 +1002,7 @@ export default function App() {
         encryptedApiKey: finalEncryptedKey,
         masterResumes: masterResumes,
         customPrompt: customPrompt,
+        bulletRules,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -2458,7 +2488,8 @@ export default function App() {
         selectedEngine.includes('hybrid') ? selectedEngine : undefined,
         targetCompany,
         brainDump,
-        blend
+        blend,
+        { bulletRules }
       );
 
       setOptimizationProgress(95);
