@@ -962,6 +962,17 @@ export function curatedTrends(targetRole: unknown, jobDescription?: unknown): Li
   };
 }
 
+/**
+ * The trend list for one optimization run, or null when the candidate has
+ * trends switched off. Only a literal `true` switches them on (request bodies
+ * are untrusted), so an absent flag reproduces the trend-free pipeline exactly.
+ */
+export function activeLinkedInTrends(enabled: unknown, targetRole: unknown, jobDescription?: unknown): LinkedInTrends | null {
+  if (enabled !== true) return null;
+  const trends = curatedTrends(targetRole, jobDescription);
+  return trends.skills.length > 0 ? trends : null;
+}
+
 /** The role families known to the catalogue, for display and tests. */
 export function trendFamilies(): Array<{ id: string; label: string; platform?: string; skills: string[] }> {
   return ROLE_FAMILIES.map((family) => ({
@@ -1356,7 +1367,9 @@ export function trendsFromReport(report: unknown): LinkedInTrends | null {
 /**
  * Attach resume.linkedin_trends. `trends` undefined re-uses the resume's
  * existing report; null removes it. Never throws: coverage is a report, and a
- * failure leaves the resume as it was (minus a stale report).
+ * failure leaves the resume as it was (minus a stale report). An existing
+ * report counts only when it is one of ours: a `linkedin_trends` object the
+ * model wrote itself must not lend its "evidence" to the next pass.
  */
 export function applyTrendCoverage(resume: any, trends: LinkedInTrends | null | undefined, options: TrendCoverageOptions = {}): any {
   if (!resume || typeof resume !== "object") return resume;
@@ -1365,7 +1378,8 @@ export function applyTrendCoverage(resume: any, trends: LinkedInTrends | null | 
       delete resume.linkedin_trends;
       return resume;
     }
-    const prior = resume.linkedin_trends;
+    const existing = resume.linkedin_trends;
+    const prior = existing && typeof existing === "object" && existing.method === TREND_COVERAGE_METHOD ? existing : undefined;
     const effective = trends ? normalizeLinkedInTrends(trends) : trendsFromReport(prior);
     if (!effective) {
       delete resume.linkedin_trends;
