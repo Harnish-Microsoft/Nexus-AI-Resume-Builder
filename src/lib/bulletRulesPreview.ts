@@ -4,6 +4,7 @@
  * planner the optimizer uses, plus small helpers for editing the rules.
  */
 import {
+  BULLET_RULES_METHOD,
   BULLET_RULE_LIMITS,
   activeBulletRules,
   companiesMatch,
@@ -11,14 +12,17 @@ import {
   isRuleBasis,
   planBulletBudgets,
   rolesFromResumeText,
-  type BudgetPlan,
+  type BudgetBasis,
   type BulletBudget,
   type BulletRange,
+  type BulletRules,
   type PageFitDecision,
   type PlatformDecision,
+  type RuleBasis,
 } from "./bulletBudget";
 
 export type PreviewBadge = "pinned" | "recent" | "platform" | "tenure" | "unreadable";
+type RuleBadge = Extract<PreviewBadge, "pinned" | "recent" | "platform">;
 
 export interface PreviewRow {
   key: string;
@@ -35,6 +39,7 @@ export interface PreviewRow {
   reason: string;
   /** The label before the page-fit cap lowered it; null when untouched. */
   fitFrom: string | null;
+  /** Platform terms found in the role's evidence, spelled for display. */
   matchedTerms: string[];
 }
 
@@ -60,29 +65,55 @@ export function rangeText(range: BulletRange): string {
   return range.min === range.max ? `${range.min}` : `${range.min}-${range.max}`;
 }
 
+/** How people write the platform terms the engine matches in lower case. */
+const TERM_DISPLAY: Record<string, string> = {
+  azure: "Azure",
+  "microsoft azure": "Microsoft Azure",
+  aks: "AKS",
+  "entra id": "Entra ID",
+  entra: "Entra",
+  bicep: "Bicep",
+  "arm template": "ARM template",
+  "arm templates": "ARM templates",
+  aws: "AWS",
+  "amazon web services": "Amazon Web Services",
+  ec2: "EC2",
+  s3: "S3",
+  eks: "EKS",
+  cloudformation: "CloudFormation",
+  cloudwatch: "CloudWatch",
+  gcp: "GCP",
+  "google cloud": "Google Cloud",
+  "google cloud platform": "Google Cloud Platform",
+  gke: "GKE",
+  bigquery: "BigQuery",
+};
+
+/** Matched terms for display: platform terms in their usual spelling, the candidate's own keywords as typed. */
+export function displayTerms(terms: string[], keywords: string[] = []): string[] {
+  const typed = new Map(keywords.map((keyword) => [keyword.toLowerCase().replace(/[\s-]+/g, " "), keyword]));
+  return Array.from(new Set(terms.map((term) => TERM_DISPLAY[term] ?? typed.get(term) ?? term)));
+}
+
 function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
-function badgeFor(budget: BulletBudget, platform: PlatformDecision | null): { badge: PreviewBadge; text: string } {
-  switch (budget.basis) {
-    case "pinned":
-      return { badge: "pinned", text: "Pinned" };
-    case "recent":
-      return { badge: "recent", text: "Recent" };
-    case "platform_match": {
-      const names = platform && platform.names.length > 0 ? platform.names.join("/") : "Platform";
-      return { badge: "platform", text: `${names} (${platform?.source === "jd" ? "JD" : "keyword"})` };
-    }
-    case "unparseable":
-      return { badge: "unreadable", text: "Dates unreadable" };
-    default:
-      return { badge: "tenure", text: "Tenure" };
-  }
+function ruleBadge(basis: RuleBasis, platform: PlatformDecision | null): { badge: RuleBadge; text: string } {
+  if (basis === "pinned") return { badge: "pinned", text: "Pinned" };
+  if (basis === "recent") return { badge: "recent", text: "Recent" };
+  const names = platform && platform.names.length > 0 ? platform.names.join("/") : "Platform";
+  return { badge: "platform", text: `${names} (${platform?.source === "jd" ? "JD" : "keyword"})` };
 }
 
-function toRow(budget: BulletBudget, platform: PlatformDecision | null): PreviewRow {
-  const { badge, text } = badgeFor(budget, platform);
+function badgeFor(basis: BudgetBasis, platform: PlatformDecision | null): { badge: PreviewBadge; text: string } {
+  if (isRuleBasis(basis)) return ruleBadge(basis, platform);
+  if (basis === "unparseable") return { badge: "unreadable", text: "Dates unreadable" };
+  return { badge: "tenure", text: "Tenure" };
+}
+
+function toRow(budget: BulletBudget, platform: PlatformDecision | null, keywords: string[]): PreviewRow {
+  const { badge, text } = badgeFor(budget.basis, platform);
   return {
     key: `${budget.index}`,
     role: budget.role,
@@ -95,23 +126,26 @@ function toRow(budget: BulletBudget, platform: PlatformDecision | null): Preview
     badgeText: text,
     reason: budget.reason,
     fitFrom: budget.fit ? budget.fit.label ?? `up to ${budget.fit.max}` : null,
-    matchedTerms: budget.matchedTerms ?? [],
+    matchedTerms: displayTerms(budget.matchedTerms ?? [], keywords),
   };
 }
 
-function describePlatform(plan: BudgetPlan, rows: PreviewRow[]): string | null {
-  const decision = plan.platform;
-  if (!plan.rules || !decision) return null;
-  const shown = rows.filter((row) => row.badge === "platform").length;
+/** How the platform rule chose its platform; `shown` counts the roles it claimed. */
+function platformSentence(
+  rules: BulletRules | null,
+  decision: PlatformDecision | null,
+  shown: number
+): string | null {
+  if (!rules || !decision) return null;
   const jd = decision.jd_platforms.join("/");
-  const keywords = plan.rules.platform.keywords;
+  const keywords = rules.platform.keywords;
   if (decision.source === "jd") {
     return `${decision.names.join("/")} is named in the job description; ${plural(shown, "other role")} show${shown === 1 ? "s" : ""} it.`;
   }
   if (decision.source === "keywords") {
     const lead = jd
       ? `The job description names ${jd}, but no other role shows it, so your keywords were used`
-      : plan.rules.platform.detectFromJd
+      : rules.platform.detectFromJd
         ? "No platform is named in the job description, so your keywords were used"
         : "Your keywords were used";
     return `${lead}: ${plural(shown, "other role")} show${shown === 1 ? "s" : ""} ${decision.names.join("/")}.`;
@@ -160,14 +194,14 @@ export function buildRulesPreview(
   if (!roles) return { ...empty, status: "free-text" };
   try {
     const plan = planBulletBudgets(roles, { now, rules, jobDescription });
-    const rows = plan.budgets.map((budget) => toRow(budget, plan.platform));
+    const rows = plan.budgets.map((budget) => toRow(budget, plan.platform, rules?.platform.keywords ?? []));
     return {
       ...empty,
       status: "ready",
       rows,
       totalMax: plan.budgets.reduce((sum, budget) => sum + budget.max, 0),
       platform: plan.platform,
-      platformNote: describePlatform(plan, rows),
+      platformNote: platformSentence(plan.rules, plan.platform, rows.filter((row) => row.badge === "platform").length),
       pageFit: plan.pageFit,
       pageFitNote: describePageFit(plan.pageFit),
     };
@@ -238,4 +272,102 @@ export function bulletRulesSummary(rulesInput: unknown): string[] {
   }
   if (rules.pageFit.enabled) parts.push(`max ${rules.pageFit.maxTotalBullets} total`);
   return parts;
+}
+
+/* ------------------------------------------------------------------ *
+ * Finished reports
+ * ------------------------------------------------------------------ */
+
+export type ReportBadge = RuleBadge | "system";
+
+export interface ReportRowView {
+  badge: ReportBadge;
+  /** "Pinned", "Recent", "Azure (JD)", "Azure (keyword)" or "System". */
+  badgeText: string;
+  /** What set the count, for the badge tooltip. */
+  badgeTitle: string;
+  /** The budget before the 2-page fit lowered it, e.g. "3-4"; null when untouched. */
+  fitFrom: string | null;
+  /** Shown under a rule role that ended below its minimum; null otherwise. */
+  underNote: string | null;
+}
+
+export interface BudgetReportView {
+  platformNote: string | null;
+  pageFitNote: string | null;
+  /** One entry per report role, in the same order. */
+  rows: ReportRowView[];
+}
+
+const stringList = (value: unknown): string[] | null =>
+  Array.isArray(value) && value.every((item) => typeof item === "string") ? (value as string[]) : null;
+
+/** A stored platform decision; null when it is missing or malformed. */
+function asPlatformDecision(value: unknown): PlatformDecision | null {
+  if (!value || typeof value !== "object") return null;
+  const { source, names, jd_platforms } = value as Record<string, unknown>;
+  const nameList = stringList(names);
+  const jdList = stringList(jd_platforms);
+  if (!nameList || !jdList || (source !== "jd" && source !== "keywords" && source !== "none")) return null;
+  return { source, names: nameList, jd_platforms: jdList };
+}
+
+/** A stored page-fit decision; null when it is missing or malformed. */
+function asPageFit(value: unknown): PageFitDecision | null {
+  if (!value || typeof value !== "object") return null;
+  const { cap, before, after, trimmed_roles } = value as Record<string, unknown>;
+  const numbers = [cap, before, after, trimmed_roles];
+  if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  return { cap: cap as number, before: before as number, after: after as number, trimmed_roles: trimmed_roles as number };
+}
+
+function reportRowView(role: any, platform: PlatformDecision | null, keywords: string[]): ReportRowView {
+  const basis = role?.basis;
+  const baseMax = Number(role?.base_max);
+  let fitFrom: string | null = null;
+  if (role?.fit_trimmed === true) {
+    if (typeof role.base_budget === "string" && role.base_budget.trim()) fitFrom = role.base_budget;
+    else if (Number.isFinite(baseMax)) fitFrom = `up to ${baseMax}`;
+  }
+  if (!isRuleBasis(basis)) {
+    return {
+      badge: "system",
+      badgeText: "System",
+      badgeTitle: "Set by the system from tenure and recency",
+      fitFrom,
+      underNote: null,
+    };
+  }
+  const { badge, text } = ruleBadge(basis, platform);
+  const matched = displayTerms(stringList(role?.matched) ?? [], keywords);
+  const budget = typeof role?.budget === "string" ? role.budget : null;
+  return {
+    badge,
+    badgeText: text,
+    badgeTitle: matched.length > 0 ? `Set by your Bullet Rules - shows ${matched.join(", ")}` : "Set by your Bullet Rules",
+    fitFrom,
+    underNote:
+      role?.status === "under" && budget
+        ? `Below your rule (${budget}): add more detail about this role to your master resume - bullets are never invented to reach a count.`
+        : null,
+  };
+}
+
+/**
+ * How the candidate's bullet rules shaped a finished budget report: a badge per
+ * role plus the platform and page-fit decisions. Null for a tenure-only report,
+ * which the report card renders exactly as before.
+ */
+export function describeBudgetReport(report: unknown): BudgetReportView | null {
+  if (!report || typeof report !== "object") return null;
+  const { method, roles, rules, platform, page_fit } = report as Record<string, unknown>;
+  if (method !== BULLET_RULES_METHOD || !Array.isArray(roles)) return null;
+  const decision = asPlatformDecision(platform);
+  const active = activeBulletRules(rules);
+  const rows = roles.map((role) => reportRowView(role, decision, active?.platform.keywords ?? []));
+  return {
+    platformNote: platformSentence(active, decision, rows.filter((row) => row.badge === "platform").length),
+    pageFitNote: describePageFit(asPageFit(page_fit)),
+    rows,
+  };
 }
