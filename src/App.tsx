@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useDeferredValue, Suspense, lazy } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import { 
   FileText, 
@@ -62,6 +62,9 @@ import { SortableSection } from './components/SortableSection';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { ResumeHealthScore } from './components/ResumeHealthScore';
+import { BulletRulesSettings } from './components/BulletRulesSettings';
+import { BulletBudgetReportCard } from './components/BulletBudgetReportCard';
+import { LinkedInTrendsCard } from './components/LinkedInTrendsCard';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
@@ -106,6 +109,9 @@ import { formatCertification } from './lib/certifications';
 
 import defaultMasterResume from './services/master_resume.json';
 import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
+import { defaultBulletRules, normalizeBulletRules, type BulletRules } from './lib/bulletBudget';
+import { bulletRulesSummary } from './lib/bulletRulesPreview';
+import { curatedTrends } from './lib/linkedinTrends';
 import {
   BLENDED_RESULT_KEY,
   CUSTOM_AUDIENCE_ID,
@@ -121,6 +127,29 @@ const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ d
 const AdditionalTools = lazy(() => import('./components/AdditionalTools').then(m => ({ default: m.AdditionalTools })));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const ProfessionalWelcomePage = lazy(() => import('./components/ProfessionalWelcomePage').then(m => ({ default: m.ProfessionalWelcomePage })));
+
+const BULLET_RULES_STORAGE_KEY = 'nexus_bullet_rules';
+
+/** Saved bullet rules, or the pre-filled defaults when none are saved or they are unreadable. */
+function loadSavedBulletRules(): BulletRules {
+  try {
+    const saved = localStorage.getItem(BULLET_RULES_STORAGE_KEY);
+    return (saved && normalizeBulletRules(JSON.parse(saved))) || defaultBulletRules();
+  } catch {
+    return defaultBulletRules();
+  }
+}
+
+const LINKEDIN_TRENDS_STORAGE_KEY = 'nexus_follow_linkedin_trends';
+
+/** Whether to follow the curated LinkedIn trends: on unless the candidate switched it off. */
+function loadFollowLinkedInTrends(): boolean {
+  try {
+    return localStorage.getItem(LINKEDIN_TRENDS_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
 
 const LoadingSpinner = () => (
   <div className="flex flex-col items-center justify-center p-12">
@@ -410,6 +439,28 @@ export default function App() {
     localStorage.setItem('resumeSelectionMode', mode);
   };
 
+  // The candidate's bullet rules (recent roles, pinned companies, platform roles,
+  // page fit), saved on this device and with the profile.
+  const [bulletRules, setBulletRules] = useState<BulletRules>(loadSavedBulletRules);
+  useEffect(() => {
+    try {
+      localStorage.setItem(BULLET_RULES_STORAGE_KEY, JSON.stringify(bulletRules));
+    } catch {
+      // Storage full or unavailable: the rules still apply for this session.
+    }
+  }, [bulletRules]);
+
+  // Follow the curated LinkedIn trends for the target role. Only trending skills the
+  // candidate's own material supports are used; the rest are reported as gaps.
+  const [followLinkedInTrends, setFollowLinkedInTrends] = useState<boolean>(loadFollowLinkedInTrends);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LINKEDIN_TRENDS_STORAGE_KEY, String(followLinkedInTrends));
+    } catch {
+      // Storage unavailable: the choice still applies for this session.
+    }
+  }, [followLinkedInTrends]);
+
   const handleSetActiveResume = (id: string) => {
     setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === id })));
     setSelectedResumeId(id);
@@ -444,7 +495,7 @@ export default function App() {
   useEffect(() => {
     if (isInitialLoad.current) return;
     if (user) setHasUnsavedChanges(true);
-  }, [resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
+  }, [resumeText, customPrompt, bulletRules, followLinkedInTrends, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
   const [jobDescription, setJobDescription] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
@@ -455,6 +506,13 @@ export default function App() {
   const [targetRole, setTargetRole] = useState('');
   const [targetCompany, setTargetCompany] = useState('none');
   const [brainDump, setBrainDump] = useState('');
+  // The trend list the next run will follow: the same role fallback and posting as the
+  // optimize call. Deferred, so matching a long posting never slows typing.
+  const deferredJobDescription = useDeferredValue(jobDescription);
+  const trendPreview = useMemo(
+    () => (followLinkedInTrends ? curatedTrends(targetRole || 'Professional Candidate', deferredJobDescription) : null),
+    [followLinkedInTrends, targetRole, deferredJobDescription]
+  );
   const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [fastMode, setFastMode] = useState(false);
@@ -545,6 +603,13 @@ export default function App() {
             }
             if (data.customPrompt) {
               setCustomPrompt(data.customPrompt);
+            }
+            const savedBulletRules = normalizeBulletRules(data.bulletRules);
+            if (savedBulletRules) {
+              setBulletRules(savedBulletRules);
+            }
+            if (typeof data.followLinkedInTrends === 'boolean') {
+              setFollowLinkedInTrends(data.followLinkedInTrends);
             }
             if (data.settings) {
               if (typeof data.settings.versioningEnabled === 'boolean') {
@@ -872,6 +937,8 @@ export default function App() {
         userId: user.uid,
         masterResumes: masterResumes, // Sync array of resumes
         customPrompt: customPrompt || "",
+        bulletRules,
+        followLinkedInTrends,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -908,7 +975,7 @@ export default function App() {
     }, 2000); // Sync 2 seconds after last change
 
     return () => clearTimeout(timeoutId);
-  }, [hasUnsavedChanges, user, resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
+  }, [hasUnsavedChanges, user, resumeText, customPrompt, bulletRules, followLinkedInTrends, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -973,6 +1040,8 @@ export default function App() {
         encryptedApiKey: finalEncryptedKey,
         masterResumes: masterResumes,
         customPrompt: customPrompt,
+        bulletRules,
+        followLinkedInTrends,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -2458,7 +2527,8 @@ export default function App() {
         selectedEngine.includes('hybrid') ? selectedEngine : undefined,
         targetCompany,
         brainDump,
-        blend
+        blend,
+        { bulletRules, linkedinTrends: followLinkedInTrends }
       );
 
       setOptimizationProgress(95);
@@ -3919,75 +3989,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 </div>
                               );
                             })()}
-                            {activeAudience && results[activeAudience]?.bullet_budget_report && (() => {
-                              const report = results[activeAudience].bullet_budget_report!;
-                              const statusTone: Record<string, string> = {
-                                within: 'text-emerald-500',
-                                trimmed: 'text-amber-500',
-                                under: 'text-sky-500',
-                                unbudgeted: 'opacity-50',
-                              };
-                              const statusLabel: Record<string, string> = {
-                                within: 'Within',
-                                trimmed: 'Trimmed',
-                                under: 'Under',
-                                unbudgeted: 'Model decided',
-                              };
-                              const statusHint: Record<string, string> = {
-                                within: 'Inside the budget for this tenure.',
-                                trimmed: 'The model wrote more than the ceiling; the weakest bullets were removed.',
-                                under: 'Fewer bullets than the budget. The platform never pads a role - add more detail about this role to your resume to reach it.',
-                                unbudgeted: 'The dates could not be read, so the count was left to the model (never more than the maximum).',
-                              };
-                              return (
-                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-teal-400' : 'text-teal-700'}`}>Bullet Budget</h3>
-                                      <p className="text-[10px] mt-1 opacity-70">
-                                        Bullets per role follow tenure, then recency ·{' '}
-                                        {report.trimmed > 0
-                                          ? `${report.trimmed} over-budget bullet${report.trimmed === 1 ? '' : 's'} removed`
-                                          : 'nothing removed'}
-                                      </p>
-                                    </div>
-                                    <span className={`text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${report.compliant ? 'text-emerald-500' : 'text-amber-500'}`}>
-                                      {report.compliant ? 'Compliant' : 'Review'}
-                                    </span>
-                                  </div>
-                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
-                                    {report.roles.map((role, idx) => (
-                                      <div key={`${role.company}-${role.role}-${idx}`} className="text-[10px]">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <span className="opacity-80 truncate" title={[role.role, role.company, role.duration].filter(Boolean).join(' · ')}>
-                                            {[role.role, role.company].filter(Boolean).join(' · ') || `Role ${idx + 1}`}
-                                            <span className="opacity-50"> · {role.tenure_months !== null ? `${role.tenure_months} mo` : 'dates unreadable'}</span>
-                                          </span>
-                                          <span className="font-bold tabular-nums whitespace-nowrap" title={`${role.reason}. ${statusHint[role.status] || ''}`}>
-                                            {role.delivered} / {role.budget ?? `max ${role.max}`}
-                                            <span className={`ml-2 uppercase tracking-wider ${statusTone[role.status] || ''}`}>
-                                              {statusLabel[role.status] || role.status}
-                                            </span>
-                                          </span>
-                                        </div>
-                                        {role.removed.length > 0 && (
-                                          <details className="mt-1">
-                                            <summary className="cursor-pointer opacity-50">
-                                              {role.removed.length} removed to fit the budget
-                                            </summary>
-                                            <ul className="mt-1 space-y-0.5">
-                                              {role.removed.map((bullet, bIdx) => (
-                                                <li key={bIdx} className="opacity-40 italic truncate" title={bullet}>“{bullet}”</li>
-                                              ))}
-                                            </ul>
-                                          </details>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              );
-                            })()}
+                            {activeAudience && results[activeAudience]?.bullet_budget_report && (
+                              <BulletBudgetReportCard report={results[activeAudience].bullet_budget_report!} isDarkMode={isDarkMode} />
+                            )}
+                            {activeAudience && results[activeAudience]?.linkedin_trends && (
+                              <LinkedInTrendsCard report={results[activeAudience].linkedin_trends} isDarkMode={isDarkMode} />
+                            )}
                             {activeAudience && results[activeAudience]?.audience_coverage && (() => {
                               const coverage = results[activeAudience].audience_coverage!;
                               const tone = (value: number | null) =>
@@ -4738,6 +4745,50 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             />
                             <p className="text-[10px] opacity-40 mt-1">These instructions will be given high priority during the resume optimization process.</p>
                           </div>
+
+                          {/* Bullet Rules summary (edited on the Profile tab) */}
+                          <div className={`mt-4 flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-[11px] ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                            <span className="min-w-0 truncate" title={bulletRulesSummary(bulletRules).join(' \u00b7 ')}>
+                              <span className="text-[10px] font-bold uppercase tracking-widest">Bullet Rules: </span>
+                              <span className={isDarkMode ? 'opacity-60' : 'opacity-70'}>
+                                {!bulletRules.enabled
+                                  ? 'Off - the system sizes every role by tenure'
+                                  : bulletRulesSummary(bulletRules).join(' \u00b7 ') || 'On, but no rule is active - the system sizes every role by tenure'}
+                              </span>
+                            </span>
+                            <Link to="/profile" className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-emerald-500 hover:underline">
+                              Edit
+                            </Link>
+                          </div>
+
+                          {/* LinkedIn trends switch: curated trending skills for the target role */}
+                          <div className={`mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-[11px] ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                            <span
+                              className="min-w-0 truncate"
+                              title={trendPreview
+                                ? `Curated LinkedIn trends for ${trendPreview.label} (reviewed ${trendPreview.as_of}). Only trending skills your own material supports are used; the rest are listed as gaps after the run.`
+                                : 'Trending skills are not considered'}
+                            >
+                              <span className="text-[10px] font-bold uppercase tracking-widest">LinkedIn Trends: </span>
+                              <span className={isDarkMode ? 'opacity-60' : 'opacity-70'}>
+                                {trendPreview
+                                  ? `On - ${trendPreview.label} (curated, reviewed ${trendPreview.as_of}) - only skills your resume supports`
+                                  : 'Off - trending skills are not considered'}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={followLinkedInTrends}
+                              aria-label="Follow LinkedIn trends"
+                              onClick={() => setFollowLinkedInTrends(on => !on)}
+                              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                                followLinkedInTrends ? 'bg-emerald-500' : isDarkMode ? 'bg-white/15' : 'bg-black/15'
+                              }`}
+                            >
+                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${followLinkedInTrends ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                            </button>
+                          </div>
                         
                         {/* Optimize Button Section */}
                           <div className="pt-4 border-t border-black/5 dark:border-white/10">
@@ -5177,6 +5228,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       </div>
                     )}
                   </section>
+
+                  <BulletRulesSettings
+                    rules={bulletRules}
+                    onChange={setBulletRules}
+                    isDarkMode={isDarkMode}
+                    resumeText={resumeText}
+                    jobDescription={jobDescription}
+                  />
 
                   {/* Google Drive Status/Reconnect */}
                   {!driveAccessToken && user && (

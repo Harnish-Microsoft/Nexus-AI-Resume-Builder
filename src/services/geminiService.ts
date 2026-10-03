@@ -9,8 +9,10 @@ import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
 import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
 import { applyImpactAudit, ImpactScoreResult } from "../lib/impactScore";
-import { computeBulletBudgets, enforceBulletBudgets } from "../lib/bulletBudget";
-import type { BulletBudget, BulletBudgetReport } from "../lib/bulletBudget";
+import { activeBulletRules, enforceBulletBudgets, planBulletBudgets, rolesFromResumeText } from "../lib/bulletBudget";
+import type { BudgetPlan, BulletBudgetReport, BulletRules } from "../lib/bulletBudget";
+import { activeLinkedInTrends, applyTrendCoverage, buildTrendBrief, trendEvidenceText, trendPreferTerms } from "../lib/linkedinTrends";
+import type { LinkedInTrends, TrendCoverageReport } from "../lib/linkedinTrends";
 import {
   AUDIENCE_PROFILES,
   applyAudienceCoverage,
@@ -60,10 +62,12 @@ export interface OptimizationResult {
   star_stories?: StarStory[];
   /** Deterministic bullet-quality audit. Absent when there are too few bullets to score. */
   impact_audit?: ImpactScoreResult;
-  /** Per-role tenure budget and what enforcement delivered against it. */
+  /** Per-role budget (bullet rules, then tenure) and what enforcement delivered against it. */
   bullet_budget_report?: BulletBudgetReport;
   /** The blended readers and how much of what each scans for the final resume evidences. */
   audience_coverage?: AudienceCoverageReport;
+  /** Trending LinkedIn skills for the target role: used, supported but unused, and gaps. Only when trends are followed. */
+  linkedin_trends?: TrendCoverageReport;
   audit_report?: AuditReport;
   _usage?: {
     promptTokenCount: number;
@@ -541,15 +545,13 @@ function candidateSourceText(resumeText: string, brainDump?: string, customPromp
     .join("\n\n");
 }
 
-/** Budgets for a JSON master resume; undefined for free-form text, whose roles are unknown. */
-function budgetsFromResumeText(resumeText: string): BulletBudget[] | undefined {
-  try {
-    const source = JSON.parse(resumeText);
-    const roles = source?.experience || source?.work_experience;
-    return Array.isArray(roles) && roles.length > 0 ? computeBulletBudgets(roles) : undefined;
-  } catch {
-    return undefined;
-  }
+/** Budget plan for a JSON master resume; undefined for free-form text. */
+function budgetPlanFromResumeText(
+  resumeText: string,
+  options: { rules: BulletRules | null; jobDescription: string }
+): BudgetPlan | undefined {
+  const roles = rolesFromResumeText(resumeText);
+  return roles ? planBulletBudgets(roles, options) : undefined;
 }
 
 /**
@@ -568,10 +570,31 @@ function finalizeResume(
     brainDump?: string;
     customPrompt?: string;
     audienceMix?: AudienceMix | null;
+    /**
+     * Active bullet rules, or null for the tenure tiers alone. A server report made
+     * under the same rules is reused as is, so both sides agree.
+     */
+    bulletRules: BulletRules | null;
+    /**
+     * Curated LinkedIn trends when the candidate follows them. A server report is
+     * reused as prior evidence (it saw the candidate's other resumes too).
+     */
+    trends?: LinkedInTrends | null;
   }
 ): void {
   const sourceText = candidateSourceText(params.resumeText, params.brainDump, params.customPrompt);
-  enforceBulletBudgets(parsed, { sourceText });
+  const trends = params.trends || null;
+  // The candidate's material only, as on the server: the custom prompt is instructions, not
+  // evidence, and the notes stay a separate source so a JSON resume counts by its values only.
+  const trendExtra = [params.brainDump];
+  enforceBulletBudgets(parsed, {
+    sourceText,
+    rules: params.bulletRules,
+    jobDescription: params.jobDescription,
+    sourceRoles: rolesFromResumeText(params.resumeText),
+    ...(trends ? { preferTerms: trendPreferTerms(trends, trendEvidenceText(params.resumeText, ...trendExtra)) } : {}),
+  });
+  if (trends) applyTrendCoverage(parsed, trends, { sourceText: params.resumeText, extraEvidence: trendExtra });
   applyMatchScores(parsed, {
     jobDescription: params.jobDescription,
     originalResumeText: params.resumeText,
@@ -581,6 +604,13 @@ function finalizeResume(
   applyImpactAudit(parsed, { sourceText });
   // Baseline is the resume alone: what each reader would have seen before optimization.
   applyAudienceCoverage(parsed, params.audienceMix, { sourceText: params.resumeText });
+}
+
+export interface OptimizeResumeOptions {
+  /** The candidate's bullet rules; omitted, null or disabled for the tenure tiers alone. */
+  bulletRules?: BulletRules | null;
+  /** Follow the curated LinkedIn trends for the target role. Anything but `true` leaves them off. */
+  linkedinTrends?: boolean;
 }
 
 export async function optimizeResume(
@@ -599,9 +629,13 @@ export async function optimizeResume(
   pipelineType?: string,
   targetCompany?: string,
   brainDump?: string,
-  audienceMix?: AudienceMix | null
+  audienceMix?: AudienceMix | null,
+  options: OptimizeResumeOptions = {}
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
+  const bulletRules = activeBulletRules(options.bulletRules);
+  // From the same inputs the server uses, so both sides follow the same trend list.
+  const trends = activeLinkedInTrends(options.linkedinTrends, targetRole, jobDescription);
 
   // All selected readers are written for in this ONE run, as a weighted brief.
   const blend = normalizeAudienceMix(audienceMix);
@@ -645,7 +679,9 @@ export async function optimizeResume(
           apiKey: config.openaiConfig.apiKey,
           pipelineType,
           targetCompany,
-          brainDump
+          brainDump,
+          ...(bulletRules ? { bulletRules } : {}),
+          ...(trends ? { linkedinTrends: true } : {})
         })
       });
 
@@ -725,6 +761,8 @@ export async function optimizeResume(
           brainDump,
           customPrompt,
           audienceMix: blend,
+          bulletRules,
+          trends,
         });
 
         return fixTitle(parsed);
@@ -733,6 +771,10 @@ export async function optimizeResume(
       console.warn("V2 Pipeline failed, falling back to legacy optimization:", e);
     }
   }
+
+  // Computed from the real dates when the master resume is structured; for
+  // free-form text the prompt states the rules and tiers for the model to apply.
+  const budgetPlan = budgetPlanFromResumeText(resumeText, { rules: bulletRules, jobDescription });
 
   const prompt = buildResumeGenerationPrompt({
     targetRole,
@@ -746,9 +788,11 @@ export async function optimizeResume(
     jobDescription,
     inputLabel: "SOURCE RESUME (raw text)",
     inputData: resumeText,
-    // Computed from the real dates when the master resume is structured; for
-    // free-form text the prompt derives them from the tiers instead.
-    bulletBudgets: budgetsFromResumeText(resumeText),
+    bulletBudgets: budgetPlan?.budgets,
+    bulletRules,
+    platformDecision: budgetPlan?.platform ?? null,
+    // Only trending names the candidate's own material supports; the custom prompt is not evidence.
+    trendBrief: trends ? buildTrendBrief(trends, { scope: "document", evidenceText: trendEvidenceText(resumeText, brainDump) }) : undefined,
   });
 
   const maxRetries = 5;
@@ -806,6 +850,8 @@ export async function optimizeResume(
         // never taken from the model. Asking an LLM to score against a schema
         // example just returns the example, which is why every resume used to
         // report the same number.
+        // The same goes for the trend report: one in the model's output is not ours.
+        if (trends) delete parsed.linkedin_trends;
         finalizeResume(parsed, {
           resumeText,
           jobDescription,
@@ -813,6 +859,8 @@ export async function optimizeResume(
           brainDump,
           customPrompt,
           audienceMix: blend,
+          bulletRules,
+          trends,
         });
 
         if (data.usage) {

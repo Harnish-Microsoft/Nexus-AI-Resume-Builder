@@ -24,7 +24,18 @@ import { saveResumeVersion } from "./server/memory";
 import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
 import { applyMatchScores } from "./src/lib/matchScore";
 import { applyImpactAudit } from "./src/lib/impactScore";
-import { computeBulletBudgets, enforceBulletBudgets } from "./src/lib/bulletBudget";
+import { activeBulletRules, bulletRulesFingerprint, enforceBulletBudgets, planBulletBudgets } from "./src/lib/bulletBudget";
+import type { BulletRules } from "./src/lib/bulletBudget";
+import {
+  activeLinkedInTrends,
+  applyTrendCoverage,
+  buildTrendBrief,
+  describeTrendSource,
+  trendEvidenceText,
+  trendFingerprint,
+  trendPreferTerms,
+} from "./src/lib/linkedinTrends";
+import type { LinkedInTrends } from "./src/lib/linkedinTrends";
 import { audienceHeadline, buildAudienceBrief, normalizeAudienceMix } from "./src/lib/audienceProfiles";
 // import { scrapeJobs } from "./server/jobScraper";
 
@@ -271,15 +282,22 @@ function decrypt(text: string) {
  * Deterministic post-processing shared by every generation branch (OpenAI
  * premium, Gemini split-gen, and the fallbacks) before the response is cached:
  *
- *   1. enforce each role's tenure-based bullet budget (trims, never pads),
- *   2. replace the model's guessed match_score/baseline_score with values
+ *   1. enforce each role's bullet budget - the candidate's bullet rules first,
+ *      then the tenure tiers (trims, never pads),
+ *   2. when the candidate follows LinkedIn trends, report which trending skills
+ *      the resume uses, could use, or lacks evidence for, and drop skills
+ *      entries that name only unsupported ones,
+ *   3. replace the model's guessed match_score/baseline_score with values
  *      computed from the real job description and the real resume,
- *   3. run the impact audit, tracing every figure back to the candidate's own
+ *   4. run the impact audit, tracing every figure back to the candidate's own
  *      material.
  *
  * Budgets run first so the scores and the audit describe the document the
  * candidate actually receives. The source text deliberately excludes the
  * reference resumes so that the client, which re-runs the same steps, agrees.
+ * The budget report records the rules' decisions, and the trend report the
+ * evidence it found (reference resumes included), so the client's pass reuses
+ * them instead of re-deciding from evidence it no longer has.
  */
 function finalizeResumeResult(
   result: any,
@@ -290,17 +308,44 @@ function finalizeResumeResult(
     jdKeywords?: string[];
     brainDump?: string;
     customPrompt?: string;
+    /** Active bullet rules; null or omitted for the tenure tiers alone. */
+    bulletRules?: BulletRules | null;
+    /** Source roles with their original bullets, for the platform rule's evidence. */
+    sourceRoles?: unknown[];
+    now?: Date;
+    /** Curated LinkedIn trends when the candidate follows them; null or omitted otherwise. */
+    trends?: LinkedInTrends | null;
+    /** More of the candidate's own material (their other resumes) that can evidence a trending skill. */
+    trendEvidence?: unknown[];
   }
 ): any {
   if (!result || typeof result.result !== "string") return result;
   try {
     const parsed = JSON.parse(result.result);
-    const { brainDump, customPrompt, ...scoreParams } = params;
+    const { brainDump, customPrompt, bulletRules, sourceRoles, now, trends, trendEvidence, ...scoreParams } = params;
     const sourceText = [params.originalResumeText, brainDump, customPrompt]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
+    // Trending skills are judged against the candidate's material only; the custom
+    // prompt is instructions, not evidence. The notes stay a separate source so a JSON
+    // resume still counts by its values only. The client re-runs this with the same material.
+    const trendExtra: unknown[] = trends ? [brainDump, ...(Array.isArray(trendEvidence) ? trendEvidence : [])] : [];
 
-    const budget = enforceBulletBudgets(parsed, { sourceText });
+    const budget = enforceBulletBudgets(parsed, {
+      sourceText,
+      rules: bulletRules ?? null,
+      jobDescription: params.jobDescription,
+      sourceRoles,
+      now,
+      ...(trends ? { preferTerms: trendPreferTerms(trends, trendEvidenceText(params.originalResumeText, ...trendExtra)) } : {}),
+    });
+    // After budgets, so it describes the delivered document; before scoring, because
+    // it drops skills entries that name only unsupported trending skills. The server
+    // writes the first report, so one already here came from the model: discard it.
+    if (trends) {
+      delete parsed.linkedin_trends;
+      applyTrendCoverage(parsed, trends, { sourceText: params.originalResumeText, extraEvidence: trendExtra });
+    }
     applyMatchScores(parsed, scoreParams);
     applyImpactAudit(parsed, { sourceText });
     if (budget) {
@@ -310,6 +355,14 @@ function finalizeResumeResult(
           (outside.length > 0
             ? ` (${outside.map((r) => `${r.role || "role"}: ${r.delivered}/${r.budget ?? `max ${r.max}`} ${r.status}`).join("; ")})`
             : "")
+      );
+    }
+    const trendReport = parsed.linkedin_trends;
+    if (trends && trendReport) {
+      console.log(
+        `[Trends] ${trendReport.label}: ${trendReport.used.length} used, ${trendReport.available.length} supported but unused, ` +
+          `${trendReport.gaps.length} gaps, ${trendReport.unsupported.length} unsupported, ` +
+          `${trendReport.removed.length} unsupported skills entr${trendReport.removed.length === 1 ? "y" : "ies"} removed`
       );
     }
     console.log(
@@ -870,12 +923,21 @@ async function startServer() {
       pipelineType,
       targetCompany,
       brainDump,
-      apiKey
+      apiKey,
+      bulletRules: requestedBulletRules,
+      linkedinTrends
     } = req.body;
 
     if (!resumeText || !jobDescription) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+
+    // Untrusted input: clamped and sanitized; null when absent or switched off,
+    // which reproduces the tenure-only budgets exactly.
+    const bulletRules = activeBulletRules(requestedBulletRules);
+    // Curated LinkedIn trends (src/lib/linkedinTrends.ts); null unless the candidate
+    // follows them, which leaves the cache key, the prompts and the output as before.
+    const trends = activeLinkedInTrends(linkedinTrends, targetRole, jobDescription);
 
     // Every selected reader is written for in ONE run: the weighted mix becomes a
     // brief in each prompt. The brief is rebuilt here from the validated mix, never
@@ -945,7 +1007,9 @@ async function startServer() {
         customPrompt,
         pipelineType: selectedPipeline,
         hasGemini: !!geminiKey,
-        hasOpenAI: !!openaiKey
+        hasOpenAI: !!openaiKey,
+        ...(bulletRules ? { bulletRules: bulletRulesFingerprint(bulletRules) } : {}),
+        ...(trends ? { linkedinTrends: trendFingerprint(trends) } : {})
       });
       
       const cachedResult = pipelineCache.get(cacheKey);
@@ -990,10 +1054,33 @@ async function startServer() {
 
       // STEP 2: Internal Logic (Free) - Trimming
       console.log("[Pipeline] Step 2: Trimming Content...");
-      const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords);
+      // ONE budget plan for every generation path and for enforcement, read from
+      // the full posting so the platform rule sees what the candidate pasted.
+      const budgetOptions = { now: new Date(), rules: bulletRules, jobDescription };
+      const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords, budgetOptions);
+      const budgetPlan = planBulletBudgets(optimizedInput.experience, budgetOptions);
+      if (budgetPlan.rules) {
+        console.log(
+          `[Budget] Bullet rules: ${budgetPlan.budgets
+            .map((b) => `${b.company || b.role || "role"} ${b.label ?? `max ${b.max}`} (${b.basis})`)
+            .join("; ")}` +
+            (budgetPlan.pageFit
+              ? ` | page fit ${budgetPlan.pageFit.before}->${budgetPlan.pageFit.after} of ${budgetPlan.pageFit.cap}`
+              : "")
+        );
+      }
       
       console.log("=== OPTIMIZED INPUT EXPERIENCE ===");
       console.dir(optimizedInput.experience, { depth: null });
+
+      // Which trending skills the prompts may name is decided by the candidate's own
+      // material - this resume, the brain dump and their other resumes - never by the
+      // custom prompt, which is instructions rather than evidence.
+      const trendReferences = trends ? masterResumes.map((entry: any) => entry?.data ?? entry) : [];
+      const trendBrief = trends
+        ? buildTrendBrief(trends, { scope: "document", evidenceText: trendEvidenceText(resumeText, brainDump, ...trendReferences) })
+        : "";
+      if (trends) console.log(`[Trends] ${describeTrendSource(trends)}: ${trends.skills.length} trending skills considered.`);
 
       // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
       const roleCount = optimizedInput.experience.length;
@@ -1008,7 +1095,10 @@ async function startServer() {
         roleCount,
         jdKeywords: optimizedInput.jd_keywords,
         masterResumes,
-        bulletBudgets: computeBulletBudgets(optimizedInput.experience),
+        bulletBudgets: budgetPlan.budgets,
+        bulletRules: budgetPlan.rules,
+        platformDecision: budgetPlan.platform,
+        trendBrief,
         // The extracted keyword list alone is too lossy to differentiate two job
         // descriptions for similar roles, which caused near-identical output across
         // different JDs. The model needs the actual posting to tailor against.
@@ -1134,7 +1224,7 @@ async function startServer() {
           Audience: ${audienceText}. Mode: ${mode}.
           Keywords: ${optimizedInput.jd_keywords.join(', ')}.
           ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}` : ''}
-          ${documentAudienceBrief}
+          ${documentAudienceBrief}${trendBrief ? `\n          ${trendBrief}` : ''}
           
           INPUT DATA:
           ${JSON.stringify({
@@ -1202,6 +1292,14 @@ async function startServer() {
               jobDescription: Optimization.trimInput(jobDescription, 6000),
               jdKeywords: optimizedInput.jd_keywords,
               audienceBrief: roleAudienceBrief,
+              budgetPlan,
+              bulletRules: budgetPlan.rules,
+              // Supporting evidence for grounded expansion; only rule roles receive it.
+              referenceResumes: masterResumes,
+              skills: optimizedInput.skills,
+              now: budgetOptions.now,
+              // Each role may name only the trending skills its own material shows.
+              ...(trends ? { trends } : {}),
             }
           )
         ]);
@@ -1265,6 +1363,10 @@ async function startServer() {
         jdKeywords,
         brainDump,
         customPrompt,
+        bulletRules: budgetPlan.rules,
+        sourceRoles: optimizedInput.experience,
+        now: budgetOptions.now,
+        ...(trends ? { trends, trendEvidence: trendReferences } : {}),
       });
       Optimization.saveToCache(cacheKey, result);
       res.json(result);
@@ -1290,12 +1392,14 @@ async function startServer() {
         mode,
         audience,
         customPrompt,
-        brainDump
+        brainDump,
+        bulletRules: requestedBulletRules
       } = req.body;
   
       if (!resumeText || !jobDescription) {
         return res.status(400).json({ error: "Missing input" });
       }
+      const bulletRules = activeBulletRules(requestedBulletRules);
   
       // ===============================
       // 1. GET KEYS
@@ -1330,15 +1434,26 @@ async function startServer() {
       // ===============================
       // 4. ROLE GENERATION (NO DUP)
       // ===============================
+      const sourceExperience = agentOutput.hr.experience || resumeData.experience;
+      const budgetNow = new Date();
       const roles = await generatePerRole(
-        agentOutput.hr.experience || resumeData.experience,
+        sourceExperience,
         geminiKey,
         targetCompany,
         targetRole,
         audience,
         mode,
         customPrompt,
-        brainDump
+        brainDump,
+        // Planned from the full posting so the platform rule can read it.
+        bulletRules
+          ? {
+              budgetPlan: planBulletBudgets(sourceExperience, { now: budgetNow, rules: bulletRules, jobDescription }),
+              bulletRules,
+              skills: resumeData.skills,
+              now: budgetNow,
+            }
+          : undefined
       );
   
       // ===============================

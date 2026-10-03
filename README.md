@@ -40,6 +40,36 @@ All sensitive API keys (Gemini, OpenAI) are never stored in plain text. They are
 ### 8. Global Command Palette (`Cmd+K`)
 A unified search and action bar for high-efficiency navigation across the entire application workspace.
 
+### 9. Bullet Rules (how many bullets each role gets)
+You decide how deep the roles that matter go; the system sizes the rest. Edit the rules on the **Profile** tab, where a live preview shows every role's budget against your master resume. The **Build** tab shows a one-line summary.
+
+| Rule | Default | Bullets |
+|---|---|---|
+| Most recent roles (by end date, current roles first) | 2 most recent | 6-7 |
+| Pinned companies | HCLTech | 2 |
+| Other roles that show your platform | Azure (a platform named in the job description wins when one of your roles shows it) | 4-5 |
+| Every other role | Tenure tiers, decided by the system | 1-4 |
+| 2-page fit | On, 32 bullets in total | Trims the oldest system-sized roles first |
+
+- **Precedence** (first match wins): pinned company, then the most recent roles, then platform match, then tenure tiers. A pinned company keeps its count even when it is one of the most recent roles.
+- **Platform match** reads only the role's own title and bullets, so the job description alone never makes a role "Azure".
+- **Tenure tiers** for the rest: 2 months or less gets 1 bullet, 3-6 months 1-2, 7-12 months 2-3, 13-23 months 2-3, 24+ months 3-4, and a role that ended more than 10 years ago 1-2. A role whose dates can't be read is capped at 7. With the recent-roles rule off, the latest substantial role gets the original 4-5 or 6-7.
+- **2-page fit** lowers system-sized roles one bullet at a time, oldest first, never below one bullet. Roles covered by your rules are never trimmed.
+- **Bullets are never invented.** A role whose source has fewer achievements than its rule asks for keeps what it has, and the results say so. When the model writes too many, the weakest bullets are removed.
+- The **Bullet Budget** card in the results pane lists each role's budget, why it got it, and anything removed.
+- Saved in your browser and, when signed in, in your profile. Switching the rules off restores the original tenure-only budgets exactly.
+- **Logic**: `src/lib/bulletBudget.ts` (planning and enforcement), `src/lib/bulletRulesPreview.ts`, `src/components/BulletRulesSettings.tsx`, `src/components/BulletBudgetReportCard.tsx`.
+
+### 10. LinkedIn Trends (evidence only)
+**Follow LinkedIn trends** (Build tab, on by default) steers each resume toward the skills trending on LinkedIn for the target role, but only the ones your own material supports.
+- **Trend list**: a curated catalogue of role families (Azure, AWS and Google Cloud, cloud engineering, infrastructure and operations, modern workplace, SRE and platform engineering, cybersecurity, data and AI, software engineering, solution architecture, technology leadership, and a general list), reviewed against LinkedIn's published skill trends (`CURATED_TRENDS_REVIEWED`, currently 2026-10). The target role and job description select up to three families and 32 skills. The Build tab names the list the next run will follow.
+- **Evidence only**: a trending skill is used only when your master resume, brain dump or other master resumes show it. In a JSON master resume, contact details, company names and dates don't count as evidence, and the custom prompt never does. Trending skills you lack are listed as **Trending gaps** and never written in. Add one to your master resume only if it is true.
+- **After generation**, every trending skill is labelled: in the resume, supported but not used, gap, or named without support. Skills entries that name only unsupported trending skills are removed. The **LinkedIn Trends** card in the results pane shows all of it. Match and impact scores ignore the trend list.
+- **Why curated, not live**: LinkedIn has no public trends API, and the Gemini API terms for Grounding with Google Search forbid caching or modifying grounded results, so search results cannot steer generation. To refresh the trends, edit the catalogue in `src/lib/linkedinTrends.ts` and bump `CURATED_TRENDS_REVIEWED`. Cached results made with the old list are not reused.
+- Switched off, nothing is sent: prompts, cache keys and output are exactly as before. The choice is saved in your browser and profile.
+- Covers the pipeline the app uses (`/api/v2/optimize` and its in-browser fallback). The unused `/api/v3/optimize` route is unchanged.
+- **Logic**: `src/lib/linkedinTrends.ts`, `src/components/LinkedInTrendsCard.tsx`.
+
 ## 🛠 Technical Architecture
 
 - **Frontend**: React 18, Vite, Tailwind CSS, Framer Motion (animations).

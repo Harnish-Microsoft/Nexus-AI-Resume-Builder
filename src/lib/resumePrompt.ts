@@ -13,8 +13,14 @@
  * esbuild (node) and vite (browser).
  */
 
-import { describeBudgetRules, formatBudgetTable, UNPARSEABLE_MAX } from "./bulletBudget";
-import type { BulletBudget } from "./bulletBudget";
+import {
+  activeBulletRules,
+  describeBudgetRules,
+  formatBudgetTable,
+  isRuleBasis,
+  UNPARSEABLE_MAX,
+} from "./bulletBudget";
+import type { BulletBudget, BulletRules, PlatformDecision } from "./bulletBudget";
 import { BANNED_LEAD_VERBS } from "./impactScore";
 
 export interface ResumePromptOptions {
@@ -40,6 +46,16 @@ export interface ResumePromptOptions {
   recruiterSimulationMode?: boolean;
   /** Per-role budgets computed from the source dates; rendered as an authoritative table. */
   bulletBudgets?: BulletBudget[];
+  /**
+   * The candidate's bullet rules. When active, the budget rule puts them ahead of
+   * the tenure tiers, marks each table row [RULE] or [SYSTEM], and asks for
+   * grounded expansion on rule roles. Omitted or disabled: the tenure wording.
+   */
+  bulletRules?: BulletRules | null;
+  /** How the platform rule chose its platform (planBulletBudgets().platform). */
+  platformDecision?: PlatformDecision | null;
+  /** buildTrendBrief(trends, { scope: "document" }): trending names the candidate's material supports. */
+  trendBrief?: string;
 }
 
 function titleCase(word: string): string {
@@ -367,6 +383,158 @@ const BUDGET_ENFORCEMENT = `ENFORCEMENT: the platform counts every role's bullet
    Splitting a compound source bullet into two genuine achievements is allowed; restating
    one achievement twice is not.`;
 
+/** Whole-document enforcement when the candidate's bullet rules are active. */
+const RULES_BUDGET_ENFORCEMENT = `ENFORCEMENT: the platform counts every role's bullets after generation. Bullets beyond a
+   role's ceiling are deleted automatically, weakest first - an extra bullet never ships, it
+   only displaces a stronger one. For a [SYSTEM] role the low end of a range is a target, not
+   a quota: if the source evidences fewer distinct achievements, write fewer bullets rather
+   than invent one. For a [RULE] role the low end is the candidate's own minimum: reach it
+   through GROUNDED EXPANSION (below). Falling short of it is a failure the platform reports;
+   inventing an achievement to reach it is a worse one. Splitting a compound source bullet
+   into two genuine achievements is allowed; restating one achievement twice is not.`;
+
+const GROUNDED_EXPANSION_DOCUMENT = `GROUNDED EXPANSION ([RULE] roles only): the candidate chose these counts, so meet each
+   [RULE] role's minimum by drawing out more of the work its own source already shows:
+   - split a compound source bullet into its separate, genuine achievements;
+   - develop the systems, tools, and scope the role's title and bullets name - what was
+     designed, built, secured, migrated, automated, or operated, and for whom;
+   - use the brain dump and the candidate's other resume versions of the SAME role, when given;
+   - use an item from the candidate's skills list only where it fits that role's work and dates.
+   When a [RULE] role's source holds more achievements than its ceiling, keep the ones most
+   relevant to the target posting. Never add a figure, employer, client, certification, or
+   technology the candidate's material does not show, and never restate one achievement to
+   reach a count.`;
+
+/** Per-role enforcement for a role whose count one of the candidate's bullet rules set. */
+const RULE_ROLE_ENFORCEMENT = `ENFORCEMENT: the platform counts this role's bullets after generation. Bullets beyond
+   the ceiling are deleted automatically, weakest first - an extra bullet never ships, it only
+   displaces a stronger one. An attempt below the minimum is sent back for correction.
+   Splitting a compound source bullet into two genuine achievements is allowed; restating
+   one achievement twice is not.`;
+
+const MAX_SUPPORTING_BULLETS = 15;
+const MAX_SUPPORTING_SKILLS = 40;
+const MAX_SUPPORTING_CHARS = 400;
+
+/** The candidate's own material beyond one role's source bullets. */
+export interface RoleSupportingEvidence {
+  /** Bullets for this same role from the candidate's other resume versions. */
+  otherVersions?: string[];
+  /** The candidate's skills list. Shown to rule roles only, for grounded expansion. */
+  skills?: string[];
+}
+
+function evidenceKey(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** Trimmed, de-duplicated strings, skipping any whose key is in `exclude`. */
+function cleanEvidenceList(values: unknown, limit: number, exclude: Set<string> = new Set()): string[] {
+  const out: string[] = [];
+  const seen = new Set(exclude);
+  for (const value of Array.isArray(values) ? values : []) {
+    if (typeof value !== "string") continue;
+    const text = value.replace(/\s+/g, " ").trim().slice(0, MAX_SUPPORTING_CHARS);
+    const key = evidenceKey(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Prefixes every non-empty line. */
+function indentBlock(text: string, indent: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line ? `${indent}${line}` : line))
+    .join("\n");
+}
+
+/** Rule 4 of the whole-document prompt without bullet rules: the tenure tiers (unchanged wording). */
+function tenureBudgetSection(budgets: BulletBudget[] | null): string {
+  return `4. BULLET BUDGET - TENURE FIRST, THEN RECENCY (trim wording, never roles):
+${
+    budgets
+      ? `   PER-ROLE BUDGET - computed from the actual dates. AUTHORITATIVE: it overrides every
+   heuristic below and your own reading of the dates.
+${formatBudgetTable(budgets)}
+   The tiers these were derived from (first match wins):
+${describeBudgetRules()}`
+      : `   Derive each role's tenure from its duration field (and the CURRENT DATE for ongoing
+   roles), then apply the first tier that matches:
+${describeBudgetRules()}
+   The recency tier applies to any ongoing role and to the most recent role longer than
+   12 months. A role whose dates cannot be read never exceeds ${UNPARSEABLE_MAX} bullets.`
+  }
+   ${BUDGET_ENFORCEMENT}
+
+   ANTI-PADDING RULE: bullet count must stay proportionate to time served. A long list
+   under a short stint reads as padding, invites scrutiny of the entire document, and is
+   a worse outcome than saying less. Never inflate a brief role to match the depth of a
+   multi-year one, however senior the title or well known the employer. For a stint under
+   three months, state the single thing that was actually delivered and stop.
+
+   Depth belongs to the roles that earned it: give substantial, long-tenure positions the
+   fullest treatment, and let short ones stay deliberately thin.
+   The total document must fit 1-2 pages, achieved by trimming bullets and tightening
+   wording ONLY. Rule 1 always wins over this rule.`;
+}
+
+/** Rule 4 of the whole-document prompt when the candidate's bullet rules are active. */
+function rulesBudgetSection(
+  budgets: BulletBudget[] | null,
+  rules: BulletRules,
+  platform: PlatformDecision | null | undefined
+): string {
+  const described = describeBudgetRules("   ", { rules, platform });
+  const recentOn = rules.recent.enabled && rules.recent.count > 0;
+  const cap = rules.pageFit.enabled ? rules.pageFit.maxTotalBullets : null;
+  const pageFit =
+    cap === null
+      ? ""
+      : budgets
+        ? ` - the table already applies the candidate's ${cap}-bullet page-fit cap`
+        : ` - keep the whole document within the candidate's ${cap}-bullet page-fit cap`;
+  return `4. BULLET BUDGET - THE CANDIDATE'S BULLET RULES FIRST, THEN TENURE (trim wording, never roles):
+${
+    budgets
+      ? `   PER-ROLE BUDGET - computed from the candidate's bullet rules and the actual dates.
+   AUTHORITATIVE: it overrides every heuristic below and your own reading of the dates.
+   [RULE] = set by one of the candidate's own bullet rules; [SYSTEM] = set by the tenure tiers.
+${formatBudgetTable(budgets, "   ", { markSource: true })}
+   The rules these were derived from:
+${described}`
+      : `   Apply the candidate's bullet rules first (first match wins). Every role no rule claims
+   takes the first tenure tier that matches, reading tenure from its duration field (and
+   the CURRENT DATE for ongoing roles):
+${described}
+   ${
+          recentOn ? `"Most recent" is decided by end date; an ongoing role ends today. ` : ""
+        }A role whose dates cannot be
+   read never exceeds ${UNPARSEABLE_MAX} bullets unless a bullet rule claims it. Below, [RULE] means a
+   role one of these bullet rules claims and [SYSTEM] means every other role.`
+  }
+   ${RULES_BUDGET_ENFORCEMENT}
+
+   ${GROUNDED_EXPANSION_DOCUMENT}
+
+   ANTI-PADDING RULE ([SYSTEM] roles): bullet count must stay proportionate to time served.
+   A long list under a short stint reads as padding, invites scrutiny of the entire
+   document, and is a worse outcome than saying less. Never inflate a brief [SYSTEM] role
+   to match the depth of a multi-year one, however senior the title or well known the
+   employer. For a stint under three months, state the single thing that was actually
+   delivered and stop. [RULE] roles follow the candidate's counts instead.
+
+   Depth follows the budget: [RULE] roles get the depth the candidate chose; among [SYSTEM]
+   roles, give substantial, long-tenure positions the fuller treatment and let short ones
+   stay deliberately thin.
+   The total document must fit 1-2 pages, achieved by trimming bullets and tightening
+   wording ONLY${pageFit}.
+   Rule 1 always wins over this rule.`;
+}
+
 export function buildResumeGenerationPrompt(options: ResumePromptOptions): string {
   const {
     targetRole,
@@ -389,11 +557,20 @@ export function buildResumeGenerationPrompt(options: ResumePromptOptions): strin
     }),
     recruiterSimulationMode = false,
     bulletBudgets,
+    bulletRules,
+    platformDecision,
+    trendBrief,
   } = options;
 
   const corporateDna = corporateDnaFor(targetCompany);
   const framework = starFrameworkFor(targetCompany);
   const budgets = Array.isArray(bulletBudgets) && bulletBudgets.length > 0 ? bulletBudgets : null;
+  const rules = activeBulletRules(bulletRules);
+  const budgetSection = rules ? rulesBudgetSection(budgets, rules, platformDecision) : tenureBudgetSection(budgets);
+  const trendBriefText = typeof trendBrief === "string" ? trendBrief.trim() : "";
+  const budgetRubricLine = rules
+    ? "  -10  a role's bullet count falls outside its budget in rule 4, or a [SYSTEM] role pads a short stint"
+    : "  -10  bullet counts are disproportionate to tenure (padding a short stint)";
 
   const roleCountRule =
     typeof roleCount === "number"
@@ -490,32 +667,7 @@ HARD CONSTRAINTS (violating any of these is a critical failure):
 3. PRESERVE ALL CERTIFICATIONS AND TITLES verbatim, including issuer and date. Never
    normalise, "correct", re-case, or abbreviate a job title or company name.
 
-4. BULLET BUDGET - TENURE FIRST, THEN RECENCY (trim wording, never roles):
-${
-    budgets
-      ? `   PER-ROLE BUDGET - computed from the actual dates. AUTHORITATIVE: it overrides every
-   heuristic below and your own reading of the dates.
-${formatBudgetTable(budgets)}
-   The tiers these were derived from (first match wins):
-${describeBudgetRules()}`
-      : `   Derive each role's tenure from its duration field (and the CURRENT DATE for ongoing
-   roles), then apply the first tier that matches:
-${describeBudgetRules()}
-   The recency tier applies to any ongoing role and to the most recent role longer than
-   12 months. A role whose dates cannot be read never exceeds ${UNPARSEABLE_MAX} bullets.`
-  }
-   ${BUDGET_ENFORCEMENT}
-
-   ANTI-PADDING RULE: bullet count must stay proportionate to time served. A long list
-   under a short stint reads as padding, invites scrutiny of the entire document, and is
-   a worse outcome than saying less. Never inflate a brief role to match the depth of a
-   multi-year one, however senior the title or well known the employer. For a stint under
-   three months, state the single thing that was actually delivered and stop.
-
-   Depth belongs to the roles that earned it: give substantial, long-tenure positions the
-   fullest treatment, and let short ones stay deliberately thin.
-   The total document must fit 1-2 pages, achieved by trimming bullets and tightening
-   wording ONLY. Rule 1 always wins over this rule.
+${budgetSection}
 
 5. ${BULLET_SHAPE}
 
@@ -548,7 +700,7 @@ ${describeBudgetRules()}
 ${section(
     jdKeywords && jdKeywords.length > 0,
     `    Priority JD keywords: ${(jdKeywords || []).join(", ")}.`
-  )}
+  )}${section(trendBriefText, `\n${indentBlock(trendBriefText, "    ")}`)}
 
 12. HUMANIZATION. The document must read as if a competent engineer wrote it under time
     pressure - specific, uneven, and concrete - not as a uniformly polished template.
@@ -592,7 +744,7 @@ AUDIT SCORE RUBRIC (audit_report.score - this one IS yours to compute):
 Start at 100 and subtract, then report the integer result. Do NOT default to a round number.
   -15  a role, certification, or date from the source is missing or altered
   -10  any metric, employer, technology, or title that is not traceable to the source
-  -10  bullet counts are disproportionate to tenure (padding a short stint)
+${budgetRubricLine}
    -8  more than half of the bullets carry a number, or the same bullet skeleton repeats
    -6  each unresolved ATS cohesion flag (gap, inconsistent dates, acronym mismatch)
    -5  passive ownership phrasing survives anywhere in the document
@@ -629,6 +781,108 @@ export interface RoleBulletPromptOptions {
   /** Problems found in a previous attempt, fed back for one corrective retry. */
   retryFeedback?: { issues: string[]; previousBullets: string[] };
   currentDate?: string;
+  /** The candidate's bullet rules, rendered ahead of the tenure tiers when active. */
+  bulletRules?: BulletRules | null;
+  /** How the platform rule chose its platform (planBulletBudgets().platform). */
+  platformDecision?: PlatformDecision | null;
+  /** The candidate's other material for this role; the caller adds it to the figure provenance index too. */
+  supportingEvidence?: RoleSupportingEvidence;
+  /** buildTrendBrief(trends, { scope: "role", ... }) for this role. */
+  trendBrief?: string;
+}
+
+function roleBudgetSection(
+  budget: BulletBudget,
+  rules: BulletRules | null,
+  platform: PlatformDecision | null | undefined,
+  ruleRole: boolean,
+  extras: { supporting: boolean; brainDump: boolean } = { supporting: false, brainDump: false }
+): string {
+  if (!rules && !ruleRole) {
+    const shortStint = budget.max === 1
+      ? "\n  For a stint this short, state the single thing that was actually delivered and stop."
+      : "";
+    return `BULLET BUDGET FOR THIS ROLE - HARD LIMIT: ${budgetCountPhrase(budget)}.
+  Why: ${budget.reason}. Budgets follow tenure first, then recency (first match wins):
+${describeBudgetRules("  ")}${shortStint}
+  ${BUDGET_ENFORCEMENT}`;
+  }
+
+  const setBy = ruleRole
+    ? "One of the candidate's own bullet rules set this count."
+    : "No bullet rule claims this role, so the tenure tiers set its count.";
+  const single = budget.max === 1
+    ? ruleRole
+      ? "\n  The candidate keeps this role to one bullet: state the achievement most relevant to the target posting and stop."
+      : "\n  For a stint this short, state the single thing that was actually delivered and stop."
+    : "";
+  const sources = [
+    extras.supporting ? "\n    * use the SUPPORTING EVIDENCE above where it is clearly about this role;" : "",
+    extras.brainDump ? "\n    * use the brain dump above only where it is clearly about this role;" : "",
+  ].join("");
+  const expansion = ruleRole
+    ? `
+
+GROUNDED EXPANSION - this role's count is the candidate's own choice:
+  - When the source lists fewer distinct achievements than the minimum, reach it by drawing out
+    more of the work the source already shows:
+    * split a compound source bullet into its separate, genuine achievements;
+    * develop the systems, tools, and scope the title and bullets name - what was designed,
+      built, secured, migrated, automated, or operated, and for whom;${sources}
+  - When the source holds more achievements than the ceiling, keep the ones most relevant to the
+    target posting. Never cram several achievements into one bullet to fit more in.
+  - Never add a figure, employer, client, certification, or technology the candidate's material
+    does not show, and never restate one achievement to reach the count. Falling short of the
+    minimum is a failure the platform reports; inventing to reach it is a worse one.`
+    : "";
+  return `BULLET BUDGET FOR THIS ROLE - HARD LIMIT: ${budgetCountPhrase(budget)}.
+  Why: ${budget.reason}. ${setBy}
+  Budgets follow the candidate's bullet rules first, then tenure:
+${describeBudgetRules("  ", { rules, platform })}${single}
+  ${ruleRole ? RULE_ROLE_ENFORCEMENT : BUDGET_ENFORCEMENT}${expansion}`;
+}
+
+/**
+ * The supporting evidence a role prompt actually shows: other versions minus the
+ * role's own bullets, and the skills list for rule roles only. Callers index
+ * exactly this, so the validator accepts what the model was shown and no more.
+ */
+export function supportingEvidenceLists(
+  evidence: RoleSupportingEvidence | undefined,
+  sourceBullets: string[],
+  ruleRole: boolean
+): { otherVersions: string[]; skills: string[] } {
+  if (!evidence) return { otherVersions: [], skills: [] };
+  const own = new Set(sourceBullets.map(evidenceKey).filter(Boolean));
+  return {
+    otherVersions: cleanEvidenceList(evidence.otherVersions, MAX_SUPPORTING_BULLETS, own),
+    skills: ruleRole ? cleanEvidenceList(evidence.skills, MAX_SUPPORTING_SKILLS) : [],
+  };
+}
+
+function supportingEvidenceSection(
+  evidence: RoleSupportingEvidence | undefined,
+  sourceBullets: string[],
+  ruleRole: boolean
+): string {
+  const { otherVersions: versions, skills } = supportingEvidenceLists(evidence, sourceBullets, ruleRole);
+  if (!versions.length && !skills.length) return "";
+  const lines = [
+    "",
+    "SUPPORTING EVIDENCE - the candidate's own material beyond this role's bullets. Use it only to",
+    "deepen work this role's source already shows; it never adds a new employer, client, or figure:",
+  ];
+  if (versions.length) {
+    lines.push("  The candidate's other resume versions of this same role:");
+    lines.push(...versions.map((text) => `    - ${text}`));
+  }
+  if (skills.length) {
+    lines.push(
+      "  The candidate's skills list - name one in this role only where it fits work this role's source",
+      `  describes and the role's dates: ${skills.join(", ")}`
+    );
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -660,6 +914,10 @@ export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string 
       month: "long",
       day: "numeric",
     }),
+    bulletRules,
+    platformDecision,
+    supportingEvidence,
+    trendBrief,
   } = options;
 
   const framework = starFrameworkFor(targetCompany);
@@ -667,9 +925,17 @@ export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string 
     ? sourceBullets.map((b, i) => `  ${i + 1}. ${b}`).join("\n")
     : "  (no bullets in the source - write only what the title and company alone support)";
   const tenure = budget.tenureMonths !== null ? `${budget.tenureMonths} months` : "tenure unreadable";
-  const shortStint = budget.max === 1
-    ? "\n  For a stint this short, state the single thing that was actually delivered and stop."
-    : "";
+  const rulesInForce = activeBulletRules(bulletRules);
+  const ruleRole = isRuleBasis(budget.basis);
+  const supporting = supportingEvidenceSection(supportingEvidence, sourceBullets, ruleRole);
+  const budgetSection = roleBudgetSection(budget, rulesInForce, platformDecision, ruleRole, {
+    supporting: supporting.length > 0,
+    brainDump: Boolean(brainDump),
+  });
+  const evidenceHeader = supporting
+    ? "SOURCE EVIDENCE FOR THIS ROLE (the primary record - every bullet must rest on it, or on the\nSUPPORTING EVIDENCE below):"
+    : "SOURCE EVIDENCE FOR THIS ROLE (the only facts you may use):";
+  const trendBriefText = typeof trendBrief === "string" ? trendBrief.trim() : "";
 
   const rules = [
     ZERO_FABRICATION,
@@ -683,6 +949,7 @@ export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string 
    emphasis, selection, and wording - never facts.${
       jdKeywords && jdKeywords.length > 0 ? `\n   Priority JD keywords: ${jdKeywords.join(", ")}.` : ""
     }`,
+    ...(trendBriefText ? [indentBlock(trendBriefText, "   ").trimStart()] : []),
     ...extraRules,
   ];
 
@@ -724,18 +991,15 @@ ROLE TO REWRITE:
   Company: ${role.company || "(unnamed)"}
   Dates: ${role.duration || "(none given)"} - ${tenure}
 
-SOURCE EVIDENCE FOR THIS ROLE (the only facts you may use):
-${evidence}
+${evidenceHeader}
+${evidence}${supporting}
 ${section(
     brainDump,
     `BRAIN DUMP (raw, unverified): ${brainDump}
 Use only what is clearly about THIS role at THIS company. Ignore anything unverifiable.`
   )}
 
-BULLET BUDGET FOR THIS ROLE - HARD LIMIT: ${budgetCountPhrase(budget)}.
-  Why: ${budget.reason}. Budgets follow tenure first, then recency (first match wins):
-${describeBudgetRules("  ")}${shortStint}
-  ${BUDGET_ENFORCEMENT}
+${budgetSection}
 
 === STAR GROUNDING (silent reasoning; DO NOT emit as prose) ===
 ${STAR_GROUNDING}
