@@ -36,13 +36,16 @@ export const TARGET_COMPANIES = [
 ];
 
 /**
- * The admins: they see the Admin Dashboard and manage the AI models every user
- * runs on. firestore.rules lists the same addresses in isAdmin(); change both together.
+ * Admins see the Admin Dashboard and manage the AI models every user runs on.
+ * While ALL_USERS_ARE_ADMINS is true, every signed-in user is an admin; set it to
+ * false to limit admin access to ADMIN_EMAILS. isAdmin() in firestore.rules must
+ * follow the same choice; change both together.
  */
+export const ALL_USERS_ARE_ADMINS = true;
 export const ADMIN_EMAILS: readonly string[] = ['hackerharnish@gmail.com', 'param_jariwala@yahoo.com'];
 
 export function isAdminEmail(email: string | null | undefined): boolean {
-  return !!email && ADMIN_EMAILS.includes(email.toLowerCase());
+  return !!email && (ALL_USERS_ARE_ADMINS || ADMIN_EMAILS.includes(email.toLowerCase()));
 }
 
 export const MODEL_PRICING: Record<string, { input: number, output: number }> = {

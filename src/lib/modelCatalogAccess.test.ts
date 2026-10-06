@@ -27,9 +27,14 @@ test("catalog saves require refreshed verified admin claims before writing", asy
       await assert.rejects(saveModelCatalog(builtInCatalog()), /Sign in with a verified admin/);
       assert.deepEqual(steps, []);
     });
-    await t.test("verified non-admin users cannot save", async () => {
-      setUser(account("not-an-admin@example.com", true));
+    await t.test("accounts without an email cannot save", async () => {
+      setUser(account("", true));
       await assert.rejects(saveModelCatalog(builtInCatalog()), /This account cannot save AI models/);
+      assert.deepEqual(steps, ["reload", "token"]);
+    });
+    await t.test("unverified non-listed users cannot save", async () => {
+      setUser(account("any-user@example.com", false));
+      await assert.rejects(saveModelCatalog(builtInCatalog()), /Your admin email is not verified/);
       assert.deepEqual(steps, ["reload", "token"]);
     });
     await t.test("stale local verification cannot override refreshed claims", async () => {

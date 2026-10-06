@@ -10,10 +10,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Every signed-in user with a verified email is an admin (ALL_USERS_ARE_ADMINS in src/constants.ts).
+    // To limit admins again, add back:
+    //   && request.auth.token.email.lower() in ['hackerharnish@gmail.com', 'param_jariwala@yahoo.com']
     function isAdmin() {
       return isSignedIn()
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in ['hackerharnish@gmail.com', 'param_jariwala@yahoo.com'];
+        && request.auth.token.email_verified == true;
     }
 
     function isOwner(userId) {

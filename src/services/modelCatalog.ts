@@ -131,7 +131,7 @@ export async function saveModelCatalog(draft: AIModelCatalog): Promise<AIModelCa
   await user.reload();
   const { claims } = await user.getIdTokenResult(true);
   if (typeof claims.email !== "string" || !isAdminEmail(claims.email)) {
-    throw new Error("This account cannot save AI models. Sign in with an email listed in ADMIN_EMAILS.");
+    throw new Error("This account cannot save AI models. Sign in with an admin account that has an email address.");
   }
   if (claims.email_verified !== true) {
     throw new Error("Your admin email is not verified. Verify your email, then try saving again.");
