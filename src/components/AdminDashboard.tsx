@@ -93,7 +93,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBack, isDarkMo
   }, []);
 
   return (
-    <div className={`min-h-screen p-6 transition-colors duration-300 ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
+    <div className={`h-screen overflow-y-auto p-6 transition-colors duration-300 ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">

@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Cpu, Loader2, Plus, RefreshCw, RotateCcw, Save, Trash2, Undo2, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Cpu, Loader2, Plus, RefreshCw, RotateCcw, Save, Trash2, Undo2, Zap } from 'lucide-react';
+import { onIdTokenChanged } from 'firebase/auth';
+import { auth } from '../firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 import {
   AI_PROVIDERS,
   ENGINE_DESCRIPTIONS,
@@ -94,6 +97,14 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
   const [tests, setTests] = useState<Record<string, TestState>>({});
   const [newModel, setNewModel] = useState(NEW_MODEL);
   const [addError, setAddError] = useState<string | null>(null);
+  const [account, setAccount] = useState(() => ({
+    email: auth.currentUser?.email,
+    verified: auth.currentUser?.emailVerified ?? false,
+  }));
+
+  useEffect(() => onIdTokenChanged(auth, (user) => {
+    setAccount({ email: user?.email, verified: user?.emailVerified ?? false });
+  }), []);
 
   useEffect(() => {
     // A newer catalog (read from Firestore, or saved in another tab) replaces a draft nobody has touched.
@@ -127,6 +138,14 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
     const { primary, fallback } = draft.providers[model.provider];
     return [model.id === primary ? 'Primary' : '', model.id === fallback ? 'Fallback' : ''].filter(Boolean);
   };
+
+  const chooseModel = (provider: AIProvider, role: 'primary' | 'fallback', id: string) =>
+    update((next) => {
+      next.providers[provider][role] = id;
+      if (role === 'primary' && next.providers[provider].fallback === id) {
+        next.providers[provider].fallback = '';
+      }
+    });
 
   const setPrice = (index: number, side: 'input' | 'output', value: number | undefined) =>
     update((next) => {
@@ -185,7 +204,7 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
     try {
       const saved = await saveModelCatalog(draft);
       setDraft(clone(saved));
-      setMessage({ kind: 'ok', text: 'Saved. Every user now runs on these models.' });
+      setMessage({ kind: 'ok', text: 'Saved shared model settings. Server requests using platform keys still use built-in models.' });
     } catch (e: any) {
       setMessage({ kind: 'error', text: e?.message || 'The models could not be saved.' });
     } finally {
@@ -218,19 +237,45 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
               <Cpu className="w-5 h-5 text-emerald-500" /> AI models
             </h2>
             <p className={`text-sm mt-1 max-w-3xl ${muted}`}>
-              Every AI call runs on its provider's <strong>primary</strong> model. If that fails, the <strong>fallback</strong>{' '}
+              Calls using this catalog run on their provider's <strong>primary</strong> model. If that fails, the <strong>fallback</strong>{' '}
               runs once; if it fails too, or no fallback is set, the run stops and says which models failed and why.
               Nothing else is ever substituted. To use a new model, add its exact model ID below, test it, choose it, and save.
             </p>
             <p className={`text-xs mt-3 ${source === 'firestore' ? 'text-emerald-500' : 'text-amber-500'}`}>{statusText}</p>
             {error && <p className="text-xs mt-1 text-amber-500">{error}</p>}
             {!canEdit && <p className={`text-xs mt-1 ${muted}`}>Only admins can change the models.</p>}
+            <p className={`text-xs mt-2 ${muted}`}>
+              Server requests using the app's shared API keys still use built-in models, not these selections.
+            </p>
           </div>
           <button onClick={reload} disabled={reloading} className={secondaryButton} title="Read the saved catalog again">
             <RefreshCw className={`w-4 h-4 ${reloading ? 'animate-spin' : ''}`} /> Reload
           </button>
         </div>
       </div>
+
+      {canEdit && (
+        <div className={panel}>
+          <h3 className="font-semibold">Save access and Firebase setup</h3>
+          <p className={`text-sm mt-2 ${muted}`}>
+            Signed in as <strong>{account.email || 'not signed in'}</strong>.
+            {' '}Email {account.verified ? 'verified' : 'not verified'}.
+          </p>
+          <p className={`text-sm mt-2 ${muted}`}>
+            Publish the repository's <code>firestore.rules</code> in Firebase project{' '}
+            <strong>{firebaseConfig.projectId}</strong>, database <code>{firebaseConfig.firestoreDatabaseId}</code>.
+            This is a named database, not <code>(default)</code>. Keep the verified-admin write restriction.
+          </p>
+          <a
+            href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/rules`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block mt-3 text-sm font-semibold text-emerald-500 underline"
+          >
+            Open Firebase rules
+          </a>
+        </div>
+      )}
 
       {/* Primary and fallback per provider */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -242,22 +287,22 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
               <h3 className="font-semibold mb-4 flex items-center gap-2">
                 <Zap className="w-4 h-4 text-amber-500" /> {PROVIDER_LABELS[provider]}
               </h3>
+              <p className={`text-xs mb-4 ${muted}`}>
+                {canEdit ? 'Choose models in the dropdowns below, or use the model list buttons. Changes apply only after saving.' : 'Read-only: sign in as an admin to choose models.'}
+              </p>
               {own.length === 0 ? (
                 <p className={`text-sm ${muted}`}>No {PROVIDER_LABELS[provider]} models yet. Add one below.</p>
               ) : (
                 <div className="space-y-4">
                   <label className="block">
                     <span className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>Primary: every call starts here</span>
+                    <span className="relative block mt-1">
                     <select
-                      className={`${field} mt-1`}
+                      className={`${field} appearance-none pr-10 cursor-pointer disabled:cursor-not-allowed`}
+                      aria-label={`${PROVIDER_LABELS[provider]} primary model`}
                       value={primary}
                       disabled={locked}
-                      onChange={(e) =>
-                        update((next) => {
-                          next.providers[provider].primary = e.target.value;
-                          if (next.providers[provider].fallback === e.target.value) next.providers[provider].fallback = '';
-                        })
-                      }
+                      onChange={(e) => chooseModel(provider, 'primary', e.target.value)}
                     >
                       {own.map((model) => (
                         <option key={model.id} value={model.id}>
@@ -265,14 +310,18 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
                         </option>
                       ))}
                     </select>
+                    <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4" />
+                    </span>
                   </label>
                   <label className="block">
                     <span className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>Fallback: used once if the primary fails</span>
+                    <span className="relative block mt-1">
                     <select
-                      className={`${field} mt-1`}
+                      className={`${field} appearance-none pr-10 cursor-pointer disabled:cursor-not-allowed`}
+                      aria-label={`${PROVIDER_LABELS[provider]} fallback model`}
                       value={fallback}
                       disabled={locked}
-                      onChange={(e) => update((next) => { next.providers[provider].fallback = e.target.value; })}
+                      onChange={(e) => chooseModel(provider, 'fallback', e.target.value)}
                     >
                       <option value="">None: stop if the primary fails</option>
                       {own
@@ -283,6 +332,8 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
                           </option>
                         ))}
                     </select>
+                    <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4" />
+                    </span>
                   </label>
                 </div>
               )}
@@ -410,6 +461,26 @@ export const AIModelManager: React.FC<AIModelManagerProps> = ({ isDarkMode, canE
                           {role}
                         </span>
                       ))}
+                      {canEdit && (
+                        <div className="flex flex-col items-start gap-1 mt-1">
+                          <button
+                            className="text-xs text-emerald-500 underline disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={locked || model.id === draft.providers[model.provider].primary}
+                            aria-label={`Set ${model.id} as primary`}
+                            onClick={() => chooseModel(model.provider, 'primary', model.id)}
+                          >
+                            Set as primary
+                          </button>
+                          <button
+                            className="text-xs text-amber-500 underline disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={locked || roles.length > 0}
+                            aria-label={`Set ${model.id} as fallback`}
+                            onClick={() => chooseModel(model.provider, 'fallback', model.id)}
+                          >
+                            Set as fallback
+                          </button>
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 whitespace-nowrap text-right">
                       <div className="flex items-center justify-end gap-2">

@@ -11,6 +11,8 @@ import { useSyncExternalStore } from "react";
 import { ThinkingLevel as GeminiThinkingLevel } from "@google/genai";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
+import { isAdminEmail } from "../constants";
+import firebaseConfig from "../../firebase-applet-config.json";
 import {
   builtInCatalog,
   catalogProblems,
@@ -90,7 +92,7 @@ function friendlyFirestoreError(error: any, action: "read" | "save"): string {
   const code = String(error?.code || "");
   if (code.includes("permission-denied")) {
     return action === "save"
-      ? "Firestore refused the save. Publish the updated firestore.rules (see README, Firestore Rules) and sign in with a verified admin account."
+      ? `Firestore denied this verified admin's save. In Firebase project "${firebaseConfig.projectId}", publish firestore.rules to database "${firebaseConfig.firestoreDatabaseId}" (not the default database). See README, Firestore Rules.`
       : "Firestore rules don't allow reading the model catalog yet. Publish the updated firestore.rules (see README, Firestore Rules).";
   }
   if (code.includes("unavailable")) return "Firestore is unreachable right now.";
@@ -124,10 +126,20 @@ export async function loadModelCatalog(): Promise<CatalogState> {
 export async function saveModelCatalog(draft: AIModelCatalog): Promise<AIModelCatalog> {
   const problems = catalogProblems(draft);
   if (problems.length > 0) throw new Error(problems.join(" "));
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sign in with a verified admin account before saving AI models.");
+  await user.reload();
+  const { claims } = await user.getIdTokenResult(true);
+  if (typeof claims.email !== "string" || !isAdminEmail(claims.email)) {
+    throw new Error("This account cannot save AI models. Sign in with an email listed in ADMIN_EMAILS.");
+  }
+  if (claims.email_verified !== true) {
+    throw new Error("Your admin email is not verified. Verify your email, then try saving again.");
+  }
   const catalog = normalizeCatalog({
     ...draft,
     updatedAt: new Date().toISOString(),
-    updatedBy: auth.currentUser?.email || "",
+    updatedBy: user.email || "",
   });
   try {
     await setDoc(doc(db, ...CATALOG_DOC), catalog);
