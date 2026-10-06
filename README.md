@@ -81,12 +81,35 @@ You decide how deep the roles that matter go; the system sizes the rest. Edit th
 - Covers the pipeline the app uses (`/api/v2/optimize` and its in-browser fallback). The unused `/api/v3/optimize` route is unchanged.
 - **Logic**: `src/lib/linkedinTrends.ts`, `src/components/LinkedInTrendsCard.tsx`.
 
+### 11. AI Models & Engines (managed in the app)
+Which AI models the app calls is data, not code. Admins manage them in **Admin Dashboard > AI Models**: open it from the chart icon in the header, or from **Manage AI models** under the engine picker. Every user's next call uses the saved models.
+- **Primary and fallback per provider**: Gemini and OpenAI each have a primary model and an optional fallback. Every AI call, the tools included (quizzes, interview coach, job tracker, resume scan), runs on its provider's primary. If that fails, the fallback runs once. If the fallback also fails, or none is set, the run stops with an error naming each model and why. Nothing else is ever substituted, and a call never crosses to the other provider. A transient failure (rate limit, malformed answer) may retry the same models after a pause. The optional steps (evidence analysis and draft review) report a failure in their own card, and the run continues.
+- **Adding a new model**: In AI Models, add the model ID exactly as the provider names it (for example `gemini-3.6-flash`). Add a display name, a Gemini thinking level, and optionally a price per 1M tokens. Press **Test**, which sends a one-word prompt to that model only, on your own key, with no fallback. Choose it as a primary or fallback, then **Save for every user**.
+- **Engines** (the default is set in AI Models; users can switch for their session):
+
+  | Engine | How it runs | Providers |
+  |---|---|---|
+  | Hybrid Gemini (default) | Server pipeline that reads, checks and writes each role separately | Gemini for every step |
+  | Hybrid OpenAI | Server pipeline | Gemini reads and checks; OpenAI writes |
+  | Gemini | One writing pass in the browser | Gemini only |
+  | OpenAI | One writing pass in the browser | OpenAI only |
+
+- **Fast mode** starts each call on the provider's fallback model, keeps the primary as its fallback, and skips the evidence analysis and the model review.
+- **The header** shows the engine and the primary model in use, for example `HYBRID GEMINI · GEMINI 3.1 PRO`. Hover over it to see each provider's fallback and the models the last run used. If a primary failed during the last run, it turns amber and shows **Fallback used**.
+- **Built-in defaults** apply until an admin saves, and whenever the saved catalog can't be read. Gemini 3.1 Pro (medium thinking) falls back to Gemini 3.6 Flash, GPT-4o falls back to GPT-4o mini, and Hybrid Gemini is the default engine. They are defined in `builtInCatalog()` in `src/lib/aiModels.ts`.
+- **Storage**: Firestore `config/aiModels`. Everyone can read it; only the admins can write it (`isAdmin()` in `firestore.rules`, which must match `ADMIN_EMAILS` in `src/constants.ts`). The browser sends the catalog with each server request. The server uses it only with the user's own API key; the platform's key always runs on the built-in models.
+- **Logic**:
+  - `src/lib/aiModels.ts`: catalog, validation, routing and the primary-then-fallback runner.
+  - `src/services/modelCatalog.ts`: loading, saving and live updates.
+  - `server/modelRunner.ts`: server-side calls.
+  - `src/components/AIModelManager.tsx`: the admin screen.
+
 ## 🛠 Technical Architecture
 
 - **Frontend**: React 18, Vite, Tailwind CSS, Framer Motion (animations).
 - **Backend**: Express.js (Node.js) handling heavy AI computation and PDF generation.
 - **Database/Auth**: Firebase Firestore & Authentication.
-- **AI Core**: Native integration with `@google/genai` (Gemini 1.5 Pro) and OpenAI.
+- **AI Core**: `@google/genai` (Gemini) and OpenAI, on the models chosen in Admin Dashboard > AI Models.
 - **PDF Engine**: Puppeteer for pixel-perfect, ATS-parseable document exports.
 
 ## 📦 Installation & Setup
@@ -99,15 +122,18 @@ You decide how deep the roles that matter go; the system sizes the rest. Edit th
 2. **Firebase Configuration**:
    Update `firebase-applet-config.json` with your Firebase project credentials. Ensure Firestore and Auth are enabled.
 
-3. **API Keys**:
+3. **Firestore Rules**:
+   Publish `firestore.rules` so that everyone can read the AI model catalog and only the admins can change it. In the Firebase console, open **Firestore Database** and select the database named by `firestoreDatabaseId` in `firebase-applet-config.json`. Open **Rules**, paste the contents of `firestore.rules`, and select **Publish**. Until the rules are published, the app runs on the built-in models and AI Models cannot save. Admins must sign in with a verified email address.
+
+4. **API Keys**:
    Add your Gemini API Key in the application's **Profile > API Settings** section or set it as an environment variable in `.env`.
 
-4. **Development**:
+5. **Development**:
    ```bash
    npm run dev
    ```
 
-5. **Production Build**:
+6. **Production Build**:
    ```bash
    npm run build
    ```

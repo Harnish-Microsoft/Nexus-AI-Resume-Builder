@@ -18,7 +18,7 @@ import { renderResumeToHTML } from "./server/resumeTemplate.ts";
 import { pipelineCache } from "./server/cacheUtility";
 import { calculateCost, UsageLog } from "./server/analytics";
 import { runAgents } from "./server/agents";
-import { generatePerRole, selectStarStories } from "./server/roleGenerator";
+import { generatePerRole, roleModelCall, selectStarStories } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
 import { buildResumeGenerationPrompt, buildResumeMetaPrompt } from "./src/lib/resumePrompt";
@@ -44,6 +44,9 @@ import {
 } from "./src/lib/linkedinTrends";
 import type { LinkedInTrends } from "./src/lib/linkedinTrends";
 import { audienceHeadline, buildAudienceBrief, normalizeAudienceMix } from "./src/lib/audienceProfiles";
+import { isEngineMode, isModelChainError, isValidModelId, modelChain, pricingFor, providersOf, thinkingFor } from "./src/lib/aiModels";
+import type { EngineMode } from "./src/lib/aiModels";
+import { ModelRunner, requestCatalog } from "./server/modelRunner";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
@@ -283,6 +286,68 @@ function decrypt(text: string) {
 
   console.error("Decryption Error: DECRYPTION_FAILED");
   throw new Error("DECRYPTION_FAILED: The encryption key has changed or the data is corrupted. Please re-save your API keys in your profile.");
+}
+
+/**
+ * API keys sent with a request, each raw or as encrypted by /api/encrypt-key
+ * (a JSON {gemini, openai} or a single key). A raw key is OpenAI's when it starts
+ * with "sk-", otherwise Gemini's. The first key found for a provider wins.
+ */
+function requestKeys(...values: unknown[]): { gemini: string; openai: string } {
+  const keys = { gemini: "", openai: "" };
+  const take = (key: unknown) => {
+    if (typeof key !== "string" || !key.trim()) return;
+    const value = key.trim();
+    if (value.startsWith("sk-")) {
+      if (!keys.openai) keys.openai = value;
+    } else if (!keys.gemini) {
+      keys.gemini = value;
+    }
+  };
+  for (const value of values) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    if (!value.includes(":")) {
+      take(value);
+      continue;
+    }
+    let decrypted = "";
+    try {
+      decrypted = decrypt(value);
+    } catch {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(decrypted);
+      if (typeof parsed?.gemini === "string" && parsed.gemini && !keys.gemini) keys.gemini = parsed.gemini;
+      if (typeof parsed?.openai === "string" && parsed.openai && !keys.openai) keys.openai = parsed.openai;
+    } catch {
+      take(decrypted);
+    }
+  }
+  return keys;
+}
+
+/** A model answer that must be a JSON object. Anything else is rejected, so the fallback model is tried. */
+function parseJsonObject(text: string): Record<string, any> | null {
+  const data = JSON.parse(text);
+  return data && typeof data === "object" && !Array.isArray(data) ? data : null;
+}
+
+/** One usage log per model a request used, priced from the admins' catalog where it has a price. */
+function logModelUsage(runner: ModelRunner, endpoint: string) {
+  for (const { model, provider, usage } of runner.usageByModel()) {
+    logUsage({
+      userId: "anonymous",
+      model,
+      inputTokens: usage.promptTokenCount,
+      outputTokens: usage.candidatesTokenCount,
+      totalTokens: usage.totalTokenCount,
+      cacheHit: false,
+      endpoint,
+      timestamp: Date.now(),
+      cost: calculateCost(model, usage.promptTokenCount, usage.candidatesTokenCount, pricingFor(runner.catalog, model, provider)),
+    });
+  }
 }
 
 /**
@@ -994,6 +1059,48 @@ async function startServer() {
     }
   });
 
+  // The browser's OpenAI calls (callAI in src/services/geminiService.ts). Exactly the
+  // model asked for: the browser runs the primary and fallback itself, so nothing
+  // is substituted here, and a failure is returned as one.
+  app.post("/api/optimize", async (req, res) => {
+    const authHeader = req.header('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: "Missing or invalid Authorization header" });
+    }
+    const { prompt, model, encryptedKey } = req.body || {};
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "A prompt is required." });
+    }
+    if (!isValidModelId(model)) {
+      return res.status(400).json({ error: "A valid OpenAI model ID is required." });
+    }
+    const openaiKey = requestKeys(encryptedKey).openai;
+    if (!openaiKey) {
+      return res.status(400).json({ error: "No OpenAI API key was sent. Save your OpenAI key in your profile." });
+    }
+    try {
+      const openai = new OpenAI({ apiKey: openaiKey });
+      // OpenAI's JSON mode requires the word "JSON" in the prompt.
+      const json = /json/i.test(prompt);
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        ...(json ? { response_format: { type: "json_object" as const } } : {}),
+      });
+      const input = completion.usage?.prompt_tokens || 0;
+      const output = completion.usage?.completion_tokens || 0;
+      res.json({
+        result: completion.choices[0]?.message?.content || "",
+        usage: { promptTokenCount: input, candidatesTokenCount: output, totalTokenCount: completion.usage?.total_tokens || input + output },
+        model,
+      });
+    } catch (error: any) {
+      console.error(`[OpenAI] ${model} failed:`, error?.message || error);
+      const status = Number(error?.status);
+      res.status(status >= 400 && status < 600 ? status : 502).json({ error: error?.message || "The OpenAI request failed." });
+    }
+  });
+
   app.post("/api/v2/optimize", async (req, res) => {
     const authHeader = req.header('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -1013,8 +1120,10 @@ async function startServer() {
       targetCompany,
       brainDump,
       apiKey,
+      geminiApiKey,
       bulletRules: requestedBulletRules,
-      linkedinTrends
+      linkedinTrends,
+      modelCatalog
     } = req.body;
 
     if (!resumeText || !jobDescription) {
@@ -1044,46 +1153,35 @@ async function startServer() {
       
       // 1.1 Fetch this user's own master resumes, minus the one being rewritten
       const masterResumes = await getUserMasterResumes(idToken, resumeText);
-      
+
+      // 2. Keys sent with the request (raw or encrypted) take precedence. Each is
+      // classified by its form, so an OpenAI key is never used as a Gemini key.
+      const sentKeys = requestKeys(apiKey, geminiApiKey);
+      if (sentKeys.gemini) geminiKey = sentKeys.gemini;
+      if (sentKeys.openai) openaiKey = sentKeys.openai;
+      // The user's own keys. The platform's key never runs on models the browser sends.
+      const ownKeys = { gemini: Boolean(geminiKey), openai: Boolean(openaiKey) };
+
       // Only fall back to system key if NO identity is provided (Guest Mode)
       if (!idToken) {
         geminiKey = geminiKey || process.env.GEMINI_API_KEY || "";
-        openaiKey = openaiKey || "";
       }
       
       if (!geminiKey && !idToken) {
          console.warn("No API key found in Guest Mode. System may fall back to platform default.");
       }
-
-      // 2. Override with API key from request if provided (supports both raw and encrypted)
-      if (apiKey) {
-        try {
-          const decrypted = decrypt(apiKey);
-          let parsedKeys: any = {};
-          try {
-            parsedKeys = JSON.parse(decrypted);
-          } catch (e) {
-            parsedKeys = { gemini: decrypted };
-          }
-          if (parsedKeys.gemini) geminiKey = parsedKeys.gemini;
-          if (parsedKeys.openai) openaiKey = parsedKeys.openai;
-        } catch (e) {
-          // If decryption fails, assume it's a raw key (for Gemini)
-          if (typeof apiKey === 'string' && apiKey.length > 20) {
-             geminiKey = apiKey;
-          }
-        }
-      }
       
       if (!geminiKey) console.warn("Gemini API key not found. Expecting platform-provided authentication to be available.");
       
       const selectedPipeline = pipelineType || 'hybrid-gemini';
-
-      const config: any = {};
-      if (geminiKey) config.apiKey = geminiKey;
-      
-      // Need to find where Gemini is instantiated to update it
-      // Let's first verify where it's initialized and how it's used before changing too much.
+      const engineMode: EngineMode = isEngineMode(selectedPipeline) ? selectedPipeline : 'hybrid-gemini';
+      // Every call below runs on the admins' models: primary, then fallback, then stop.
+      const catalog = requestCatalog(modelCatalog, ownKeys);
+      const runner = new ModelRunner(catalog, engineMode, { gemini: geminiKey, openai: openaiKey });
+      const modelRoutes = providersOf(engineMode).map((provider) =>
+        modelChain(catalog, provider).map((id) => `${id}@${thinkingFor(catalog, id)}`).join(">")
+      );
+      console.log(`[Pipeline] Engine ${engineMode} on ${modelRoutes.join(" | ")}`);
 
       // 2. Check Cache First (Key includes all relevant fields + API key presence to avoid stale results from different keys)
       const cacheKey = pipelineCache.generateKey({ 
@@ -1099,6 +1197,8 @@ async function startServer() {
         hasOpenAI: !!openaiKey,
         // Results made before evidence-first optimization must not be served again.
         pipelineVersion: "evidence-v1",
+        // Nor results written by models the admins have since replaced.
+        models: modelRoutes,
         ...(bulletRules ? { bulletRules: bulletRulesFingerprint(bulletRules) } : {}),
         ...(trends ? { linkedinTrends: trendFingerprint(trends) } : {})
       });
@@ -1131,7 +1231,6 @@ async function startServer() {
       // brain dump, and the candidate's other resumes the prompts reference.
       const material = buildCandidateMaterial(resumeText, brainDump, { otherResumes: masterResumes });
       const analysisPosting = focusJobDescription(jobDescription, ANALYSIS_JD_LIMIT);
-      const modelKeys = { geminiKey, openaiKey, pipelineType: selectedPipeline };
       console.log(
         `[Pipeline] Step 1: ${structuredResume ? "Structured resume parsed in code" : "Resume extraction"} ` +
           `+ requirement evidence analysis (${geminiKey ? 'User Key' : 'System Key'})...`
@@ -1139,31 +1238,21 @@ async function startServer() {
       const [resumeExtraction, analysisRun] = await Promise.all([
         structuredResume
           ? Promise.resolve({ data: structuredResume, usage: null, _model: "structured-json", omittedChars: 0 })
-          : Optimization.extractRelevantResumeData(resumeText, geminiKey, openaiKey, selectedPipeline),
-        Optimization.analyzeRequirements({ jobDescription: analysisPosting.text, targetRole, material }, modelKeys),
+          : Optimization.extractRelevantResumeData(resumeText, runner),
+        Optimization.analyzeRequirements({ jobDescription: analysisPosting.text, targetRole, material }, runner),
       ]);
 
       const resumeData = resumeExtraction?.data;
       const requirementAnalysis = analysisRun.data;
       // Every posting term is scored; the prompts never list an excluded capability as a priority.
       let jdKeywords = analysisKeywords(requirementAnalysis);
-      let jdExtraction: any = null;
       if (jdKeywords.length === 0) {
         console.warn("[Pipeline] No requirement analysis; falling back to keyword extraction.");
-        jdExtraction = await Optimization.extractJDKeywords(jobDescription, geminiKey, openaiKey, selectedPipeline);
+        const jdExtraction = await Optimization.extractJDKeywords(jobDescription, runner);
         jdKeywords = jdExtraction?.data || [];
       }
-      const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3-flash-preview";
-      
-      const extraUsage = { gemini: emptyUsage(), openai: emptyUsage() };
-      if (analysisRun.result) addUsage(extraUsage[analysisRun.result.provider], analysisRun.result.usage);
-      const geminiUsage = {
-        promptTokenCount: (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0),
-        candidatesTokenCount: (resumeExtraction?.usage?.candidatesTokenCount || 0) + (jdExtraction?.usage?.candidatesTokenCount || 0),
-        totalTokenCount: (resumeExtraction?.usage?.totalTokenCount || 0) + (jdExtraction?.usage?.totalTokenCount || 0)
-      };
 
-      if (!resumeData) throw new Error("Failed to extract resume data using Gemini.");
+      if (!resumeData) throw new Error("The resume could not be read.");
 
       // STEP 2: Internal Logic (Free) - Trimming
       console.log("[Pipeline] Step 2: Trimming Content...");
@@ -1195,7 +1284,7 @@ async function startServer() {
         : "";
       if (trends) console.log(`[Trends] ${describeTrendSource(trends)}: ${trends.skills.length} trending skills considered.`);
 
-      // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
+      // STEP 3: Final generation on the admins' writing models
       const roleCount = optimizedInput.experience.length;
       // Boilerplate goes before anything is cut, and any cut is disclosed in input_coverage.
       const generationPosting = focusJobDescription(jobDescription, GENERATION_JD_LIMIT);
@@ -1235,131 +1324,39 @@ async function startServer() {
       };
       const finalPrompt = buildResumeGenerationPrompt(generationOptions);
 
-      let result;
-      let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
+      let result: any;
 
-      if (pipelineType === 'hybrid-openai') {
-        // OPENAI BRANCH
-        try {
-          console.log(`[Hybrid Pipeline] Step 3: Premium OpenAI Generation (${usedModel})...`);
-          const openai = new OpenAI({ apiKey: openaiKey });
-          const chatCompletion = await openai.chat.completions.create({
-            model: usedModel,
-            messages: [{ 
-              role: "system", 
-              content: "You are a senior executive resume strategist. Output strictly JSON. Ensure EVERY SINGLE role from input is preserved." 
-            }, { 
-              role: "user", 
-              content: finalPrompt
-            }],
-            response_format: { type: "json_object" }
-          });
-
-          const responseText = chatCompletion.choices[0].message.content || "";
-          const genInput = chatCompletion.usage?.prompt_tokens || 0;
-          const genOutput = chatCompletion.usage?.completion_tokens || 0;
-
-          logUsage({
-            userId: "anonymous",
-            model: usedModel,
-            inputTokens: genInput,
-            outputTokens: genOutput,
-            totalTokens: genInput + genOutput,
-            cacheHit: false,
-            endpoint: "/api/v2/optimize",
-            timestamp: Date.now(),
-            cost: calculateCost(usedModel, genInput, genOutput)
-          });
-
-          // Log Gemini Extraction
-          logUsage({
-            userId: "anonymous",
-            model: extractionModelUsed,
-            inputTokens: geminiUsage.promptTokenCount,
-            outputTokens: geminiUsage.candidatesTokenCount,
-            totalTokens: geminiUsage.totalTokenCount,
-            cacheHit: false,
-            endpoint: "/api/v2/optimize",
-            timestamp: Date.now(),
-            cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
-          });
-
-          result = {
-            result: responseText,
-            usage: {
-              promptTokenCount: genInput,
-              candidatesTokenCount: genOutput,
-              totalTokenCount: genInput + genOutput
-            },
-            geminiUsage,
-            intermediateData: { resumeData, jdKeywords },
-            _engine: 'hybrid-openai',
-            _model: usedModel
-          };
-        } catch (openaiError: any) {
-          console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash Lite...", openaiError.message);
-          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use Gemini 3.1 Flash Lite then 3.5 Flash
-          let fallbackModelName = "gemini-3.1-flash-lite";
-          const genAI = new GoogleGenAI({ apiKey: geminiKey });
-          
-          let fallbackResult;
-          try {
-            fallbackResult = await genAI.models.generateContent({
-              model: fallbackModelName,
-              contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-              config: { responseMimeType: "application/json" }
-            });
-          } catch (e) {
-            console.warn(`[Pipeline] Fallback to ${fallbackModelName} failed, trying 3.5-flash...`);
-            fallbackModelName = "gemini-3.5-flash";
-            fallbackResult = await genAI.models.generateContent({
-              model: fallbackModelName,
-              contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-              config: { responseMimeType: "application/json" }
-            });
-          }
-          
-          const text = fallbackResult.text || "";
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) throw new Error("Both OpenAI and Fallback Gemini failed.");
-
-          result = {
-            result: jsonMatch[0],
-            usage: {
-              promptTokenCount: fallbackResult.usageMetadata?.promptTokenCount || 0,
-              candidatesTokenCount: fallbackResult.usageMetadata?.candidatesTokenCount || 0,
-              totalTokenCount: fallbackResult.usageMetadata?.totalTokenCount || 0
-            },
-            geminiUsage,
-            intermediateData: { resumeData, jdKeywords },
-            _model: fallbackModelName,
-            _fallback: true
-          };
-        }
+      if (runner.providerFor("writing") === "openai") {
+        // Hybrid OpenAI: one whole-document call on the OpenAI models; Gemini read and analysed above.
+        console.log(`[Hybrid Pipeline] Step 3: Whole-document generation on ${modelChain(catalog, "openai").join(" > ")}...`);
+        // An answer that is not a JSON object counts as a failed call, so the fallback is tried.
+        const { result: generation } = await runner.callParsed(finalPrompt, "writing", (text) => (parseJsonObject(text) ? text : null), {
+          system: "You are a senior executive resume strategist. Output strictly JSON. Ensure EVERY SINGLE role from input is preserved.",
+        });
+        result = {
+          result: generation.text,
+          intermediateData: { resumeData, jdKeywords },
+          _engine: engineMode,
+          _model: generation.model
+        };
       } else {
-        // GEMINI BRANCH
-        try {
-        console.log(`[Pipeline] Step 3: Split Generation (Gemini ${usedModel} with HIGH thinking)...`);
-        const genAI = new GoogleGenAI({ apiKey: geminiKey });
-        
-        // 1. Generate Meta Data (Summary, Skills, Why This Job, etc.)
+        // Gemini: the summary, skills and other sections in one call, and each role in its own, in parallel.
+        console.log(`[Pipeline] Step 3: Split Generation on ${modelChain(catalog, "gemini").join(" > ")}...`);
         const metaPrompt = buildResumeMetaPrompt(generationOptions);
+        // Per-role calls run on the same models, count in the same totals, and try the
+        // fallback when an answer is not a usable role.
+        const writeRole = roleModelCall(runner);
 
-        // 2. Generate Roles Individually (Parallel) and Deduplicate
         console.log(`[Pipeline] Spawning meta generation and ${optimizedInput.experience.length} role generation tasks...`);
-        const [metaResponse, roleResults] = await Promise.all([
-          genAI.models.generateContent({
-            model: usedModel,
-            contents: [{ role: 'user', parts: [{ text: metaPrompt }] }],
-            config: { 
-              responseMimeType: "application/json",
-              thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }
-            }
+        const [metaRun, roleResults] = await Promise.all([
+          runner.callParsed(metaPrompt, "writing", (text) => {
+            const data = parseJsonObject(text);
+            return data && Object.keys(data).length > 0 ? data : null;
           }),
           generatePerRole(
-            optimizedInput.experience, 
-            geminiKey, 
-            targetCompany, 
+            optimizedInput.experience,
+            geminiKey,
+            targetCompany,
             targetRole,
             audienceText,
             mode,
@@ -1380,16 +1377,13 @@ async function startServer() {
               ...(trends ? { trends } : {}),
               // Each role leads with the requirements its own bullets prove.
               requirementAnalysis,
+              call: writeRole,
             }
           )
         ]);
 
-        const metaText = metaResponse.text || "";
-        if (!metaText || metaText.length < 50) {
-          throw new Error("Meta generation returned empty or invalid response.");
-        }
-        const metaData = JSON.parse(metaText);
-        
+        const metaData = metaRun.data;
+
         // 3. Deduplicate and Score
         console.log("[Pipeline] Deduplicating and Scoring...");
         const finalExperience = deduplicateAndScore(
@@ -1406,31 +1400,18 @@ async function startServer() {
 
         result = {
           result: JSON.stringify(finalResult),
-          usage: {
-            promptTokenCount: metaResponse.usageMetadata?.promptTokenCount || 0,
-            candidatesTokenCount: metaResponse.usageMetadata?.candidatesTokenCount || 0,
-            totalTokenCount: metaResponse.usageMetadata?.totalTokenCount || 0
-          },
-          geminiUsage,
           intermediateData: { resumeData, jdKeywords },
-          _model: usedModel,
+          _model: metaRun.result.model,
           _optimized: true,
           _split_gen: true
         };
 
         console.log("[Pipeline] Split Generation Complete.");
-
-      } catch (genError: any) {
-        console.error("[Pipeline] Split Generation Failed:", genError);
-        // Fallback to simpler single call if split gen fails
-        res.status(500).json({ error: "Failed to optimize resume via split pipeline", details: genError.message });
-        return;
       }
-    }
-    
-    // STEP 4: Verify the draft against the candidate's material and the evidence map;
-    // correct only what fails, and report what could not be corrected.
-    if (result) {
+
+      // STEP 4: Verify the draft against the candidate's material and the evidence map;
+      // correct only what fails, and report what could not be corrected. Optional: when
+      // the models fail here, the report says so and the run carries on.
       result = await verifyDraftResult(result, {
         figureSourceText: candidateMaterialText(resumeText, brainDump, customPrompt, ...masterResumes),
         evidenceText: candidateMaterialText(resumeText, brainDump, ...masterResumes),
@@ -1439,17 +1420,15 @@ async function startServer() {
         jobDescription,
         targetRole,
         jdKeywords,
-      }, async (prompt, purpose) => {
-        const call = await Optimization.generateJsonText(prompt, modelKeys, purpose === "review" ? Optimization.REVIEW_MODELS : Optimization.CORRECTION_MODELS);
-        addUsage(extraUsage[call.provider], call.usage);
-        return call.text;
-      });
-      result.geminiUsage = sumUsage(result.geminiUsage, extraUsage.gemini);
-      result.usage = sumUsage(result.usage, extraUsage.openai);
-    }
+      }, async (prompt, purpose) => (await runner.call(prompt, purpose === "review" ? "analysis" : "writing")).text);
 
-    // STEP 5: Deterministic budget, scoring and audit, then cache (Merged/Unified)
-    if (result) {
+      // Tokens per provider (OpenAI as `usage`, Gemini as `geminiUsage`) and every model that answered.
+      result.usage = runner.usage.openai;
+      result.geminiUsage = runner.usage.gemini;
+      result.modelsUsed = runner.modelsUsed();
+      logModelUsage(runner, "/api/v2/optimize");
+
+      // STEP 5: Deterministic budget, scoring and audit, then cache (Merged/Unified)
       result = finalizeResumeResult(result, {
         jobDescription,
         originalResumeText: resumeText,
@@ -1466,9 +1445,12 @@ async function startServer() {
       });
       Optimization.saveToCache(cacheKey, result);
       res.json(result);
-    }
     } catch (error: any) {
       console.error("V2 Optimization Error:", error);
+      if (isModelChainError(error)) {
+        // Every configured model failed: the browser stops instead of trying another path.
+        return res.status(502).json({ error: error.message, code: "MODEL_FAILED" });
+      }
       res.status(500).json({ error: "Failed to optimize resume via V2 pipeline", details: error.message });
     }
   });
@@ -1489,7 +1471,8 @@ async function startServer() {
         audience,
         customPrompt,
         brainDump,
-        bulletRules: requestedBulletRules
+        bulletRules: requestedBulletRules,
+        modelCatalog
       } = req.body;
   
       if (!resumeText || !jobDescription) {
@@ -1507,12 +1490,14 @@ async function startServer() {
       } else {
         console.warn("User has no API key configured. Using system key.");
       }
+      // The admins' Gemini models on the user's own key; the built-in ones on the system key.
+      const runner = new ModelRunner(requestCatalog(modelCatalog, { gemini: Boolean(keys?.gemini) }), "gemini", { gemini: geminiKey });
   
       // ===============================
       // 2. EXTRACTION
       // ===============================
-      const resumeExtraction = await Optimization.extractRelevantResumeData(resumeText, geminiKey);
-      const jdExtraction = await Optimization.extractJDKeywords(jobDescription, geminiKey);
+      const resumeExtraction = await Optimization.extractRelevantResumeData(resumeText, runner);
+      const jdExtraction = await Optimization.extractJDKeywords(jobDescription, runner);
   
       const resumeData = resumeExtraction?.data;
       const jdKeywords = jdExtraction?.data || [];
@@ -1525,13 +1510,14 @@ async function startServer() {
       const agentOutput = await runAgents({
         resume: resumeData,
         jd: jdKeywords
-      }, geminiKey);
+      }, runner);
   
       // ===============================
       // 4. ROLE GENERATION (NO DUP)
       // ===============================
       const sourceExperience = agentOutput.hr.experience || resumeData.experience;
       const budgetNow = new Date();
+      const writeRole = roleModelCall(runner);
       const roles = await generatePerRole(
         sourceExperience,
         geminiKey,
@@ -1548,8 +1534,9 @@ async function startServer() {
               bulletRules,
               skills: resumeData.skills,
               now: budgetNow,
+              call: writeRole,
             }
-          : undefined
+          : { call: writeRole }
       );
   
       // ===============================
@@ -1574,11 +1561,15 @@ async function startServer() {
       res.json({
         experience: cleaned,
         score: totalScore,
-        _engine: "multi-agent-v3"
+        _engine: "multi-agent-v3",
+        modelsUsed: runner.modelsUsed()
       });
   
     } catch (error: any) {
       console.error("V3 Error:", error);
+      if (isModelChainError(error)) {
+        return res.status(502).json({ error: error.message, code: "MODEL_FAILED" });
+      }
       res.status(500).json({
         error: "Optimization failed",
         details: error.message
@@ -1684,7 +1675,7 @@ async function startServer() {
 
   // OMNI FEATURES: Vision Scanning
   app.post("/api/gemini/scan-resume", async (req, res) => {
-    const { imageData, mimeType, idToken } = req.body;
+    const { imageData, mimeType, idToken, modelCatalog } = req.body;
     if (!imageData) return res.status(400).json({ error: "Image data required" });
 
     try {
@@ -1693,19 +1684,25 @@ async function startServer() {
       if (!geminiKey && idToken) return res.status(401).json({ error: "Personal API key required. Please update your profile settings." });
       if (!geminiKey) return res.status(401).json({ error: "No API key found" });
 
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [{
-          parts: [
-            { inlineData: { data: imageData, mimeType: mimeType || "image/png" } },
-            { text: "ACT AS: Expert ATS Resume Parser. EXTRACT ALL DATA from this resume image. Output as a clean JSON object compatible with a resume builder. Fields should include: contact (name, email, phone, location, linkedin), summary, experience (title, company, location, dateRange, highlights array), education (degree, school, location, dateRange), skills (category if applicable, or flat array), and projects. If you cannot read certain parts, leave them null. Output ONLY the JSON." }
-          ]
-        }],
-        config: { responseMimeType: "application/json" }
+      // The admins' Gemini models on the user's own key; the built-in ones on the system key.
+      const runner = new ModelRunner(requestCatalog(modelCatalog, { gemini: Boolean(keys?.gemini) }), "gemini", { gemini: geminiKey });
+      const { value, model } = await runner.run("gemini", async (candidate) => {
+        const response = await runner.gemini().models.generateContent({
+          model: candidate,
+          contents: [{
+            parts: [
+              { inlineData: { data: imageData, mimeType: mimeType || "image/png" } },
+              { text: "ACT AS: Expert ATS Resume Parser. EXTRACT ALL DATA from this resume image. Output as a clean JSON object compatible with a resume builder. Fields should include: contact (name, email, phone, location, linkedin), summary, experience (title, company, location, dateRange, highlights array), education (degree, school, location, dateRange), skills (category if applicable, or flat array), and projects. If you cannot read certain parts, leave them null. Output ONLY the JSON." }
+            ]
+          }],
+          config: { responseMimeType: "application/json", ...runner.geminiThinking(candidate) }
+        });
+        return { data: JSON.parse(response.text || "{}"), usage: response.usageMetadata };
       });
 
-      res.json(JSON.parse(response.text || "{}"));
+      logModelUsage(runner, "/api/gemini/scan-resume");
+      res.setHeader("X-AI-Model", model);
+      res.json(value.data);
     } catch (error: any) {
       console.error("[Omni Scan] Error:", error);
       res.status(500).json({ error: error.message });
@@ -1779,28 +1776,35 @@ async function startServer() {
 
   // OMNI FEATURES: TTS Feedback
   app.post("/api/resume-feedback-audio", async (req, res) => {
-    const { text, idToken } = req.body;
+    const { text, idToken, modelCatalog } = req.body;
     try {
       const keys = await getApiKeys(idToken);
       const geminiKey = keys?.gemini || (!idToken ? process.env.GEMINI_API_KEY : "");
       if (!geminiKey && idToken) return res.status(401).json({ error: "Personal API key required. Please update your profile settings." });
       if (!geminiKey) return res.status(401).json({ error: "No API key found" });
 
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-tts-preview',
-        contents: [{ parts: [{ text: `Provide professional, encouraging audio feedback on this resume critique: ${text}` }] }],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: "Zephyr" }
+      // The admins' speech model on the user's own key; the built-in one on the system key.
+      const runner = new ModelRunner(requestCatalog(modelCatalog, { gemini: Boolean(keys?.gemini) }), "gemini", { gemini: geminiKey });
+      const speechModel = runner.catalog.speechModel;
+      const { value } = await runner.run("gemini", async (model) => {
+        const response = await runner.gemini().models.generateContent({
+          model,
+          contents: [{ parts: [{ text: `Provide professional, encouraging audio feedback on this resume critique: ${text}` }] }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: "Zephyr" }
+              }
             }
           }
-        }
-      });
+        });
+        return { response, usage: response.usageMetadata };
+      }, [speechModel]);
 
-      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      logModelUsage(runner, "/api/resume-feedback-audio");
+      const audioData = value.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      res.setHeader("X-AI-Model", speechModel);
       res.json({ audioData });
     } catch (error: any) {
       console.error("[TTS Feedback] Error:", error);

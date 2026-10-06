@@ -12,6 +12,13 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // The admins (ADMIN_EMAILS in src/constants.ts): a verified sign-in with one of these addresses.
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in ['hackerharnish@gmail.com', 'param_jariwala@yahoo.com'];
+    }
+
     // Default deny for all other resources
     match /{document=**} {
       allow read, write: if false;
@@ -42,6 +49,13 @@ service cloud.firestore {
     // Analytics: Any signed-in user can read (if applicable)
     match /analytics/{docId} {
       allow read: if isSignedIn();
+    }
+
+    // The AI model catalog (Admin Dashboard > AI Models): every visitor's app reads
+    // it to know which models to call; only the admins can change it.
+    match /config/aiModels {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

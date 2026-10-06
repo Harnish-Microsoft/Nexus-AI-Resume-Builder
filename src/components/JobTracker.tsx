@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Briefcase, Building, IndianRupee, Calendar, Trash2, Loader2, ChevronRight, Search, Star, RefreshCw, Pause, Play, CheckCircle2 } from 'lucide-react';
 import { GoogleGenAI, Type } from '@google/genai';
 import { getDecryptedKey } from '../services/geminiService';
+import { geminiThinkingConfig, withGeminiModels } from '../services/modelCatalog';
 import { User } from 'firebase/auth';
 import { 
   collection, 
@@ -101,10 +102,11 @@ export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig
         throw new Error("API key is missing. Please check your settings.");
       }
       const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+      const response = await withGeminiModels((model) => ai.models.generateContent({
+        model,
         contents: `Extract the following information from this job description. If not found, use "Not specified".\n\nJD:\n${newJd}`,
         config: {
+          ...geminiThinkingConfig(model),
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -121,7 +123,7 @@ export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig
             required: ["company", "role", "salary", "skills"]
           }
         }
-      });
+      }));
 
       const data = JSON.parse(response.text || "{}");
       

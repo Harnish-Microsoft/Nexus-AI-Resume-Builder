@@ -1,10 +1,13 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
 import { MasterResume, SuitabilityResult, Certification, StarStory, AuditReport } from "../types";
 import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { isEngineMode, isModelChainError, providerFor, runModelChain } from "../lib/aiModels";
+import type { AIProvider, EngineMode, ThinkingLevel } from "../lib/aiModels";
+import { geminiThinkingConfig, geminiThinkingLevelConfig, getModelCatalog, providerChain } from "./modelCatalog";
 import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
 import { applyMatchScores, focusJobDescription, MatchScoreResult } from "../lib/matchScore";
@@ -98,12 +101,16 @@ export interface OptimizationResult {
     candidatesTokenCount: number;
     totalTokenCount: number;
   };
+  /** Tokens this run used, per provider. */
+  _usageByProvider?: Partial<Record<AIProvider, TokenUsage>>;
   _intermediateData?: {
     resumeData: any;
     jdKeywords: string[];
   };
   _engine?: string;
   _model?: string;
+  /** Every model that answered during this run, in the order first used. */
+  _models?: string[];
 }
 
 export interface DeepResearchResult {
@@ -181,155 +188,112 @@ export async function getDecryptedKey(encryptedKey: string): Promise<string> {
   return process.env.GEMINI_API_KEY || '';
 }
 
-async function callAI(prompt: string, model: string, engine: EngineType, encryptedKey?: string) {
-  const idToken = await auth.currentUser?.getIdToken();
+/** What one AI call returns: the text, its token usage, and the model that answered. */
+interface AICallResult {
+  result: string;
+  usage: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number };
+  model: string;
+}
 
-  if (engine === 'openai' && !encryptedKey) {
-    throw new Error("OpenAI API Key is missing. Please save your profile first.");
-  }
+function tokenUsage(usage: any): AICallResult["usage"] {
+  return {
+    promptTokenCount: usage?.promptTokenCount || 0,
+    candidatesTokenCount: usage?.candidatesTokenCount || 0,
+    totalTokenCount: usage?.totalTokenCount || 0,
+  };
+}
 
-  // Fallback Logic definitions
-  const FALLBACK_GEMINI_MODEL = "gemini-3.6-flash"; // Global fallback now 3.6 flash
-  const LITE_GEMINI_MODEL = "gemini-3.1-flash-lite"; // Feature fallback
-  
-  if (engine === 'gemini') {
-    // Gemini MUST be called from the frontend as per guidelines
+/** Options for one AI call. */
+interface AICallOptions {
+  /** Gemini thinking for this call instead of the catalog's setting (the admin's model test). */
+  thinking?: ThinkingLevel;
+  /** Rejects an unusable answer, which then counts as that model failing so the fallback is tried. */
+  validate?: (text: string) => boolean;
+}
+
+/**
+ * One AI call, strictly on the admins' models: the given model (the provider's
+ * primary unless the caller chose otherwise), then that provider's fallback when
+ * one is set - and then a ModelChainError naming both. Never a model nobody
+ * configured, and never the other provider. Pass a list to run exactly that chain
+ * (fast mode, the admin's model test).
+ */
+async function callAI(
+  prompt: string,
+  models: string | string[],
+  engine: EngineType,
+  encryptedKey?: string,
+  options: AICallOptions = {}
+): Promise<AICallResult> {
+  const chain = Array.isArray(models)
+    ? models.filter(Boolean)
+    : Array.from(new Set([models, getModelCatalog().providers[engine]?.fallback].filter((id): id is string => Boolean(id))));
+  const wantsJson = prompt.toLowerCase().includes('json');
+  // An empty or rejected answer is a failed call: the fallback gets its turn.
+  const accept = (text: string) => {
+    if (!text.trim()) throw new Error("the model returned an empty answer");
+    let usable = false;
     try {
-      const apiKey = await getDecryptedKey(encryptedKey || "");
-      
-      if (!apiKey) {
-        throw new Error("Gemini API key is missing. Please provide your own key in settings or contact the administrator.");
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // USER REQUIREMENT: Specific Fallback Chains
-      const getFallbackChain = (primaryModel: string): string[] => {
-        // High Thinking: Prioritize pro-preview for complex tasks
-        if (primaryModel === 'gemini-3.1-pro-preview' || primaryModel === 'gemini-pro') {
-          return ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
-        }
-        if (primaryModel === 'gemini-3.1-flash-lite') {
-          return ['gemini-3.1-flash-lite', 'gemini-3.6-flash'];
-        }
-        if (primaryModel === 'gemini-3.6-flash') {
-          return ['gemini-3.6-flash', 'gemini-3.1-flash-lite'];
-        }
-        
-        // Default catch-all fallback
-        return [primaryModel, 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
-      };
-
-      const chain = getFallbackChain(model);
-
-      const executeWithFallback = async (modelChain: string[]): Promise<any> => {
-        const modelToTry = modelChain[0];
-        
-        // Clean model and handle legacy mappings
-        const cleanModel = modelToTry
-          .replace(':thinking', '')
-          .replace('gemini-1.5-pro', 'gemini-3.1-pro-preview')
-          .replace('gemini-1.5-flash', 'gemini-3.6-flash') // Redirect old flash to 3.5 flash
-          .replace('gemini-3-flash-preview', 'gemini-3.6-flash') // Clean up renamed models
-          .replace('gemini-pro', 'gemini-3.1-pro-preview');
-              
-        const config: any = {
-          responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
-        };
-
-        // Use MEDIUM thinking for pro preview by default to balance cost and quality,
-        // unless it's a high-priority complex task or explicitly requested.
-        if (cleanModel === 'gemini-3.1-pro-preview') {
-          config.thinkingConfig = { thinkingLevel: ThinkingLevel.MEDIUM };
-        } else if (cleanModel.includes('3.')) {
-          config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
-        }
-
-        try {
-          const response = await ai.models.generateContent({ 
-            model: cleanModel,
-            contents: prompt,
-            config
-          });
-
-          return {
-            result: response.text || "",
-            usage: {
-              promptTokenCount: response.usageMetadata?.promptTokenCount || 0,
-              candidatesTokenCount: response.usageMetadata?.candidatesTokenCount || 0,
-              totalTokenCount: response.usageMetadata?.totalTokenCount || 0
-            }
-          };
-        } catch (innerError: any) {
-          const errorMsg = String(innerError?.message || innerError).toLowerCase();
-          const isQuotaError = errorMsg.includes("quota") || 
-                               errorMsg.includes("429") || 
-                               errorMsg.includes("limit") || 
-                               errorMsg.includes("exhausted") ||
-                               errorMsg.includes("resource_exhausted") ||
-                               errorMsg.includes("rate_limit");
-          
-          if (modelChain.length > 1) {
-            const isProModel = modelToTry.includes('pro') || modelToTry.includes('thinking');
-            const shouldFallback = isQuotaError || isProModel || errorMsg.includes("not found") || errorMsg.includes("model");
-
-            if (shouldFallback) {
-              console.warn(`[Gemini Service] Error on ${cleanModel}: ${errorMsg}. Falling back to ${modelChain[1]}...`);
-              return await executeWithFallback(modelChain.slice(1));
-            }
-          }
-          
-          throw innerError;
-        }
-      };
-
-      return await executeWithFallback(chain);
-      
-    } catch (error: any) {
-      let errorMessage = error?.message || String(error);
-      
-      // Try to parse Gemini error if it's a JSON string
-      try {
-        if (errorMessage.startsWith('{')) {
-          const parsed = JSON.parse(errorMessage);
-          if (parsed.error?.message) {
-            errorMessage = parsed.error.message;
-          }
-        }
-      } catch (e) {
-        // Not a JSON string, ignore
-      }
-
-      console.error("Gemini Frontend Error:", errorMessage);
-      throw new Error(errorMessage);
+      usable = !options.validate || options.validate(text);
+    } catch {
+      usable = false;
     }
-  } else {
-    // OpenAI and other engines can stay on the backend
-    try {
+    if (!usable) throw new Error("the answer was not in the expected format");
+  };
+
+  if (engine === 'openai') {
+    if (!encryptedKey) {
+      throw new Error("OpenAI API Key is missing. Please save your profile first.");
+    }
+    const idToken = await auth.currentUser?.getIdToken();
+    const { value, model } = await runModelChain('openai', chain, async (candidate) => {
       const response = await fetch('/api/optimize', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${idToken}`
         },
-        body: JSON.stringify({
-          prompt,
-          model,
-          engine,
-          encryptedKey
-        })
+        body: JSON.stringify({ prompt, model: candidate, encryptedKey })
       });
-
-      if (!response.ok) {
-        throw new Error("Backend AI Call Failed");
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.warn(`[AI Service] OpenAI failed, falling back to Gemini ${FALLBACK_GEMINI_MODEL}...`, error);
-      return await callAI(prompt, FALLBACK_GEMINI_MODEL, 'gemini', encryptedKey);
-    }
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || `OpenAI request failed (${response.status})`);
+      accept(String(data?.result || ""));
+      return data;
+    });
+    return { result: value?.result || "", usage: tokenUsage(value?.usage), model };
   }
+
+  // Gemini is called from the browser, with the user's own key.
+  const apiKey = await getDecryptedKey(encryptedKey || "");
+  if (!apiKey) {
+    throw new Error("Gemini API key is missing. Please provide your own key in settings or contact the administrator.");
+  }
+  const ai = new GoogleGenAI({ apiKey });
+  const { value, model } = await runModelChain('gemini', chain, async (candidate) => {
+    const response = await ai.models.generateContent({
+      model: candidate,
+      contents: prompt,
+      config: {
+        responseMimeType: wantsJson ? "application/json" : "text/plain",
+        ...(options.thinking ? geminiThinkingLevelConfig(options.thinking) : geminiThinkingConfig(candidate)),
+      },
+    });
+    accept(response.text || "");
+    return response;
+  });
+  return { result: value.text || "", usage: tokenUsage(value.usageMetadata), model };
+}
+
+/**
+ * Tests one exact model with a tiny prompt and no fallback, for the admin
+ * screen, with the thinking level the form shows. Resolves with the reply time
+ * in milliseconds; rejects with the provider's error.
+ */
+export async function testModelConnection(provider: EngineType, model: string, config: RouterConfig, thinking?: ThinkingLevel): Promise<number> {
+  const apiKey = provider === 'openai' ? config.openaiConfig.apiKey : config.geminiConfig.apiKey;
+  const started = Date.now();
+  await callAI('Reply with the single word OK.', [model], provider, apiKey, provider === 'gemini' ? { thinking } : {});
+  return Date.now() - started;
 }
 
 
@@ -338,10 +302,11 @@ export async function scanResumeImage(imageData: string, mimeType: string): Prom
   const response = await fetch('/api/gemini/scan-resume', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageData, mimeType, idToken })
+    body: JSON.stringify({ imageData, mimeType, idToken, modelCatalog: getModelCatalog() })
   });
-  if (!response.ok) throw new Error("Vision Scan Failed");
-  return await response.json();
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Vision Scan Failed");
+  return data;
 }
 
 export async function startDeepResearch(resume: any, jd: string): Promise<string> {
@@ -368,9 +333,12 @@ export async function getAudioFeedback(text: string): Promise<string> {
   const response = await fetch('/api/resume-feedback-audio', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, idToken })
+    body: JSON.stringify({ text, idToken, modelCatalog: getModelCatalog() })
   });
-  if (!response.ok) throw new Error("Audio Generation Failed");
+  if (!response.ok) {
+    const failure = await response.json().catch(() => null);
+    throw new Error(failure?.error || "Audio Generation Failed");
+  }
   const data = await response.json();
   return data.audioData;
 }
@@ -402,13 +370,7 @@ export async function evaluateSuitability(
   fastMode: boolean = false
 ): Promise<SuitabilityResult> {
   const routedConfig = routeTask('evaluate_suitability', config);
-  
-  let modelToUse = routedConfig.model;
-  if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.6-flash';
-  } else if (!modelToUse) {
-    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.6-flash';
-  }
+  const modelsToUse = fastMode ? providerChain(routedConfig.engine, { fast: true }) : routedConfig.model;
 
   const prompt = `
 You are an expert technical recruiter screening a candidate's resume against a job description.
@@ -449,7 +411,7 @@ Return ONLY a JSON object with the following structure:
 `;
 
   try {
-    const data = await callAI(prompt, modelToUse, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, modelsToUse, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     if (!resultText) throw new Error("No response from AI");
     return JSON.parse(resultText);
@@ -649,13 +611,27 @@ function addUsage(total: TokenUsage, usage: Partial<TokenUsage> | null | undefin
   total.totalTokenCount += usage?.totalTokenCount || 0;
 }
 
-/** Models for the evidence steps: a full flash model for judgement and rewriting, lite or mini to review. */
-function evidenceModels(engine: EngineType, writerModel: string): { analysis: string; review: string; correction: string } {
-  if (engine === 'openai') {
-    const main = writerModel || 'gpt-4o';
-    return { analysis: main, review: 'gpt-4o-mini', correction: main };
+/** Only the providers that used tokens, as whole numbers. */
+function usedProviders(usage: Partial<Record<AIProvider, Partial<TokenUsage> | null | undefined>>): Partial<Record<AIProvider, TokenUsage>> {
+  const used: Partial<Record<AIProvider, TokenUsage>> = {};
+  for (const provider of ['gemini', 'openai'] as const) {
+    const total: TokenUsage = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+    addUsage(total, usage[provider]);
+    if (total.promptTokenCount || total.candidatesTokenCount || total.totalTokenCount) used[provider] = total;
   }
-  return { analysis: 'gemini-3.6-flash', review: 'gemini-3.1-flash-lite', correction: 'gemini-3.6-flash' };
+  return used;
+}
+
+/** The provider's API key from the router config. */
+function providerKey(config: RouterConfig, provider: AIProvider): string | undefined {
+  return provider === 'openai' ? config.openaiConfig.apiKey : config.geminiConfig.apiKey;
+}
+
+/** An error that means "stop the run": every configured model failed. Never retried on another path. */
+function modelRunStopped(message: string): Error {
+  const error = new Error(message || "The AI models failed and the run stopped.");
+  error.name = "ModelChainError";
+  return error;
 }
 
 export interface OptimizeResumeOptions {
@@ -685,6 +661,7 @@ export async function optimizeResume(
   options: OptimizeResumeOptions = {}
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
+  const engineMode: EngineMode = isEngineMode(config.mode) ? config.mode : 'hybrid-gemini';
   const bulletRules = activeBulletRules(options.bulletRules);
   // From the same inputs the server uses, so both sides follow the same trend list.
   const trends = activeLinkedInTrends(options.linkedinTrends, targetRole, jobDescription);
@@ -693,20 +670,10 @@ export async function optimizeResume(
   const blend = normalizeAudienceMix(audienceMix);
   const audienceText = blend ? audienceHeadline(blend) : audience;
   
-  // Cost-saving logic: If fastMode is enabled, prefer Gemini Flash even in Hybrid mode to reduce OpenAI costs
-  let modelToUse = routedConfig.model;
-  let engineToUse = routedConfig.engine;
-  
-  if (fastMode) {
-    if (config.mode === 'production') {
-      // In Hybrid mode, fastMode forces Gemini to save costs
-      engineToUse = 'gemini';
-      modelToUse = 'gemini-3.6-flash';
-    } else {
-      // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.6-flash';
-    }
-  }
+  // The writer runs on its provider's primary, then fallback. Fast mode starts on
+  // the fallback (normally the quicker model) and keeps the primary behind it.
+  const engineToUse = routedConfig.engine;
+  const writerModels = providerChain(engineToUse, { fast: fastMode });
 
   const isLeadershipRole = /director|manager|lead|head|executive|vp|chief|principal|senior manager/i.test(targetRole);
 
@@ -729,9 +696,13 @@ export async function optimizeResume(
           audienceMix: blend,
           customPrompt,
           apiKey: config.openaiConfig.apiKey,
+          // Sent separately: the server tells each key apart by its form.
+          geminiApiKey: config.geminiConfig.apiKey,
           pipelineType,
           targetCompany,
           brainDump,
+          // The admins' models. The server uses them only with the user's own key.
+          modelCatalog: getModelCatalog(),
           ...(bulletRules ? { bulletRules } : {}),
           ...(trends ? { linkedinTrends: true } : {})
         })
@@ -746,7 +717,10 @@ export async function optimizeResume(
         parsed._engine = 'hybrid-v2';
         if (data.usage) parsed._usage = data.usage;
         if (data.geminiUsage) parsed._geminiUsage = data.geminiUsage;
+        // The server reports OpenAI tokens as `usage` and Gemini tokens as `geminiUsage`.
+        parsed._usageByProvider = usedProviders({ openai: data.usage, gemini: data.geminiUsage });
         if (data.intermediateData) parsed._intermediateData = data.intermediateData;
+        parsed._models = Array.isArray(data.modelsUsed) ? data.modelsUsed.map((model: unknown) => String(model)) : [];
         
         // Apply UI formatting
         // Skills must be grouped into categories.
@@ -819,7 +793,13 @@ export async function optimizeResume(
 
         return fixTitle(parsed);
       }
+
+      const failure = await response.json().catch(() => null);
+      // Every configured model failed: stop, rather than run again on another path.
+      if (failure?.code === 'MODEL_FAILED') throw modelRunStopped(failure.error);
+      console.warn(`V2 Pipeline returned ${response.status}${failure?.error ? `: ${failure.error}` : ''}. Falling back to legacy optimization.`);
     } catch (e) {
+      if (isModelChainError(e)) throw e;
       console.warn("V2 Pipeline failed, falling back to legacy optimization:", e);
     }
   }
@@ -830,13 +810,24 @@ export async function optimizeResume(
 
   // Evidence first (skipped in fast mode): before writing, decide requirement by
   // requirement what the candidate's own material proves, with every quote verified.
+  // Reading and review run on the analysis provider, corrections on the writer's.
   const evidenceSteps = !fastMode;
-  const evidenceApiKey = engineToUse === 'openai' ? config.openaiConfig.apiKey : config.geminiConfig.apiKey;
-  const evidenceModel = evidenceModels(engineToUse, modelToUse);
-  const evidenceUsage: TokenUsage = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
-  const evidenceCall = async (evidencePrompt: string, model: string): Promise<string> => {
-    const data = await callAI(evidencePrompt, model, engineToUse, evidenceApiKey);
-    addUsage(evidenceUsage, data?.usage);
+  const analysisProvider = providerFor(engineMode, 'analysis');
+  const usageByProvider: Record<AIProvider, TokenUsage> = {
+    gemini: { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 },
+    openai: { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 },
+  };
+  // Every model that answered in this run, in the order first used, for the header.
+  const modelsUsed: string[] = [];
+  const noteModel = (model: string) => {
+    if (model && !modelsUsed.includes(model)) modelsUsed.push(model);
+  };
+  const evidenceCall = async (evidencePrompt: string, provider: AIProvider, validate?: (json: string) => boolean): Promise<string> => {
+    const data = await callAI(evidencePrompt, providerChain(provider), provider, providerKey(config, provider), {
+      ...(validate ? { validate: (text: string) => validate(extractJson(text)) } : {}),
+    });
+    addUsage(usageByProvider[provider], data?.usage);
+    noteModel(data.model);
     return extractJson(data?.result || "");
   };
   const material = buildCandidateMaterial(resumeText, brainDump);
@@ -844,9 +835,11 @@ export async function optimizeResume(
   let requirementAnalysis: RequirementAnalysis | null = null;
   if (evidenceSteps) {
     try {
+      // An answer with no usable analysis counts as a failed call, so the fallback is tried.
       const raw = await evidenceCall(
         buildRequirementAnalysisPrompt({ jobDescription: analysisPosting.text, targetRole, material }),
-        evidenceModel.analysis
+        analysisProvider,
+        (json) => parseRequirementAnalysis(json, material, { jobDescription }) !== null
       );
       requirementAnalysis = parseRequirementAnalysis(raw, material, { jobDescription });
       if (!requirementAnalysis) console.warn("[Evidence] No usable requirement analysis; writing without the evidence map.");
@@ -886,13 +879,17 @@ export async function optimizeResume(
 
   const maxRetries = 5;
   let retryCount = 0;
-  let currentModel = modelToUse;
 
   while (retryCount <= maxRetries) {
     try {
-      // Use the potentially overridden engine and model
-      const currentApiKey = engineToUse === 'openai' ? config.openaiConfig.apiKey : config.geminiConfig.apiKey;
-      const data = await callAI(prompt, currentModel, engineToUse, currentApiKey);
+      // A malformed document counts as a failed call, so the fallback is tried before any retry.
+      const data = await callAI(prompt, writerModels, engineToUse, providerKey(config, engineToUse), {
+        validate: (text) => {
+          const json = extractJson(text);
+          return json.length >= 100 && Boolean(JSON.parse(json));
+        },
+      });
+      noteModel(data.model);
       const rawResult = data.result || "";
       const resultText = extractJson(rawResult);
 
@@ -950,7 +947,7 @@ export async function optimizeResume(
           },
           evidenceSteps
             ? (reviewPrompt, purpose) =>
-                evidenceCall(reviewPrompt, purpose === 'review' ? evidenceModel.review : evidenceModel.correction)
+                evidenceCall(reviewPrompt, purpose === 'review' ? analysisProvider : engineToUse)
             : null
         );
 
@@ -974,12 +971,12 @@ export async function optimizeResume(
           inputCoverage,
         });
 
-        if (data.usage || evidenceUsage.totalTokenCount > 0) {
-          const usage: TokenUsage = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
-          addUsage(usage, data.usage);
-          addUsage(usage, evidenceUsage);
-          parsed._usage = usage;
-        }
+        // The writer's usage plus every evidence step, kept per provider: under
+        // Hybrid OpenAI the analysis and review ran on Gemini, the writing on OpenAI.
+        addUsage(usageByProvider[engineToUse], data.usage);
+        parsed._usage = usageByProvider[engineToUse];
+        parsed._usageByProvider = usedProviders(usageByProvider);
+        parsed._models = [...modelsUsed];
 
         // FAIL-SAFE: Ensure "Officer IT cum Logistics" is preserved and not changed to "Office IT cum Logistics"
         const fixTitle = (obj: any): any => {
@@ -1016,17 +1013,15 @@ export async function optimizeResume(
       const isJsonError = errorString.includes("json_parsing_error") || 
                           errorString.includes("empty or malformed") ||
                           errorString.includes("no response") ||
-                          errorString.includes("invalid response format");
+                          errorString.includes("invalid response format") ||
+                          errorString.includes("not in the expected format") ||
+                          errorString.includes("empty answer");
       
       if ((isRateLimit || isJsonError) && retryCount < maxRetries) {
         retryCount++;
-        
-        // Fallback to Flash if Pro fails with rate limit or JSON error
-        if (engineToUse === 'gemini' && (currentModel.includes('pro') || currentModel.includes('3.1-pro'))) {
-          console.log(`Error hit on Gemini Pro. Falling back to Gemini 3.1 Flash Lite for retry ${retryCount}...`);
-          currentModel = 'gemini-3.1-flash-lite';
-        }
 
+        // The same models again after a pause: a transient failure is retried, never
+        // swapped for a model the admins did not choose.
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
         const retryMsg = isRateLimit 
           ? `AI API quota exceeded. Retrying with exponential backoff (${retryCount}/${maxRetries})...`
@@ -1197,13 +1192,7 @@ export async function analyzeAudienceMix(
   fastMode: boolean = false
 ): Promise<AudienceMix> {
   const routedConfig = routeTask('multi_audience', config);
-
-  let modelToUse = routedConfig.model;
-  if (fastMode && routedConfig.engine === 'gemini') {
-    modelToUse = 'gemini-3.6-flash';
-  } else if (!modelToUse) {
-    modelToUse = 'gemini-3.6-flash';
-  }
+  const modelsToUse = fastMode ? providerChain(routedConfig.engine, { fast: true }) : routedConfig.model;
 
   const catalog = AUDIENCE_PROFILES
     .map((profile) => `- ${profile.id}: ${profile.label} - ${profile.reader}`)
@@ -1232,7 +1221,7 @@ export async function analyzeAudienceMix(
   `;
 
   try {
-    const data = await callAI(prompt, modelToUse, 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, modelsToUse, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const mix = normalizeAudienceMix(JSON.parse(resultText || 'null'), 'ai');
     if (mix) return mix;
@@ -1241,7 +1230,7 @@ export async function analyzeAudienceMix(
     const errorMsg = error?.message || String(error);
     const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
     if (isQuotaError) {
-      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using keyword-based fallback.");
+      console.warn("Auto-audience selection skipped: AI API quota exceeded. Using keyword-based fallback.");
     } else {
       console.error("Error analyzing best audiences:", errorMsg);
     }
@@ -1519,7 +1508,7 @@ export async function autoSelectPlayerCoachRole(
   jobDescription: string,
   config: RouterConfig
 ): Promise<boolean> {
-  const routedConfig = routeTask('rewrite_resume', config);
+  const routedConfig = routeTask('classify_role', config);
   const prompt = `
     Analyze the following Job Description.
     Determine if this role is a "Player-Coach" role (individual contributor + team lead/mentor).
@@ -1530,7 +1519,7 @@ export async function autoSelectPlayerCoachRole(
   `;
 
   try {
-    const data = await callAI(prompt, 'gemini-3.6-flash', 'gemini', routedConfig.apiKey);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText);
     return parsed.isPlayerCoach;
@@ -1547,7 +1536,7 @@ export async function rankMasterResumes(
 ): Promise<{ id: string; name: string; score: number; reason: string; ats_analysis: string; skill_gap: string[] }[]> {
   if (!masters || masters.length === 0) return [];
 
-  const routedConfig = routeTask('rewrite_resume', config);
+  const routedConfig = routeTask('rank_resumes', config);
   const prompt = `
     You are an expert recruitment strategist.
     Analyze the provided Job Description (JD) and the list of available "Master Resumes".
@@ -1580,7 +1569,7 @@ export async function rankMasterResumes(
   `;
 
   try {
-    const data = await callAI(prompt, "gemini-3.6-flash", "gemini", routedConfig.apiKey);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     return JSON.parse(resultText || "[]");
   } catch (error) {
@@ -1596,9 +1585,7 @@ export async function selectBestMasterResume(
 ): Promise<string | null> {
   if (!masters || masters.length === 0) return null;
 
-  const routedConfig = routeTask('rewrite_resume', config);
-  const apiKey = await getDecryptedKey(routedConfig.apiKey || '');
-  const ai = new GoogleGenAI({ apiKey });
+  const routedConfig = routeTask('rank_resumes', config);
 
   const mastersSummary = masters.map((m) => {
     const content = typeof m.data === 'string' ? m.data : JSON.stringify(m.data);
@@ -1635,17 +1622,8 @@ export async function selectBestMasterResume(
   `;
 
   try {
-    const apiKey = await getDecryptedKey(routedConfig.apiKey || '');
-    const ai = new GoogleGenAI({ apiKey });
-    
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { responseMimeType: "application/json" }
-    });
-    
-    const text = response.text || "";
-    const parsed = JSON.parse(text);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const parsed = JSON.parse(extractJson(data.result || "") || "{}");
     
     // Validate that the returned ID actually exists in the masters list
     const found = masters.find(m => m.id === parsed.selectedId);

@@ -66,13 +66,16 @@ import { BulletRulesSettings } from './components/BulletRulesSettings';
 import { BulletBudgetReportCard } from './components/BulletBudgetReportCard';
 import { LinkedInTrendsCard } from './components/LinkedInTrendsCard';
 import { RequirementEvidenceCard } from './components/RequirementEvidenceCard';
-import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
+import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES, isAdminEmail } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
 import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeAudienceMix, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeAudienceMix, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus, testModelConnection } from './services/geminiService';
+import { getModelCatalog, loadModelCatalog, useModelCatalog } from './services/modelCatalog';
+import { ENGINE_DESCRIPTIONS, ENGINE_LABELS, ENGINE_MODES, PROVIDER_LABELS, engineRoutes, isModelChainError, modelLabel, providerFor, providersOf } from './lib/aiModels';
+import type { EngineMode } from './lib/aiModels';
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
 import { extractTextFromPDFFile } from './lib/pdfUtils';
@@ -566,6 +569,11 @@ export default function App() {
       }));
     }
   }, [encryptedApiKey]);
+
+  // The admins' AI models, shared by every user; the cached or built-in copy is used until it arrives.
+  useEffect(() => {
+    loadModelCatalog();
+  }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
@@ -1276,17 +1284,57 @@ export default function App() {
   const [showInsights, setShowInsights] = useState(true);
   
   const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
+    // Holds each provider's key. The models come from the admins' catalog
+    // (Admin Dashboard > AI Models), never from here.
     gemini: { 
-      model: 'gemini-3.6-flash', 
+      model: '', 
       apiKey: (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : '') || '' 
     },
     openai: { 
-      model: 'gpt-4o', 
+      model: '', 
       apiKey: (typeof process !== 'undefined' ? process.env.OPENAI_API_KEY : '') || '' 
     },
     production: { model: 'auto', apiKey: '' }
   });
-  const [selectedEngine, setSelectedEngine] = useState<'gemini' | 'openai' | 'hybrid-gemini' | 'hybrid-openai'>('gemini');
+  const modelCatalog = useModelCatalog();
+  // Starts on the admins' default engine and follows it until the user picks one this session.
+  const [selectedEngine, setSelectedEngine] = useState<EngineMode>(() => getModelCatalog().defaultEngine);
+  const engineChosenRef = useRef(false);
+  const chooseEngine = (mode: EngineMode) => {
+    engineChosenRef.current = true;
+    setSelectedEngine(mode);
+  };
+  useEffect(() => {
+    if (!engineChosenRef.current) setSelectedEngine(modelCatalog.defaultEngine);
+  }, [modelCatalog.defaultEngine]);
+  // The models the last optimization actually ran on, for the header.
+  const [lastRunModels, setLastRunModels] = useState<{ engine: EngineMode; fast: boolean; models: string[] } | null>(null);
+  const [adminTab, setAdminTab] = useState<'analytics' | 'models'>('analytics');
+
+  /** The engine and the primary model of each provider it uses, e.g. "Hybrid Gemini (Gemini 3.1 Pro)". */
+  const engineSummary = (mode: EngineMode) =>
+    `${ENGINE_LABELS[mode]} (${providersOf(mode).map(provider => modelLabel(modelCatalog, modelCatalog.providers[provider].primary)).join(' + ')})`;
+  /** The model that writes the resume under this engine. */
+  const writerModelLabel = (mode: EngineMode) =>
+    modelLabel(modelCatalog, modelCatalog.providers[providerFor(mode, 'writing')].primary);
+  const activeRoutes = engineRoutes(modelCatalog, selectedEngine);
+  const describeRoute = (route: (typeof activeRoutes)[number]) =>
+    `${route.work}: ${PROVIDER_LABELS[route.provider]} ${modelLabel(modelCatalog, route.primary) || '(none set)'}` +
+    (route.fallback ? `, fallback ${modelLabel(modelCatalog, route.fallback)}` : ', no fallback');
+  const lastRunForEngine = lastRunModels && lastRunModels.engine === selectedEngine ? lastRunModels : null;
+  // A fallback answered in a normal run: its primary failed. (Fast mode starts on the fallback by design.)
+  const fallbackUsed = !!lastRunForEngine && !lastRunForEngine.fast && lastRunForEngine.models.some(
+    model => activeRoutes.some(route => route.fallback === model) && !activeRoutes.some(route => route.primary === model)
+  );
+  const engineBadge = `${ENGINE_LABELS[selectedEngine]} · ${activeRoutes.map(route => modelLabel(modelCatalog, route.primary) || `no ${PROVIDER_LABELS[route.provider]} model`).join(' + ')}`;
+  const engineTooltip = [
+    ...activeRoutes.map(describeRoute),
+    ...(lastRunForEngine ? [`Last run used: ${lastRunForEngine.models.map(model => modelLabel(modelCatalog, model)).join(', ') || 'no AI model'}`] : []),
+  ].join('\n');
+  const openModelSettings = () => {
+    setAdminTab('models');
+    setShowAdminDashboard(true);
+  };
   const [showEngineSettings, setShowEngineSettings] = useState(false);
   
   const getSectionStyle = (sectionId: string) => {
@@ -2173,7 +2221,7 @@ export default function App() {
 
   const getRouterConfig = (): RouterConfig => {
     return {
-      mode: selectedEngine as any,
+      mode: selectedEngine,
       geminiConfig: {
         engine: 'gemini',
         model: engineConfig.gemini.model,
@@ -2346,8 +2394,9 @@ export default function App() {
     // but the backend might handle them. However, we should warn if no key was actually decrypted and no fallback exists.
     
     // Final check for missing API keys with the specific requested message
-    const isGeminiNeeded = selectedEngine === 'gemini' || selectedEngine === 'hybrid-gemini';
-    const isOpenAINeeded = selectedEngine === 'openai' || selectedEngine === 'hybrid-openai';
+    // Hybrid OpenAI needs both: Gemini reads and checks, OpenAI writes.
+    const isGeminiNeeded = providersOf(selectedEngine).includes('gemini');
+    const isOpenAINeeded = providersOf(selectedEngine).includes('openai');
     
     const hasGKey = !!geminiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
     const hasOKey = !!openaiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
@@ -2420,13 +2469,7 @@ export default function App() {
       });
     }, 100);
     
-    const engineNameMap: Record<string, string> = {
-      'gemini': 'Google Gemini 2.0',
-      'openai': 'OpenAI GPT-4o',
-      'hybrid-gemini': 'Hybrid Strategy (Gemini + Flash)',
-      'hybrid-openai': 'Hybrid Premium (OpenAI + Gemini Flash)'
-    };
-    const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
+    const engineName = engineSummary(selectedEngine);
     setOptimizationStatus(`Initializing ${engineName}...`);
 
     const controller = new AbortController();
@@ -2508,7 +2551,7 @@ export default function App() {
           if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming...`);
         }, 4000);
         setTimeout(() => {
-          if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
+          if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${writerModelLabel(selectedEngine)}...`);
         }, 8000);
       }
 
@@ -2534,55 +2577,32 @@ export default function App() {
 
       setOptimizationProgress(95);
 
-      // Update token usage
-      if (data._engine === 'hybrid-v2') {
-        // Handle V2 Pipeline (OpenAI + Gemini)
-        if (data._usage) {
-          const openaiInput = data._usage.promptTokenCount || 0;
-          const openaiOutput = data._usage.candidatesTokenCount || 0;
-          setTokenUsage(prev => ({
-            ...prev,
-            openai: {
-              input: (prev.openai.input || 0) + openaiInput,
-              output: (prev.openai.output || 0) + openaiOutput
-            }
-          }));
-          syncTokenUsage('openai', openaiInput, openaiOutput);
-        }
-        if (data._geminiUsage) {
-          const geminiInput = data._geminiUsage.promptTokenCount || 0;
-          const geminiOutput = data._geminiUsage.candidatesTokenCount || 0;
-          setTokenUsage(prev => ({
-            ...prev,
-            gemini: {
-              input: (prev.gemini.input || 0) + geminiInput,
-              output: (prev.gemini.output || 0) + geminiOutput
-            }
-          }));
-          syncTokenUsage('gemini', geminiInput, geminiOutput);
-        }
-      } else if (data._usage && data._engine) {
-        // Handle Legacy Pipeline
-        const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
-        const inputDelta = data._usage!.promptTokenCount || 0;
-        const outputDelta = data._usage!.candidatesTokenCount || 0;
-        
+      // Update token usage, per provider: under Hybrid OpenAI, Gemini read and checked and OpenAI wrote.
+      for (const provider of ['gemini', 'openai'] as const) {
+        const usage = data._usageByProvider?.[provider];
+        if (!usage) continue;
+        const inputDelta = usage.promptTokenCount || 0;
+        const outputDelta = usage.candidatesTokenCount || 0;
         setTokenUsage(prev => ({
           ...prev,
-          [engine]: {
-            input: (prev[engine].input || 0) + inputDelta,
-            output: (prev[engine].output || 0) + outputDelta
+          [provider]: {
+            input: (prev[provider].input || 0) + inputDelta,
+            output: (prev[provider].output || 0) + outputDelta
           }
         }));
-        
-        syncTokenUsage(engine, inputDelta, outputDelta);
+        syncTokenUsage(provider, inputDelta, outputDelta);
       }
+
+      // The models this optimization's own calls ran on, reported with its result.
+      const usedModels: string[] = Array.isArray(data._models) ? data._models : [];
+      setLastRunModels({ engine: selectedEngine, fast: fastMode, models: usedModels });
 
       setResults({
         [BLENDED_RESULT_KEY]: {
           ...data,
           _engine: selectedEngine,
-          _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
+          _model: usedModels.map(model => modelLabel(modelCatalog, model)).join(', '),
+          _models: usedModels
         } as any
       });
       setActiveAudience(BLENDED_RESULT_KEY);
@@ -2641,6 +2661,9 @@ export default function App() {
         const errorMessage = err.message || 'Failed to optimize resume. Please try again.';
         if (errorMessage.includes('DECRYPTION_FAILED')) {
           setError('Your session or encryption key has changed. Please go to the Profile tab and re-save your API keys.');
+        } else if (isModelChainError(err)) {
+          // Names each model that failed and why; an admin can change them in Admin Dashboard > AI Models.
+          setError(`The AI models failed, so the run stopped. ${errorMessage}`);
         } else {
           setError(errorMessage);
         }
@@ -3471,7 +3494,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   };
 
   if (showAdminDashboard) {
-    return <AdminDashboard onBack={() => setShowAdminDashboard(false)} isDarkMode={isDarkMode} />;
+    return (
+      <AdminDashboard
+        onBack={() => setShowAdminDashboard(false)}
+        isDarkMode={isDarkMode}
+        initialTab={adminTab}
+        canEditModels={isAdminEmail(user?.email)}
+        onTestModel={(provider, model, thinking) => testModelConnection(provider, model, getRouterConfig(), thinking)}
+      />
+    );
   }
 
   if (!isAuthReady) {
@@ -3647,8 +3678,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   <button onClick={resetLayout} className={`p-2 hidden md:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Reset Layout">
                       <Maximize className="w-[18px] h-[18px]" />
                   </button>
-                  {(user?.email === 'param_jariwala@yahoo.com' || user?.email === 'hackerharnish@gmail.com') && (
-                      <button onClick={() => setShowAdminDashboard(true)} className={`p-1.5 sm:p-2 hidden sm:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Admin Dashboard">
+                  {isAdminEmail(user?.email) && (
+                      <button onClick={() => { setAdminTab('analytics'); setShowAdminDashboard(true); }} className={`p-1.5 sm:p-2 hidden sm:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Admin Dashboard">
                           <BarChart3 className="w-[18px] h-[18px]" />
                       </button>
                   )}
@@ -3721,9 +3752,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </AnimatePresence>
                   </div>
                   <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0</span>
-                  <div className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-500 animate-pulse`}>
+                  <div
+                    className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-bold uppercase ${
+                      fallbackUsed ? 'border-amber-500/30 bg-amber-500/10 text-amber-500' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 animate-pulse'
+                    }`}
+                    title={engineTooltip}
+                  >
                       <Cpu className="w-3 h-3" />
-                      <span>{engineConfig.gemini.model === 'gemini-3.1-pro-preview' ? 'GEMINI 3.1 PRO (MULTI-FALLBACK)' : 'GEMINI 3.5 FLASH (MULTI-FALLBACK)'}</span>
+                      <span>{engineBadge}</span>
+                      {fallbackUsed && <span className="ml-1 px-1.5 rounded bg-amber-500/20">Fallback used</span>}
                   </div>
                   <Link to="/profile" className={`flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full border transition-colors ${isDarkMode ? 'border-white/20 hover:border-emerald-500/50 bg-neutral-900' : 'border-black/10 hover:border-emerald-500/50 bg-white'}`}>
                     {user ? (
@@ -4516,7 +4553,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     onChange={(e) => setFastMode(e.target.checked)}
                                     className="accent-emerald-500"
                                   />
-                                  <span className="text-[11px] font-bold">Fast Mode (Use Flash Model)</span>
+                                  <span className="text-[11px] font-bold">
+                                    Fast Mode{providersOf(selectedEngine).some(provider => modelCatalog.providers[provider].fallback)
+                                      ? ` (start on ${providersOf(selectedEngine).map(provider => modelLabel(modelCatalog, modelCatalog.providers[provider].fallback || modelCatalog.providers[provider].primary)).join(' + ')})`
+                                      : ' (skips the evidence steps)'}
+                                  </span>
                                 </label>
                               </div>
                             </div>
@@ -4533,59 +4574,45 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               <div>
                                 <label className="block text-[10px] font-black uppercase tracking-widest mb-3 opacity-50">Select Engine</label>
                                 <div className="grid grid-cols-2 gap-2">
-                                  {(['gemini', 'openai', 'hybrid-gemini', 'hybrid-openai'] as const).map((eng) => (
+                                  {ENGINE_MODES.map((eng) => (
                                     <button
                                       key={eng}
-                                      onClick={() => setSelectedEngine(eng)}
-                                      className={`py-2 text-[9px] font-black rounded-lg border transition-all capitalize tracking-widest ${
+                                      onClick={() => chooseEngine(eng)}
+                                      title={ENGINE_DESCRIPTIONS[eng]}
+                                      className={`py-2 text-[9px] font-black rounded-lg border transition-all tracking-widest ${
                                         selectedEngine === eng 
                                           ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500' : 'bg-black text-white border-black')
                                           : (isDarkMode ? 'bg-white/5 text-white/40 border-white/10' : 'bg-white text-black/40 border-black/5')
                                       }`}
                                     >
-                                      {eng.replace('hybrid-', 'Hybrid ')}
+                                      {ENGINE_LABELS[eng]}{eng === modelCatalog.defaultEngine ? ' · Default' : ''}
                                     </button>
                                   ))}
                                 </div>
                               </div>
 
-                              <div className="space-y-4">
-                                {!selectedEngine.startsWith('hybrid') ? (
-                                  <div className="relative">
-                                    <select 
-                                      className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 appearance-none ${
-                                        isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/10'
-                                      }`}
-                                      value={engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'].model}
-                                      onChange={(e) => setEngineConfig({
-                                        ...engineConfig,
-                                        [selectedEngine === 'gemini' ? 'gemini' : 'openai']: { ...engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'], model: e.target.value }
-                                      })}
-                                    >
-                                      {selectedEngine === 'gemini' && (
-                                        <>
-                                          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
-                                          <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-                                          <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                                          <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
-                                        </>
-                                      )}
-                                      {selectedEngine === 'openai' && (
-                                        <>
-                                          <option value="gpt-4o">GPT-4o</option>
-                                          <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                          <option value="o3-mini">OpenAI o3-mini</option>
-                                        </>
-                                      )}
-                                    </select>
-                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 opacity-40 pointer-events-none" />
+                              <div className={`p-3 rounded-xl border space-y-2 ${isDarkMode ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}>
+                                <p className="text-[10px] opacity-70 leading-relaxed font-medium">{ENGINE_DESCRIPTIONS[selectedEngine]}</p>
+                                {activeRoutes.map(route => (
+                                  <div key={route.provider} className="flex items-start gap-2">
+                                    <Zap className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                                    <p className="text-[10px] leading-relaxed">
+                                      <span className="font-bold">{route.work}:</span>{' '}
+                                      {modelLabel(modelCatalog, route.primary) || `no ${PROVIDER_LABELS[route.provider]} model set`}
+                                      <span className="opacity-60">
+                                        {route.fallback ? `, then ${modelLabel(modelCatalog, route.fallback)} if it fails` : ', no fallback: stops if it fails'}
+                                      </span>
+                                    </p>
                                   </div>
-                                ) : (
-                                  <div className={`p-3 rounded-xl border flex items-center gap-3 ${isDarkMode ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}>
-                                    <Zap className="w-4 h-4 text-emerald-500 shrink-0" />
-                                    <p className="text-[10px] opacity-70 leading-relaxed font-medium">Smart routing enabled: Using Gemini for analysis and OpenAI for tone optimization.</p>
-                                  </div>
-                                )}
+                                ))}
+                                <p className="text-[9px] opacity-50">
+                                  Models are set by the admins for every user.
+                                  {isAdminEmail(user?.email) && (
+                                    <button onClick={openModelSettings} className="ml-1 underline font-bold text-emerald-500 opacity-100">
+                                      Manage AI models
+                                    </button>
+                                  )}
+                                </p>
                               </div>
                             </div>
                           </div>
@@ -4913,12 +4940,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               </AnimatePresence>
                               <div className="flex justify-end mb-2">
                                 <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest text-right">
-                                  {selectedEngine.includes('hybrid') ? 'Hybrid Mode' : `Active Engine: ${engineConfig.gemini.model}`}
+                                  {`Active Engine: ${engineSummary(selectedEngine)}`}
                                   <br />
                                   <span className="opacity-40 text-[7px]">
-                                    {engineConfig.gemini.model === 'gemini-3.1-pro-preview' && 'Fallback Chain: 3.5 Flash → 3.1 Flash Lite'}
-                                    {engineConfig.gemini.model === 'gemini-3.5-flash' && 'Fallback Chain: 3.1 Flash Lite'}
-                                    {engineConfig.gemini.model === 'gemini-3.1-flash-lite' && 'Fallback Chain: 3.5 Flash'}
+                                    {activeRoutes.map(describeRoute).join(' · ')}
                                   </span>
                                 </span>
                               </div>
@@ -4926,7 +4951,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               <div className="space-y-3">
                                 {(selectedEngine === 'gemini' || selectedEngine.startsWith('hybrid')) && (
                                   <div className={selectedEngine.startsWith('hybrid') ? 'pb-2 border-b border-black/5 dark:border-white/5' : ''}>
-                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 block mb-1">Stage 1: Gemini Analysis</span>}
+                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 block mb-1">Gemini: {activeRoutes.find(route => route.provider === 'gemini')?.work}</span>}
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col">
                                         <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
@@ -4942,7 +4967,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 
                                 {(selectedEngine === 'openai' || selectedEngine === 'hybrid-openai') && (
                                   <div className="pt-2">
-                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest text-blue-500 block mb-1">Stage 3: OpenAI Generation</span>}
+                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest text-blue-500 block mb-1">OpenAI: {activeRoutes.find(route => route.provider === 'openai')?.work}</span>}
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col">
                                         <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   BarChart3, 
+  Cpu,
   TrendingUp, 
   DollarSign, 
   Zap, 
@@ -25,6 +26,21 @@ import {
   Bar
 } from 'recharts';
 import { motion } from 'motion/react';
+import { AIModelManager } from './AIModelManager';
+import type { AIProvider, ThinkingLevel } from '../lib/aiModels';
+
+export type AdminTab = 'analytics' | 'models';
+
+interface AdminDashboardProps {
+  onBack: () => void;
+  isDarkMode: boolean;
+  /** The tab shown first. */
+  initialTab?: AdminTab;
+  /** Admins may change the AI models; anyone else sees them read-only. */
+  canEditModels?: boolean;
+  /** Tests one model with a tiny prompt, the given Gemini thinking level and no fallback; resolves with the reply time in ms. */
+  onTestModel: (provider: AIProvider, model: string, thinking?: ThinkingLevel) => Promise<number>;
+}
 
 interface AdminStats {
   totalRequests: number;
@@ -46,7 +62,8 @@ interface ModelUsage {
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
-export const AdminDashboard: React.FC<{ onBack: () => void, isDarkMode: boolean }> = ({ onBack, isDarkMode }) => {
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBack, isDarkMode, initialTab = 'analytics', canEditModels = false, onTestModel }) => {
+  const [tab, setTab] = useState<AdminTab>(initialTab);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [usageByDay, setUsageByDay] = useState<UsageByDay[]>([]);
   const [modelUsage, setModelUsage] = useState<ModelUsage[]>([]);
@@ -86,8 +103,9 @@ export const AdminDashboard: React.FC<{ onBack: () => void, isDarkMode: boolean 
             >
               <ArrowLeft className="w-6 h-6" />
             </button>
-            <h1 className={`text-3xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Admin Analytics Dashboard</h1>
+            <h1 className={`text-3xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Admin Dashboard</h1>
           </div>
+          {tab === 'analytics' && (
           <button 
             onClick={fetchData}
             disabled={isLoading}
@@ -98,8 +116,31 @@ export const AdminDashboard: React.FC<{ onBack: () => void, isDarkMode: boolean 
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh Data
           </button>
+          )}
         </div>
 
+        <div className={`inline-flex p-1 mb-8 rounded-xl border ${isDarkMode ? 'bg-neutral-900 border-white/10' : 'bg-white border-gray-200'}`} role="tablist">
+          {([['analytics', 'Analytics', BarChart3], ['models', 'AI Models', Cpu]] as const).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                tab === id
+                  ? (isDarkMode ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white')
+                  : (isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
+              }`}
+            >
+              <Icon className="w-4 h-4" /> {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'models' ? (
+          <AIModelManager isDarkMode={isDarkMode} canEdit={canEditModels} onTestModel={onTestModel} />
+        ) : (
+        <>
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatCard 
@@ -227,6 +268,8 @@ export const AdminDashboard: React.FC<{ onBack: () => void, isDarkMode: boolean 
             </ResponsiveContainer>
           </div>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

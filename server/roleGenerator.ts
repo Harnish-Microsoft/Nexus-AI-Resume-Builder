@@ -4,7 +4,8 @@
  *
  * Each role is rewritten by its own model call using the shared per-role prompt
  * from src/lib/resumePrompt.ts, so the FAANG, STAR and budget standards are the
- * same ones the whole-document path uses. The output is then checked
+ * same ones the whole-document path uses. The calls run on the admins' writing
+ * models (src/lib/aiModels.ts) through the pipeline's ModelRunner. The output is then checked
  * mechanically (bullet count, lead verbs, ownership voice, figure provenance,
  * trending skills the candidate's material does not show), and a role that fails
  * gets one corrective retry that names the exact problems.
@@ -19,14 +20,12 @@
  * what was delivered.
  */
 
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { buildRoleBulletPrompt, supportingEvidenceLists } from "../src/lib/resumePrompt";
 import type { RoleBulletPromptOptions } from "../src/lib/resumePrompt";
 import {
   companiesMatch,
   isRuleBasis,
   parseDurationRange,
-  pickStrongestBullets,
   planBulletBudgets,
 } from "../src/lib/bulletBudget";
 import type { BudgetBasis, BudgetPlan, BulletBudget, BulletRules, DurationRange } from "../src/lib/bulletBudget";
@@ -43,10 +42,10 @@ import {
   linkStarStories,
 } from "../src/lib/impactScore";
 import type { FigureIndex } from "../src/lib/impactScore";
+import { builtInCatalog } from "../src/lib/aiModels";
+import { ModelRunner } from "./modelRunner";
 
-const PRIMARY_MODEL = "gemini-3.5-flash";
-const FALLBACK_MODEL = "gemini-3.1-flash-lite";
-/** Failed or unparseable calls tolerated per role before falling back to the source bullets. */
+/** Failed or unparseable calls tolerated per role; after that the run stops. */
 const MAX_CALL_FAILURES = 3;
 
 /** STAR stories drafted per role; depth follows the same tiers as the bullets. */
@@ -95,8 +94,6 @@ export interface RoleGenerationResult {
   generation: {
     model_calls: number;
     retried: boolean;
-    /** True when every call failed and the source bullets were used instead. */
-    fallback: boolean;
     budget: string | null;
     basis: BudgetBasis;
     /** Problems remaining in the delivered attempt. */
@@ -126,6 +123,11 @@ export interface GeneratePerRoleOptions {
   trends?: LinkedInTrends | null;
   /** The verified requirement evidence map; each role's prompt gets the part its own bullets prove. */
   requirementAnalysis?: RequirementAnalysis | null;
+  /**
+   * Makes one role's model call (the pipeline's ModelRunner, so the admins' models
+   * are used and tracked). Omitted: the built-in Gemini models on `geminiKey`.
+   */
+  call?: RoleModelCall;
   now?: Date;
 }
 
@@ -479,30 +481,6 @@ function linkRoleStories(output: RoleOutput, role: any): number {
   return dropped;
 }
 
-async function callModel(genAI: GoogleGenAI, prompt: string): Promise<string> {
-  const contents = [{ role: "user", parts: [{ text: prompt }] }];
-  try {
-    const res = await genAI.models.generateContent({
-      model: PRIMARY_MODEL,
-      contents,
-      config: {
-        responseMimeType: "application/json",
-        // Low thinking keeps per-role calls cheap; the validator and retry carry the quality bar.
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-      },
-    });
-    return res.text || "";
-  } catch (e: any) {
-    console.warn(`[RoleGen] ${PRIMARY_MODEL} failed (${e?.message || e}), trying ${FALLBACK_MODEL}...`);
-    const res = await genAI.models.generateContent({
-      model: FALLBACK_MODEL,
-      contents,
-      config: { responseMimeType: "application/json" },
-    });
-    return res.text || "";
-  }
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -685,22 +663,38 @@ export function prepareRoleJobs(
 export type RoleModelCall = (prompt: string) => Promise<string>;
 
 /**
+ * Role calls on a request's models. An answer that is not a usable role (one
+ * parseRoleOutput rejects) counts as that model failing, so the fallback is tried.
+ */
+export function roleModelCall(runner: ModelRunner): RoleModelCall {
+  return async (prompt) =>
+    (
+      await runner.callParsed(prompt, "writing", (text) => {
+        parseRoleOutput(text);
+        return text;
+      })
+    ).data;
+}
+
+/**
  * Generates one role: a model call, the mechanical checks, and at most one
- * corrective retry. Falls back to the strongest source bullets when every call
- * fails.
+ * corrective retry. A failed call is retried with the same models; when every
+ * attempt fails, the last error is thrown and the run stops - the role is never
+ * quietly left unoptimized.
  */
 export async function runRoleJob(
   job: RoleJob,
   call: RoleModelCall,
   pause: (ms: number) => Promise<void> = sleep
 ): Promise<RoleGenerationResult> {
-  const { identity, label, budget, sourceBullets } = job;
+  const { identity, label, budget } = job;
 
   let best: { output: RoleOutput; validation: RoleValidation } | null = null;
   let retryFeedback: RoleBulletPromptOptions["retryFeedback"];
   let modelCalls = 0;
   let failures = 0;
   let retried = false;
+  let lastError: unknown = null;
 
   while (failures < MAX_CALL_FAILURES) {
     const prompt = buildRoleBulletPrompt({ ...job.prompt, retryFeedback });
@@ -711,6 +705,7 @@ export async function runRoleJob(
       output = parseRoleOutput(await call(prompt));
     } catch (err: any) {
       failures += 1;
+      lastError = err;
       console.warn(`[RoleGen] ${label}: call failed (${failures}/${MAX_CALL_FAILURES}):`, err?.message || err);
       // A failed corrective retry keeps the attempt already in hand.
       if (best) break;
@@ -738,21 +733,9 @@ export async function runRoleJob(
   }
 
   if (!best) {
-    const { kept } = pickStrongestBullets(sourceBullets, budget.max);
-    console.warn(`[RoleGen] ${label}: all calls failed; using ${kept.length} source bullet(s).`);
-    return {
-      ...identity,
-      bullets: kept,
-      star_stories: [],
-      generation: {
-        model_calls: modelCalls,
-        retried,
-        fallback: true,
-        budget: budget.label,
-        basis: budget.basis,
-        issues: ["generation failed; the source bullets were used"],
-      },
-    };
+    console.warn(`[RoleGen] ${label}: every call failed; stopping the run.`);
+    if (lastError instanceof Error) throw lastError;
+    throw new Error(`${label}: the model gave no usable answer.`);
   }
 
   const issues = [...best.validation.hard, ...best.validation.soft];
@@ -768,7 +751,6 @@ export async function runRoleJob(
     generation: {
       model_calls: modelCalls,
       retried,
-      fallback: false,
       budget: budget.label,
       basis: budget.basis,
       issues,
@@ -787,14 +769,15 @@ export async function generatePerRole(
   brainDump?: string,
   options: GeneratePerRoleOptions = {}
 ): Promise<RoleGenerationResult[]> {
-  const genAI = new GoogleGenAI({ apiKey: geminiKey });
   const { jobs } = prepareRoleJobs(
     experience,
     { targetCompany, targetRole, audience, mode, customPrompt, brainDump },
     options
   );
-  const call: RoleModelCall = (prompt) => callModel(genAI, prompt);
-  return Promise.all(jobs.map((job) => runRoleJob(job, call)));
+  let call = options.call;
+  if (!call) call = roleModelCall(new ModelRunner(builtInCatalog(), "gemini", { gemini: geminiKey }));
+  const roleCall = call;
+  return Promise.all(jobs.map((job) => runRoleJob(job, roleCall)));
 }
 
 function competencyKey(story: any): string {

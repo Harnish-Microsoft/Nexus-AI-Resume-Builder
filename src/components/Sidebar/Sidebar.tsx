@@ -43,6 +43,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { rewriteSectionWithAI } from '../../services/aiService';
+import { useModelCatalog } from '../../services/modelCatalog';
+import { modelLabel } from '../../lib/aiModels';
 
 interface SortableItemProps {
   id: string;
@@ -119,7 +121,6 @@ export const Sidebar = () => {
     targetRole, 
     updateConfig,
     updateElement,
-    aiEngine,
     audience,
     setComparisonData,
     darkMode
@@ -156,9 +157,13 @@ export const Sidebar = () => {
     { type: 'projects' as ElementType, icon: Layers, label: 'Projects' },
   ];
 
+  const catalog = useModelCatalog();
+  const geminiModels = catalog.providers.gemini;
   const engines = [
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', desc: 'Fast & Lightweight', icon: Zap },
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: 'Powerful & Accurate', icon: Cpu },
+    { id: geminiModels.primary, name: modelLabel(catalog, geminiModels.primary), desc: 'Primary: every call starts here', icon: Cpu },
+    ...(geminiModels.fallback
+      ? [{ id: geminiModels.fallback, name: modelLabel(catalog, geminiModels.fallback), desc: 'Fallback: used if the primary fails', icon: Zap }]
+      : []),
   ];
 
   return (
@@ -331,30 +336,22 @@ export const Sidebar = () => {
             <div>
               <label className={cn("text-xs font-bold uppercase mb-3 flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-500")}>
                 <Cpu size={14} className="text-indigo-500" />
-                AI Engine
+                AI Models
               </label>
               <div className="space-y-2">
-                {engines.map((engine) => (
-                  <button
+                {engines.map((engine, index) => (
+                  <div
                     key={engine.id}
-                    onClick={async () => {
-                      updateConfig({ aiEngine: engine.id });
-                      try {
-                        await fetch('/api/cache/clear', { method: 'POST' });
-                      } catch (e) {
-                        console.error('Failed to clear cache', e);
-                      }
-                    }}
                     className={cn(
                       "w-full p-3 rounded-xl border transition-all flex items-center gap-3 text-left",
-                      aiEngine === engine.id 
+                      index === 0
                         ? (darkMode ? "border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500" : "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500") 
-                        : (darkMode ? "border-gray-700 hover:border-gray-600 bg-gray-900" : "border-gray-100 hover:border-gray-200 bg-white")
+                        : (darkMode ? "border-gray-700 bg-gray-900" : "border-gray-100 bg-white")
                     )}
                   >
                     <div className={cn(
                       "p-2 rounded-lg",
-                      aiEngine === engine.id 
+                      index === 0
                         ? (darkMode ? "bg-indigo-500 text-white" : "bg-indigo-600 text-white") 
                         : (darkMode ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-500")
                     )}>
@@ -364,9 +361,10 @@ export const Sidebar = () => {
                       <div className={cn("text-xs font-bold", darkMode ? "text-gray-200" : "text-gray-900")}>{engine.name}</div>
                       <div className="text-[10px] text-gray-500">{engine.desc}</div>
                     </div>
-                    {aiEngine === engine.id && <CheckCircle2 size={16} className="text-indigo-600" />}
-                  </button>
+                    {index === 0 && <CheckCircle2 size={16} className="text-indigo-600" />}
+                  </div>
                 ))}
+                <p className="text-[10px] text-gray-500">Admins choose these in Admin Dashboard &gt; AI Models.</p>
               </div>
             </div>
           </div>

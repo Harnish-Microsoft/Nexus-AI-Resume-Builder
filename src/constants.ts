@@ -35,6 +35,16 @@ export const TARGET_COMPANIES = [
   { id: 'infosys', label: 'Infosys', icon: '🌐', signal: 'Managed Services, Transformation' },
 ];
 
+/**
+ * The admins: they see the Admin Dashboard and manage the AI models every user
+ * runs on. firestore.rules lists the same addresses in isAdmin(); change both together.
+ */
+export const ADMIN_EMAILS: readonly string[] = ['hackerharnish@gmail.com', 'param_jariwala@yahoo.com'];
+
+export function isAdminEmail(email: string | null | undefined): boolean {
+  return !!email && ADMIN_EMAILS.includes(email.toLowerCase());
+}
+
 export const MODEL_PRICING: Record<string, { input: number, output: number }> = {
   // OpenAI
   'gpt-5.4': { input: 5.00, output: 15.00 },
