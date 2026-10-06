@@ -32,6 +32,9 @@ import {
 import type { BudgetBasis, BudgetPlan, BulletBudget, BulletRules, DurationRange } from "../src/lib/bulletBudget";
 import { buildTrendBrief, trendEvidenceText, unsupportedTrendMentions } from "../src/lib/linkedinTrends";
 import type { LinkedInTrends, UnsupportedTrendMention } from "../src/lib/linkedinTrends";
+import { findExcludedTerms } from "../src/lib/exclusions";
+import { formatRoleEvidenceBrief } from "../src/lib/requirementEvidence";
+import type { RequirementAnalysis } from "../src/lib/requirementEvidence";
 import {
   buildFigureIndex,
   findUnsupportedFigures,
@@ -45,16 +48,6 @@ const PRIMARY_MODEL = "gemini-3.5-flash";
 const FALLBACK_MODEL = "gemini-3.1-flash-lite";
 /** Failed or unparseable calls tolerated per role before falling back to the source bullets. */
 const MAX_CALL_FAILURES = 3;
-
-/** This pipeline's long-standing terminology ban, now verified rather than only requested. */
-const FORBIDDEN_TERMS: { pattern: RegExp; term: string }[] = [
-  { pattern: /\bci\s*\/\s*cd\b/i, term: "CI/CD" },
-  { pattern: /\bpipelines?\b/i, term: "Pipelines" },
-  { pattern: /\bdevops\b/i, term: "DevOps" },
-];
-
-const TERMINOLOGY_RULE = `TERMINOLOGY BAN: the terms "CI/CD", "Pipelines", and "DevOps" are FORBIDDEN. Use
-   "Infrastructure Automation", "Workflow Orchestration", or "Release Engineering" instead.`;
 
 /** STAR stories drafted per role; depth follows the same tiers as the bullets. */
 const STAR_QUOTA: Record<BudgetBasis, number> = {
@@ -131,6 +124,8 @@ export interface GeneratePerRoleOptions {
   skills?: unknown;
   /** Skills trending on LinkedIn for the target role. */
   trends?: LinkedInTrends | null;
+  /** The verified requirement evidence map; each role's prompt gets the part its own bullets prove. */
+  requirementAnalysis?: RequirementAnalysis | null;
   now?: Date;
 }
 
@@ -153,6 +148,7 @@ interface RoleExtras {
   /** The candidate's whole skills list. */
   skills: string[];
   trends: LinkedInTrends | null;
+  analysis: RequirementAnalysis | null;
 }
 
 function toText(value: unknown): string {
@@ -413,8 +409,13 @@ export function validateRoleOutput(
           `source's exact figure or remove it.`
       );
     }
-    const forbidden = FORBIDDEN_TERMS.find((entry) => entry.pattern.test(bullet));
-    if (forbidden) hard.push(`Bullet ${n} uses the forbidden term "${forbidden.term}".`);
+    const excluded = findExcludedTerms(bullet);
+    if (excluded.length > 0) {
+      hard.push(
+        `Bullet ${n} names ${quoteList(excluded)}, which the candidate has excluded - describe the ` +
+          `concrete work without naming it.`
+      );
+    }
     if (trends && trendEvidence !== null) {
       const mentions = unsupportedTrendMentions(bullet, trends, trendEvidence);
       if (mentions.length > 0) {
@@ -609,6 +610,7 @@ function prepareRoleJob(
     // the prompt lets the brain dump in where it is about this role.
     trendEvidence = trendEvidenceText([...own, ...extras.skills, asText(shared.brainDump)]);
   }
+  const evidenceBrief = formatRoleEvidenceBrief(extras.analysis, sourceBullets);
 
   return {
     index,
@@ -625,6 +627,7 @@ function prepareRoleJob(
       starStoryCount: starQuotaFor(budget),
       ...(hasSupport ? { supportingEvidence: shown } : {}),
       ...(trendBrief ? { trendBrief } : {}),
+      ...(evidenceBrief ? { evidenceBrief } : {}),
     },
     validation: {
       sourceCount: sourceBullets.length,
@@ -662,17 +665,18 @@ export function prepareRoleJobs(
     brainDump: context.brainDump,
     jobDescription: options.jobDescription,
     jdKeywords: options.jdKeywords,
-    extraRules: [TERMINOLOGY_RULE],
     currentDate: now.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
     bulletRules: plan.rules,
     platformDecision: plan.platform,
   };
 
+  const analysis = options.requirementAnalysis ?? null;
   const jobs = roles.map((role, index) =>
     prepareRoleJob(role, index, plan.budgets[index], shared, {
       otherVersions: otherVersionsOf(role, references, now),
       skills,
       trends,
+      analysis,
     })
   );
   return { plan, jobs };

@@ -65,6 +65,7 @@ import { ResumeHealthScore } from './components/ResumeHealthScore';
 import { BulletRulesSettings } from './components/BulletRulesSettings';
 import { BulletBudgetReportCard } from './components/BulletBudgetReportCard';
 import { LinkedInTrendsCard } from './components/LinkedInTrendsCard';
+import { RequirementEvidenceCard } from './components/RequirementEvidenceCard';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
@@ -3863,7 +3864,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 <div className="flex items-center justify-between">
                                   <div>
                                     <div className="flex items-center gap-2">
-                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Keyword Coverage</h3>
                                       {readiness && (
                                         <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${readinessTone[readiness.level] || ''}`} title={readiness.guidance}>
                                           {readiness.label}
@@ -3872,8 +3873,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     </div>
                                     <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>
                                       {breakdown
-                                        ? `Measured against ${breakdown.jd_keywords_evaluated} requirements extracted from this JD`
-                                        : 'Based on current JD'}
+                                        ? `How much of this JD's wording the resume covers (${breakdown.jd_keywords_evaluated} requirements). Not proof of qualification or a hiring probability.`
+                                        : 'Wording coverage of the current JD'}
                                     </p>
                                   </div>
                                   <div className="flex items-center gap-3">
@@ -3929,13 +3930,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       </p>
                                     )}
                                     <p className="text-[10px] opacity-40 pt-1">
-                                      No ATS applies one universal cutoff such as 80% - recruiters filter on the required skills. Add a missing skill to your master resume or brain dump only if you have it.
+                                      No ATS applies one universal cutoff such as 80% - recruiters filter on the required skills. Add a missing skill to your master resume or brain dump only if you have it. Requirement Evidence shows what your experience actually proves.
                                     </p>
                                   </div>
                                 )}
                               </div>
                               );
                             })()}
+                            {activeAudience && results[activeAudience] && (
+                              <RequirementEvidenceCard
+                                evidence={results[activeAudience].requirement_evidence}
+                                verification={results[activeAudience].draft_verification}
+                                coverage={results[activeAudience].input_coverage}
+                                isDarkMode={isDarkMode}
+                              />
+                            )}
                             {activeAudience && results[activeAudience]?.impact_audit && (() => {
                               const audit = results[activeAudience].impact_audit!;
                               const tone = audit.score >= 75 ? 'text-emerald-500' : audit.score >= 55 ? 'text-amber-500' : 'text-rose-500';
@@ -4967,13 +4976,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   const tone = level === 'strong' ? 'text-emerald-500' : level === 'good' ? 'text-sky-500' : level === 'partial' ? 'text-yellow-500' : 'text-red-500';
                                   return (
                                   <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
-                                    <span className="font-bold">Match Score</span>
+                                    <span className="font-bold" title="Wording coverage of the JD, not proof of qualification">Keyword Coverage</span>
                                     <span className={`font-bold text-sm ${tone}`} title={insight.score_breakdown?.optimized?.readiness?.label}>
                                       {insight.match_score}%
                                     </span>
                                   </div>
                                   );
                                 })()}
+                                {typeof results[activeAudience].requirement_evidence?.qualification_evidence === 'number' && (
+                                  <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
+                                    <span className="font-bold" title="What your own material proves for this posting's requirements">Requirements Proven</span>
+                                    <span className="font-bold text-sm">
+                                      {results[activeAudience].requirement_evidence!.qualification_evidence}%
+                                    </span>
+                                  </div>
+                                )}
                                 
                                 {Array.isArray(results[activeAudience].rejection_reasons) && results[activeAudience].rejection_reasons!.length > 0 && (
                                   <div className="space-y-2">

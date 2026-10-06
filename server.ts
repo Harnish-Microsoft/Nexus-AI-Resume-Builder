@@ -22,8 +22,15 @@ import { generatePerRole, selectStarStories } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
 import { buildResumeGenerationPrompt, buildResumeMetaPrompt } from "./src/lib/resumePrompt";
-import { applyMatchScores } from "./src/lib/matchScore";
+import { applyMatchScores, focusJobDescription } from "./src/lib/matchScore";
 import { applyImpactAudit } from "./src/lib/impactScore";
+import { withoutExcludedTerms } from "./src/lib/exclusions";
+import { analysisKeywords, applyRequirementEvidence, buildCandidateMaterial } from "./src/lib/requirementEvidence";
+import type { RequirementAnalysis } from "./src/lib/requirementEvidence";
+import { applyExclusionGuarantee, refreshVerificationReport, reviewAndCorrectDraft } from "./src/lib/draftReview";
+import type { DraftModelCall, DraftReviewContext } from "./src/lib/draftReview";
+import { buildInputCoverage } from "./src/lib/inputCoverage";
+import type { InputCoverageReport } from "./src/lib/inputCoverage";
 import { activeBulletRules, bulletRulesFingerprint, enforceBulletBudgets, planBulletBudgets } from "./src/lib/bulletBudget";
 import type { BulletRules } from "./src/lib/bulletBudget";
 import {
@@ -317,12 +324,19 @@ function finalizeResumeResult(
     trends?: LinkedInTrends | null;
     /** More of the candidate's own material (their other resumes) that can evidence a trending skill. */
     trendEvidence?: unknown[];
+    /** The verified requirement evidence map made for this run; null when the analysis failed. */
+    requirementAnalysis?: RequirementAnalysis | null;
+    /** What each step read of the resume and the posting. */
+    inputCoverage?: InputCoverageReport;
   }
 ): any {
   if (!result || typeof result.result !== "string") return result;
   try {
     const parsed = JSON.parse(result.result);
-    const { brainDump, customPrompt, bulletRules, sourceRoles, now, trends, trendEvidence, ...scoreParams } = params;
+    const {
+      brainDump, customPrompt, bulletRules, sourceRoles, now, trends, trendEvidence,
+      requirementAnalysis, inputCoverage, ...scoreParams
+    } = params;
     const sourceText = [params.originalResumeText, brainDump, customPrompt]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
@@ -331,6 +345,8 @@ function finalizeResumeResult(
     // resume still counts by its values only. The client re-runs this with the same material.
     const trendExtra: unknown[] = trends ? [brainDump, ...(Array.isArray(trendEvidence) ? trendEvidence : [])] : [];
 
+    // First, so the budgets, scores and audits describe a document that honours them.
+    applyExclusionGuarantee(parsed);
     const budget = enforceBulletBudgets(parsed, {
       sourceText,
       rules: bulletRules ?? null,
@@ -347,7 +363,13 @@ function finalizeResumeResult(
       applyTrendCoverage(parsed, trends, { sourceText: params.originalResumeText, extraEvidence: trendExtra });
     }
     applyMatchScores(parsed, scoreParams);
+    // What the candidate's material proves, apart from how many posting words the resume uses.
+    applyRequirementEvidence(parsed, requirementAnalysis ?? null);
     applyImpactAudit(parsed, { sourceText });
+    // Budgets and trend coverage may have removed flagged items: list only what is delivered.
+    refreshVerificationReport(parsed);
+    if (inputCoverage) parsed.input_coverage = inputCoverage;
+    else delete parsed.input_coverage;
     if (budget) {
       const outside = budget.roles.filter((r) => r.status === "trimmed" || r.status === "under");
       console.log(
@@ -374,11 +396,78 @@ function finalizeResumeResult(
         `${parsed.impact_audit?.unverified_figure_bullets ?? 0} with unverified figures, ` +
         `${parsed.impact_audit?.star_dropped ?? 0} STAR dropped)`
     );
+    const evidence = parsed.requirement_evidence;
+    if (evidence) {
+      console.log(
+        `[Evidence] qualification=${evidence.qualification_evidence ?? "n/a"} ` +
+          `required ${evidence.required.evidenced}+${evidence.required.partial} partial of ${evidence.required.total}` +
+          (evidence.hard_gaps.length ? `; hard gaps: ${evidence.hard_gaps.join("; ")}` : "")
+      );
+    }
     return { ...result, result: JSON.stringify(parsed) };
   } catch (e: any) {
     console.warn("[Scoring] Could not finalize the generated resume:", e?.message || e);
     return result;
   }
+}
+
+/** What the requirement analysis reads of the posting; the generation prompts get GENERATION_JD_LIMIT. */
+const ANALYSIS_JD_LIMIT = 30000;
+const GENERATION_JD_LIMIT = 12000;
+
+type TokenUsage = { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number };
+
+function emptyUsage(): TokenUsage {
+  return { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+}
+
+function addUsage(total: TokenUsage, usage: Partial<TokenUsage> | null | undefined): void {
+  total.promptTokenCount += usage?.promptTokenCount || 0;
+  total.candidatesTokenCount += usage?.candidatesTokenCount || 0;
+  total.totalTokenCount += usage?.totalTokenCount || 0;
+}
+
+function sumUsage(base: Partial<TokenUsage> | null | undefined, extra: TokenUsage): TokenUsage {
+  const total = emptyUsage();
+  addUsage(total, base);
+  addUsage(total, extra);
+  return total;
+}
+
+/** The candidate's material as one text: resumes as JSON, notes and instructions as written. */
+function candidateMaterialText(...parts: unknown[]): string {
+  return parts
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object") return JSON.stringify((part as any).data ?? part);
+      return "";
+    })
+    .filter((text) => text.trim().length > 0)
+    .join("\n\n");
+}
+
+/**
+ * Reviews and corrects the generated document (draftReview.ts) and attaches
+ * the verification report. Never throws: a document that cannot be parsed is
+ * returned untouched for finalizeResumeResult to handle as before.
+ */
+async function verifyDraftResult(result: any, context: DraftReviewContext, call: DraftModelCall): Promise<any> {
+  if (!result || typeof result.result !== "string") return result;
+  let parsed: any;
+  try {
+    parsed = JSON.parse(result.result);
+  } catch (e: any) {
+    console.warn("[Verify] Generated document is not JSON; skipping the review:", e?.message || e);
+    return result;
+  }
+  console.log("[Pipeline] Step 4: Verifying the draft against the candidate's material...");
+  const report = await reviewAndCorrectDraft(parsed, context, call);
+  parsed.draft_verification = report;
+  console.log(
+    `[Verify] review=${report.ai_review} corrections=${report.corrections}: ${report.issues_found} issue(s), ` +
+      `${report.fixed.length} fixed, ${report.remaining.length} remaining, ${report.removed.length} removed for exclusions`
+  );
+  return { ...result, result: JSON.stringify(parsed) };
 }
 
 async function startServer() {
@@ -1008,6 +1097,8 @@ async function startServer() {
         pipelineType: selectedPipeline,
         hasGemini: !!geminiKey,
         hasOpenAI: !!openaiKey,
+        // Results made before evidence-first optimization must not be served again.
+        pipelineVersion: "evidence-v1",
         ...(bulletRules ? { bulletRules: bulletRulesFingerprint(bulletRules) } : {}),
         ...(trends ? { linkedinTrends: trendFingerprint(trends) } : {})
       });
@@ -1033,17 +1124,39 @@ async function startServer() {
         throw new Error("No valid API keys found. Please provide at least 1 Gemini or OpenAI API key in your profile.");
       }
 
-      // STEP 1: Gemini (Cheap) - Extraction & Analysis
-      console.log(`[Pipeline] Step 1: Gemini Extraction (${geminiKey ? 'User Key' : 'System Key'})...`);
-      const [resumeExtraction, jdExtraction] = await Promise.all([
-        Optimization.extractRelevantResumeData(resumeText, geminiKey, openaiKey, selectedPipeline),
-        Optimization.extractJDKeywords(jobDescription, geminiKey, openaiKey, selectedPipeline)
+      // STEP 1: Read the resume, and analyse the posting against the candidate's own material.
+      // A JSON master resume is parsed in code: read in full, exactly as written, no model call.
+      const structuredResume = Optimization.structuredResumeFromText(resumeText);
+      // The analysis and the review see the same facts the writer may use: this resume, the
+      // brain dump, and the candidate's other resumes the prompts reference.
+      const material = buildCandidateMaterial(resumeText, brainDump, { otherResumes: masterResumes });
+      const analysisPosting = focusJobDescription(jobDescription, ANALYSIS_JD_LIMIT);
+      const modelKeys = { geminiKey, openaiKey, pipelineType: selectedPipeline };
+      console.log(
+        `[Pipeline] Step 1: ${structuredResume ? "Structured resume parsed in code" : "Resume extraction"} ` +
+          `+ requirement evidence analysis (${geminiKey ? 'User Key' : 'System Key'})...`
+      );
+      const [resumeExtraction, analysisRun] = await Promise.all([
+        structuredResume
+          ? Promise.resolve({ data: structuredResume, usage: null, _model: "structured-json", omittedChars: 0 })
+          : Optimization.extractRelevantResumeData(resumeText, geminiKey, openaiKey, selectedPipeline),
+        Optimization.analyzeRequirements({ jobDescription: analysisPosting.text, targetRole, material }, modelKeys),
       ]);
 
       const resumeData = resumeExtraction?.data;
-      const jdKeywords = jdExtraction?.data || [];
+      const requirementAnalysis = analysisRun.data;
+      // Every posting term is scored; the prompts never list an excluded capability as a priority.
+      let jdKeywords = analysisKeywords(requirementAnalysis);
+      let jdExtraction: any = null;
+      if (jdKeywords.length === 0) {
+        console.warn("[Pipeline] No requirement analysis; falling back to keyword extraction.");
+        jdExtraction = await Optimization.extractJDKeywords(jobDescription, geminiKey, openaiKey, selectedPipeline);
+        jdKeywords = jdExtraction?.data || [];
+      }
       const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3-flash-preview";
       
+      const extraUsage = { gemini: emptyUsage(), openai: emptyUsage() };
+      if (analysisRun.result) addUsage(extraUsage[analysisRun.result.provider], analysisRun.result.usage);
       const geminiUsage = {
         promptTokenCount: (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0),
         candidatesTokenCount: (resumeExtraction?.usage?.candidatesTokenCount || 0) + (jdExtraction?.usage?.candidatesTokenCount || 0),
@@ -1057,7 +1170,7 @@ async function startServer() {
       // ONE budget plan for every generation path and for enforcement, read from
       // the full posting so the platform rule sees what the candidate pasted.
       const budgetOptions = { now: new Date(), rules: bulletRules, jobDescription };
-      const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords, budgetOptions);
+      const optimizedInput = Optimization.trimContentForAI(resumeData, withoutExcludedTerms(jdKeywords), budgetOptions);
       const budgetPlan = planBulletBudgets(optimizedInput.experience, budgetOptions);
       if (budgetPlan.rules) {
         console.log(
@@ -1084,7 +1197,18 @@ async function startServer() {
 
       // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
       const roleCount = optimizedInput.experience.length;
-      const generationJobDescription = Optimization.trimInput(jobDescription, 6000);
+      // Boilerplate goes before anything is cut, and any cut is disclosed in input_coverage.
+      const generationPosting = focusJobDescription(jobDescription, GENERATION_JD_LIMIT);
+      const generationJobDescription = generationPosting.text;
+      const inputCoverage = buildInputCoverage({
+        resumeChars: resumeText.length,
+        resumeMethod: structuredResume ? "structured" : "extracted",
+        resumeOmittedChars: (resumeExtraction as any)?.omittedChars || 0,
+        materialOmittedChars: requirementAnalysis ? material.omitted_chars : 0,
+        analysisPosting: requirementAnalysis ? analysisPosting : null,
+        generationPosting,
+      });
+      if (inputCoverage.notes.length > 0) console.log(`[Coverage] ${inputCoverage.notes.join(" ")}`);
       const generationOptions = {
         targetRole,
         audience: audienceText,
@@ -1106,6 +1230,8 @@ async function startServer() {
         jobDescription: generationJobDescription,
         inputLabel: "INPUT DATA (structured, pre-extracted and trimmed)",
         inputData: JSON.stringify(optimizedInput, null, 2),
+        // Proven requirements lead; unproven and excluded ones are named as never to be claimed.
+        requirementAnalysis,
       };
       const finalPrompt = buildResumeGenerationPrompt(generationOptions);
 
@@ -1252,6 +1378,8 @@ async function startServer() {
               now: budgetOptions.now,
               // Each role may name only the trending skills its own material shows.
               ...(trends ? { trends } : {}),
+              // Each role leads with the requirements its own bullets prove.
+              requirementAnalysis,
             }
           )
         ]);
@@ -1276,13 +1404,8 @@ async function startServer() {
           star_stories: selectStarStories(roleResults),
         };
 
-        // STEP 4: Agentic Review (Multi-Agent Refinement)
-        console.log("[Pipeline] Step 4: Multi-Agent Review...");
-        const agentFeedback = await runAgents(finalResult, geminiKey);
-
         result = {
           result: JSON.stringify(finalResult),
-          agentFeedback,
           usage: {
             promptTokenCount: metaResponse.usageMetadata?.promptTokenCount || 0,
             candidatesTokenCount: metaResponse.usageMetadata?.candidatesTokenCount || 0,
@@ -1292,8 +1415,7 @@ async function startServer() {
           intermediateData: { resumeData, jdKeywords },
           _model: usedModel,
           _optimized: true,
-          _split_gen: true,
-          _agents: true
+          _split_gen: true
         };
 
         console.log("[Pipeline] Split Generation Complete.");
@@ -1306,6 +1428,26 @@ async function startServer() {
       }
     }
     
+    // STEP 4: Verify the draft against the candidate's material and the evidence map;
+    // correct only what fails, and report what could not be corrected.
+    if (result) {
+      result = await verifyDraftResult(result, {
+        figureSourceText: candidateMaterialText(resumeText, brainDump, customPrompt, ...masterResumes),
+        evidenceText: candidateMaterialText(resumeText, brainDump, ...masterResumes),
+        material,
+        analysis: requirementAnalysis,
+        jobDescription,
+        targetRole,
+        jdKeywords,
+      }, async (prompt, purpose) => {
+        const call = await Optimization.generateJsonText(prompt, modelKeys, purpose === "review" ? Optimization.REVIEW_MODELS : Optimization.CORRECTION_MODELS);
+        addUsage(extraUsage[call.provider], call.usage);
+        return call.text;
+      });
+      result.geminiUsage = sumUsage(result.geminiUsage, extraUsage.gemini);
+      result.usage = sumUsage(result.usage, extraUsage.openai);
+    }
+
     // STEP 5: Deterministic budget, scoring and audit, then cache (Merged/Unified)
     if (result) {
       result = finalizeResumeResult(result, {
@@ -1313,6 +1455,8 @@ async function startServer() {
         originalResumeText: resumeText,
         targetRole,
         jdKeywords,
+        requirementAnalysis,
+        inputCoverage,
         brainDump,
         customPrompt,
         bulletRules: budgetPlan.rules,

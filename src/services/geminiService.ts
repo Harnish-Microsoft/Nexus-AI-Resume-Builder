@@ -7,8 +7,21 @@ import { doc, getDoc, getDocFromServer } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { categorizeSkills } from "../lib/skillCategorizer";
 import { buildResumeGenerationPrompt } from "../lib/resumePrompt";
-import { applyMatchScores, MatchScoreResult } from "../lib/matchScore";
+import { applyMatchScores, focusJobDescription, MatchScoreResult } from "../lib/matchScore";
 import { applyImpactAudit, ImpactScoreResult } from "../lib/impactScore";
+import { withoutExcludedTerms } from "../lib/exclusions";
+import {
+  analysisKeywords,
+  applyRequirementEvidence,
+  buildCandidateMaterial,
+  buildRequirementAnalysisPrompt,
+  parseRequirementAnalysis,
+} from "../lib/requirementEvidence";
+import type { RequirementAnalysis, RequirementEvidenceReport } from "../lib/requirementEvidence";
+import { applyExclusionGuarantee, refreshVerificationReport, reviewAndCorrectDraft } from "../lib/draftReview";
+import type { DraftVerificationReport } from "../lib/draftReview";
+import { buildInputCoverage, wholePosting } from "../lib/inputCoverage";
+import type { InputCoverageReport } from "../lib/inputCoverage";
 import { activeBulletRules, enforceBulletBudgets, planBulletBudgets, rolesFromResumeText } from "../lib/bulletBudget";
 import type { BudgetPlan, BulletBudgetReport, BulletRules } from "../lib/bulletBudget";
 import { activeLinkedInTrends, applyTrendCoverage, buildTrendBrief, trendEvidenceText, trendPreferTerms } from "../lib/linkedinTrends";
@@ -68,6 +81,12 @@ export interface OptimizationResult {
   audience_coverage?: AudienceCoverageReport;
   /** Trending LinkedIn skills for the target role: used, supported but unused, and gaps. Only when trends are followed. */
   linkedin_trends?: TrendCoverageReport;
+  /** What the candidate's own material proves for each posting requirement, verified quote by quote. */
+  requirement_evidence?: RequirementEvidenceReport;
+  /** The review of the draft against the candidate's material: what was corrected and what remains. */
+  draft_verification?: DraftVerificationReport;
+  /** What each step read of the resume and the posting, and anything left out. */
+  input_coverage?: InputCoverageReport;
   audit_report?: AuditReport;
   _usage?: {
     promptTokenCount: number;
@@ -580,6 +599,13 @@ function finalizeResume(
      * reused as prior evidence (it saw the candidate's other resumes too).
      */
     trends?: LinkedInTrends | null;
+    /**
+     * The requirement evidence map made for this run, or null when none was made.
+     * Omitted to rebuild the report a server result already carries.
+     */
+    requirementAnalysis?: RequirementAnalysis | null;
+    /** What each step read; omitted to keep the report a server result carries. */
+    inputCoverage?: InputCoverageReport;
   }
 ): void {
   const sourceText = candidateSourceText(params.resumeText, params.brainDump, params.customPrompt);
@@ -587,6 +613,8 @@ function finalizeResume(
   // The candidate's material only, as on the server: the custom prompt is instructions, not
   // evidence, and the notes stay a separate source so a JSON resume counts by its values only.
   const trendExtra = [params.brainDump];
+  // First, as on the server - and it also covers roles reconcileExperience restored from the source.
+  applyExclusionGuarantee(parsed);
   enforceBulletBudgets(parsed, {
     sourceText,
     rules: params.bulletRules,
@@ -601,9 +629,33 @@ function finalizeResume(
     targetRole: params.targetRole,
     jdKeywords: params.jdKeywords,
   });
+  applyRequirementEvidence(parsed, params.requirementAnalysis);
   applyImpactAudit(parsed, { sourceText });
+  // Budgets and trend coverage may have removed flagged items: list only what is delivered.
+  refreshVerificationReport(parsed);
+  if (params.inputCoverage) parsed.input_coverage = params.inputCoverage;
   // Baseline is the resume alone: what each reader would have seen before optimization.
   applyAudienceCoverage(parsed, params.audienceMix, { sourceText: params.resumeText });
+}
+
+/** The posting as the requirement analysis reads it; the browser writer always gets the whole posting. */
+const ANALYSIS_JD_LIMIT = 30000;
+
+type TokenUsage = { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number };
+
+function addUsage(total: TokenUsage, usage: Partial<TokenUsage> | null | undefined): void {
+  total.promptTokenCount += usage?.promptTokenCount || 0;
+  total.candidatesTokenCount += usage?.candidatesTokenCount || 0;
+  total.totalTokenCount += usage?.totalTokenCount || 0;
+}
+
+/** Models for the evidence steps: a full flash model for judgement and rewriting, lite or mini to review. */
+function evidenceModels(engine: EngineType, writerModel: string): { analysis: string; review: string; correction: string } {
+  if (engine === 'openai') {
+    const main = writerModel || 'gpt-4o';
+    return { analysis: main, review: 'gpt-4o-mini', correction: main };
+  }
+  return { analysis: 'gemini-3.6-flash', review: 'gemini-3.1-flash-lite', correction: 'gemini-3.6-flash' };
 }
 
 export interface OptimizeResumeOptions {
@@ -776,6 +828,41 @@ export async function optimizeResume(
   // free-form text the prompt states the rules and tiers for the model to apply.
   const budgetPlan = budgetPlanFromResumeText(resumeText, { rules: bulletRules, jobDescription });
 
+  // Evidence first (skipped in fast mode): before writing, decide requirement by
+  // requirement what the candidate's own material proves, with every quote verified.
+  const evidenceSteps = !fastMode;
+  const evidenceApiKey = engineToUse === 'openai' ? config.openaiConfig.apiKey : config.geminiConfig.apiKey;
+  const evidenceModel = evidenceModels(engineToUse, modelToUse);
+  const evidenceUsage: TokenUsage = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+  const evidenceCall = async (evidencePrompt: string, model: string): Promise<string> => {
+    const data = await callAI(evidencePrompt, model, engineToUse, evidenceApiKey);
+    addUsage(evidenceUsage, data?.usage);
+    return extractJson(data?.result || "");
+  };
+  const material = buildCandidateMaterial(resumeText, brainDump);
+  const analysisPosting = focusJobDescription(jobDescription, ANALYSIS_JD_LIMIT);
+  let requirementAnalysis: RequirementAnalysis | null = null;
+  if (evidenceSteps) {
+    try {
+      const raw = await evidenceCall(
+        buildRequirementAnalysisPrompt({ jobDescription: analysisPosting.text, targetRole, material }),
+        evidenceModel.analysis
+      );
+      requirementAnalysis = parseRequirementAnalysis(raw, material, { jobDescription });
+      if (!requirementAnalysis) console.warn("[Evidence] No usable requirement analysis; writing without the evidence map.");
+    } catch (e) {
+      console.warn("[Evidence] Requirement analysis failed; writing without the evidence map:", e);
+    }
+  }
+  const jdKeywords = analysisKeywords(requirementAnalysis);
+  const inputCoverage = buildInputCoverage({
+    resumeChars: resumeText.length,
+    resumeMethod: 'full_text',
+    materialOmittedChars: requirementAnalysis ? material.omitted_chars : 0,
+    analysisPosting: requirementAnalysis ? analysisPosting : null,
+    generationPosting: wholePosting(jobDescription),
+  });
+
   const prompt = buildResumeGenerationPrompt({
     targetRole,
     audience: audienceText,
@@ -793,6 +880,8 @@ export async function optimizeResume(
     platformDecision: budgetPlan?.platform ?? null,
     // Only trending names the candidate's own material supports; the custom prompt is not evidence.
     trendBrief: trends ? buildTrendBrief(trends, { scope: "document", evidenceText: trendEvidenceText(resumeText, brainDump) }) : undefined,
+    jdKeywords: withoutExcludedTerms(jdKeywords),
+    requirementAnalysis,
   });
 
   const maxRetries = 5;
@@ -846,6 +935,25 @@ export async function optimizeResume(
         // Guarantee no role was silently dropped to satisfy the page budget.
         parsed.experience = reconcileExperience(resumeText, parsed.experience);
 
+        // Check the draft against the candidate's material and the evidence map, and
+        // correct only what fails. Never throws; in fast mode only the checks in code run.
+        parsed.draft_verification = await reviewAndCorrectDraft(
+          parsed,
+          {
+            figureSourceText: candidateSourceText(resumeText, brainDump, customPrompt),
+            evidenceText: candidateSourceText(resumeText, brainDump),
+            material,
+            analysis: requirementAnalysis,
+            jobDescription,
+            targetRole,
+            jdKeywords,
+          },
+          evidenceSteps
+            ? (reviewPrompt, purpose) =>
+                evidenceCall(reviewPrompt, purpose === 'review' ? evidenceModel.review : evidenceModel.correction)
+            : null
+        );
+
         // Budgets, scores and the audit are computed from the finished document,
         // never taken from the model. Asking an LLM to score against a schema
         // example just returns the example, which is why every resume used to
@@ -856,15 +964,21 @@ export async function optimizeResume(
           resumeText,
           jobDescription,
           targetRole,
+          jdKeywords,
           brainDump,
           customPrompt,
           audienceMix: blend,
           bulletRules,
           trends,
+          requirementAnalysis,
+          inputCoverage,
         });
 
-        if (data.usage) {
-          parsed._usage = data.usage;
+        if (data.usage || evidenceUsage.totalTokenCount > 0) {
+          const usage: TokenUsage = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+          addUsage(usage, data.usage);
+          addUsage(usage, evidenceUsage);
+          parsed._usage = usage;
         }
 
         // FAIL-SAFE: Ensure "Officer IT cum Logistics" is preserved and not changed to "Office IT cum Logistics"

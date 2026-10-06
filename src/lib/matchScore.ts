@@ -924,7 +924,7 @@ function wordPresent(word: string, paddedCorpus: string): boolean {
 }
 
 /** A resume's text, prepared once for every requirement it is checked against. */
-interface Corpus {
+export interface Corpus {
   text: PaddedText;
   /** Tokens written in capitals ("AD", "DR"), for short forms that are also ordinary words. */
   upper: Set<string>;
@@ -1192,25 +1192,29 @@ function roleAlignment(targetRole: string, jobDescription: string, roleText: str
   return hits / tokens.size;
 }
 
-/** Readiness bands. Not a pass mark: no ATS applies one universal cutoff. */
+/**
+ * Readiness bands. Not a pass mark: no ATS applies one universal cutoff. Labelled
+ * as coverage because they read wording, not proof - requirementEvidence.ts says
+ * what the candidate's material actually proves.
+ */
 const READINESS_BANDS: { level: ReadinessLevel; label: string; minScore: number; minRequired: number; guidance: string }[] = [
   {
     level: "strong",
-    label: "Strong match",
+    label: "Strong coverage",
     minScore: 70,
     minRequired: 70,
-    guidance: "Covers most of what this posting requires.",
+    guidance: "Uses the language of most of what this posting requires. Wording is not proof - check what your experience evidences.",
   },
   {
     level: "good",
-    label: "Good match",
+    label: "Good coverage",
     minScore: 55,
     minRequired: 55,
     guidance: "Covers the core of this posting. Close the remaining required gaps only with experience you really have.",
   },
   {
     level: "partial",
-    label: "Partial match",
+    label: "Partial coverage",
     minScore: 40,
     minRequired: 0,
     guidance:
@@ -1218,7 +1222,7 @@ const READINESS_BANDS: { level: ReadinessLevel; label: string; minScore: number;
   },
   {
     level: "low",
-    label: "Low match",
+    label: "Low coverage",
     minScore: 0,
     minRequired: 0,
     guidance: "Most required skills are not evidenced - this posting may not be a close fit for this resume.",
@@ -1595,4 +1599,116 @@ export function rankResumesByJd(input: {
     console.warn("[matchScore] Ranking failed; keeping current resume selection:", e?.message || e);
     return null;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Evidence helpers, shared with the draft review (draftReview.ts)
+ * ------------------------------------------------------------------ */
+
+/** The posting's requirement terms: the same list the match score is computed against. */
+export function jdRequirementTerms(
+  jobDescription: string,
+  targetRole = "",
+  jdKeywords: string[] = []
+): { term: string; tier: RequirementTier }[] {
+  try {
+    if (typeof jobDescription !== "string" || jobDescription.trim().length < 40) return [];
+    const keywords = (Array.isArray(jdKeywords) ? jdKeywords : []).filter((k): k is string => typeof k === "string");
+    return Array.from(extractJdTerms(jobDescription, targetRole || "", keywords)).map(([term, info]) => ({
+      term,
+      tier: info.tier,
+    }));
+  } catch (e: any) {
+    console.warn("[matchScore] Could not extract requirement terms:", e?.message || e);
+    return [];
+  }
+}
+
+/** A text prepared once for repeated evidence checks. */
+export function prepareEvidenceText(text: string): Corpus {
+  return makeCorpus(typeof text === "string" ? text : "");
+}
+
+/** 1 when the text names the term (alias- and word-form-aware), 0.5 when its words all appear apart, 0 otherwise. */
+export function termEvidence(term: string, text: Corpus): number {
+  const norm = trimTermEdges(normalize(term));
+  return norm ? termCredit(norm, text) : 0;
+}
+
+/**
+ * True when the text shows no trace of the term: not the term, an alias, a word
+ * form, nor any of its significant words. Deliberately conservative, so it only
+ * fires on "this names something the candidate's material never mentions".
+ */
+export function termAbsent(term: string, text: Corpus): boolean {
+  const norm = trimTermEdges(normalize(term));
+  if (!norm || termCredit(norm, text) > 0) return false;
+  const words = norm
+    .split(" ")
+    .filter((w) => w.length >= 2 && !STOPWORDS.has(w) && !NOISE_TERMS.has(w) && !TOKEN_BLOCKLIST.has(w));
+  if (words.length === 0) return false;
+  return words.every((w) => termCredit(w, text) === 0);
+}
+
+export interface FocusedPosting {
+  text: string;
+  /** Characters in the posting as given. */
+  original_chars: number;
+  /** Company, benefits and EEO sections were left out to make room. */
+  boilerplate_removed: boolean;
+  /** It still did not fit and the tail was cut, at a line boundary. */
+  truncated: boolean;
+  /** Characters of the posting this text does not carry. */
+  omitted_chars: number;
+}
+
+/**
+ * The posting fitted to `maxChars` without silently losing requirements:
+ * unchanged when it fits; otherwise company, benefits and EEO sections go first,
+ * and only then is the tail cut - at a line boundary, with a visible marker, and
+ * reported through the returned flags.
+ */
+export function focusJobDescription(jobDescription: string, maxChars: number): FocusedPosting {
+  const text = typeof jobDescription === "string" ? jobDescription : "";
+  const original = text.length;
+  const limit = Math.max(500, Math.floor(Number(maxChars) || 0));
+  const unchanged = { text, original_chars: original, boilerplate_removed: false, truncated: false, omitted_chars: 0 };
+  if (original <= limit) return unchanged;
+
+  // Every line outside company/HR sections, headings included, in order.
+  const kept: string[] = [];
+  let state: SectionKind = "required";
+  let removed = false;
+  let contentLines = 0;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const kind = line ? headingKind(line) : null;
+    if (kind) state = kind;
+    if (state === "ignored") {
+      if (line) removed = true;
+      continue;
+    }
+    kept.push(rawLine);
+    if (line && !kind) contentLines += 1;
+  }
+  let focused = removed ? kept.join("\n").replace(/\n{3,}/g, "\n\n").trim() : text;
+  // As in classifySections: a boilerplate heading must never swallow the whole posting.
+  if (removed && contentLines === 0) {
+    focused = text;
+    removed = false;
+  }
+  if (focused.length <= limit) {
+    return { text: focused, original_chars: original, boilerplate_removed: removed, truncated: false, omitted_chars: 0 };
+  }
+
+  const cut = focused.lastIndexOf("\n", limit);
+  const head = (cut > limit * 0.6 ? focused.slice(0, cut) : focused.slice(0, limit)).trimEnd();
+  const omitted = focused.length - head.length;
+  return {
+    text: `${head}\n[... posting truncated: ${omitted} more characters not shown]`,
+    original_chars: original,
+    boilerplate_removed: removed,
+    truncated: true,
+    omitted_chars: omitted,
+  };
 }

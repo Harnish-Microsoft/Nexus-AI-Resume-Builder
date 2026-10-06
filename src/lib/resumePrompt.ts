@@ -21,7 +21,10 @@ import {
   UNPARSEABLE_MAX,
 } from "./bulletBudget";
 import type { BulletBudget, BulletRules, PlatformDecision } from "./bulletBudget";
+import { EXCLUSION_RULE } from "./exclusions";
 import { BANNED_LEAD_VERBS } from "./impactScore";
+import { formatDocumentEvidenceBrief } from "./requirementEvidence";
+import type { RequirementAnalysis } from "./requirementEvidence";
 
 export interface ResumePromptOptions {
   targetRole: string;
@@ -56,6 +59,8 @@ export interface ResumePromptOptions {
   platformDecision?: PlatformDecision | null;
   /** buildTrendBrief(trends, { scope: "document" }): trending names the candidate's material supports. */
   trendBrief?: string;
+  /** The verified job brief and requirement evidence map; omitted or null leaves the prompt as before. */
+  requirementAnalysis?: RequirementAnalysis | null;
 }
 
 function titleCase(word: string): string {
@@ -540,8 +545,9 @@ export function buildResumeMetaPrompt(options: ResumePromptOptions): string {
   const {
     targetRole, targetCompany, audience, audienceBrief, mode, inputData,
     inputLabel = "INPUT DATA", jobDescription, jdKeywords, customPrompt,
-    brainDump, masterResumes, trendBrief,
+    brainDump, masterResumes, trendBrief, requirementAnalysis,
   } = options;
+  const evidenceBrief = formatDocumentEvidenceBrief(requirementAnalysis);
 
   return `ACT AS:
 Principal Resume Intelligence Architect and FAANG Recruiter.
@@ -568,13 +574,20 @@ ${(masterResumes || []).map((r) => JSON.stringify(r)).join("\n---\n")}`)}
 ${section(jobDescription, `
 === TARGET JOB DESCRIPTION ===
 ${jobDescription}`)}
+${section(evidenceBrief, `\n${evidenceBrief}\n`)}
 ${section(jdKeywords && jdKeywords.length > 0, `Priority JD keywords: ${(jdKeywords || []).join(", ")}.`)}
 
 STRICT RULES:
 1. Summary: 50-100 words, high impact, NO AI-slop words. Use natural, grounded operational
    verbs. Read the supplied job description, not just the keyword list. Prioritize the
    source achievements that demonstrate THIS posting's responsibilities and seniority;
-   two different postings must produce different emphasis when the evidence supports it.
+   two different postings must produce different emphasis when the evidence supports it.${
+    evidenceBrief
+      ? `
+   Lead with the PROVEN requirements of the evidence map; never claim a NOT EVIDENCED or
+   EXCLUDED one, and claim a PARTIAL one only as far as its evidence goes.`
+      : ""
+  }
 2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}.
    Only list skills evidenced in the candidate's material, never skills inferred from the JD.
    Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'.
@@ -586,9 +599,8 @@ STRICT RULES:
    per description, focusing on technical architecture and business outcome.
 5. Education and certifications: Preserve every entry, including issuer and date.
 6. ${ZERO_FABRICATION}
-7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
-   These exclusions override JD vocabulary and custom instructions. Do not disguise an
-   unsupported capability with a synonym to satisfy a job requirement.
+7. ${EXCLUSION_RULE}
+   These exclusions override JD vocabulary and custom instructions.
 8. Use source experience to ground summary, skills and alignment, but do not output
    "experience" or "star_stories": roles and stories are generated separately.
    Preserve the supplied personal information and every project, education and certification.
@@ -642,6 +654,7 @@ export function buildResumeGenerationPrompt(options: ResumePromptOptions): strin
     bulletRules,
     platformDecision,
     trendBrief,
+    requirementAnalysis,
   } = options;
 
   const corporateDna = corporateDnaFor(targetCompany);
@@ -650,6 +663,7 @@ export function buildResumeGenerationPrompt(options: ResumePromptOptions): strin
   const rules = activeBulletRules(bulletRules);
   const budgetSection = rules ? rulesBudgetSection(budgets, rules, platformDecision) : tenureBudgetSection(budgets);
   const trendBriefText = typeof trendBrief === "string" ? trendBrief.trim() : "";
+  const evidenceBrief = formatDocumentEvidenceBrief(requirementAnalysis);
   const budgetRubricLine = rules
     ? "  -10  a role's bullet count falls outside its budget in rule 4, or a [SYSTEM] role pads a short stint"
     : "  -10  bullet counts are disproportionate to tenure (padding a short stint)";
@@ -746,6 +760,8 @@ HARD CONSTRAINTS (violating any of these is a critical failure):
 
 2. ${ZERO_FABRICATION}
 
+   ${EXCLUSION_RULE}
+
 3. PRESERVE ALL CERTIFICATIONS AND TITLES verbatim, including issuer and date. Never
    normalise, "correct", re-case, or abbreviate a job title or company name.
 
@@ -778,7 +794,13 @@ ${budgetSection}
     - Rewrite the summary to answer this specific posting, never as a generic profile.
     - Weave JD vocabulary into bullets ONLY where the underlying work genuinely occurred.
       Genuinely missing keywords belong in "keyword_gap", never in a bullet.
-    Tailoring changes EMPHASIS, SELECTION, and WORDING. It never changes facts.
+    Tailoring changes EMPHASIS, SELECTION, and WORDING. It never changes facts.${section(
+    evidenceBrief,
+    `
+    The REQUIREMENT EVIDENCE MAP below is authoritative: lead with its PROVEN requirements,
+    claim a PARTIAL one only as far as its evidence goes, and never claim a NOT EVIDENCED or
+    EXCLUDED one - those belong in "keyword_gap".`
+  )}
 ${section(
     jdKeywords && jdKeywords.length > 0,
     `    Priority JD keywords: ${(jdKeywords || []).join(", ")}.`
@@ -808,6 +830,7 @@ ${section(
 === TARGET JOB DESCRIPTION (tailor against this in full - see rule 11) ===
 ${jobDescription}`
   )}
+${section(evidenceBrief, `\n${evidenceBrief}\n`)}
 
 OUTPUT:
 Return ONE valid JSON object and nothing else. No markdown fences, no preamble, no commentary,
@@ -869,6 +892,11 @@ export interface RoleBulletPromptOptions {
   platformDecision?: PlatformDecision | null;
   /** The candidate's other material for this role; the caller adds it to the figure provenance index too. */
   supportingEvidence?: RoleSupportingEvidence;
+  /**
+   * formatRoleEvidenceBrief(analysis, sourceBullets): the posting requirements this
+   * role's own bullets prove, and what must never be claimed.
+   */
+  evidenceBrief?: string;
   /** buildTrendBrief(trends, { scope: "role", ... }) for this role. */
   trendBrief?: string;
 }
@@ -1000,6 +1028,7 @@ export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string 
     platformDecision,
     supportingEvidence,
     trendBrief,
+    evidenceBrief,
   } = options;
 
   const framework = starFrameworkFor(targetCompany);
@@ -1018,6 +1047,7 @@ export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string 
     ? "SOURCE EVIDENCE FOR THIS ROLE (the primary record - every bullet must rest on it, or on the\nSUPPORTING EVIDENCE below):"
     : "SOURCE EVIDENCE FOR THIS ROLE (the only facts you may use):";
   const trendBriefText = typeof trendBrief === "string" ? trendBrief.trim() : "";
+  const evidenceBriefText = typeof evidenceBrief === "string" ? evidenceBrief.trim() : "";
 
   const rules = [
     ZERO_FABRICATION,
@@ -1030,8 +1060,13 @@ export function buildRoleBulletPrompt(options: RoleBulletPromptOptions): string 
    vocabulary only where the underlying work genuinely occurred. Tailoring changes
    emphasis, selection, and wording - never facts.${
       jdKeywords && jdKeywords.length > 0 ? `\n   Priority JD keywords: ${jdKeywords.join(", ")}.` : ""
+    }${
+      evidenceBriefText
+        ? `\n   The POSTING REQUIREMENTS THIS ROLE PROVES section above is authoritative: lead with the\n   bullets it names, and never claim what it says never to claim.`
+        : ""
     }`,
     ...(trendBriefText ? [indentBlock(trendBriefText, "   ").trimStart()] : []),
+    EXCLUSION_RULE,
     ...extraRules,
   ];
 
@@ -1075,6 +1110,7 @@ ROLE TO REWRITE:
 
 ${evidenceHeader}
 ${evidence}${supporting}
+${section(evidenceBriefText, `\n${evidenceBriefText}\n`)}
 ${section(
     brainDump,
     `BRAIN DUMP (raw, unverified): ${brainDump}

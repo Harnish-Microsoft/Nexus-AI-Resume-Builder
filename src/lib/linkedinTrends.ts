@@ -16,6 +16,7 @@
  * Everything in this module is pure and shared by the browser and the server.
  */
 import { buildTermPattern, detectJdPlatforms, findTerms } from "./bulletBudget";
+import { findExcludedTerms } from "./exclusions";
 
 export const TREND_METHOD = "linkedin-trends-v1";
 export const TREND_COVERAGE_METHOD = "linkedin-trend-coverage-v1";
@@ -23,15 +24,24 @@ export const TREND_COVERAGE_METHOD = "linkedin-trend-coverage-v1";
 export const CURATED_TRENDS_REVIEWED = "2026-10";
 export const MAX_TREND_SKILLS = 32;
 
-/** Never suggested, whatever the source says (mirrors the per-role generator's forbidden terms). */
-const BANNED_TREND_TERMS = /\bci\s*\/\s*cd\b|\bpipelines?\b|\bdevops\b|\bdevsecops\b/i;
+const DEVSECOPS = /\bdevsecops\b/i;
 
 /**
- * The names the generation prompts mandate in place of the banned terms. Material
- * that uses a banned term evidences them, or the mandated rewrite would read as an
- * unsupported trending skill.
+ * Never suggested, whatever the source says: the candidate's excluded
+ * capabilities (exclusions.ts) and DevSecOps. An excluded name is not evidence
+ * for a trending skill either, so "Terraform" in the material never makes
+ * "Infrastructure as Code" look supported.
  */
-export const BANNED_TERM_REPLACEMENTS = ["Infrastructure Automation", "Workflow Orchestration", "Release Engineering"];
+function isBannedTrendTerm(text: string): boolean {
+  return DEVSECOPS.test(text) || findExcludedTerms(text).length > 0;
+}
+
+/**
+ * The neutral wording the generation prompts suggest for work involving an
+ * excluded capability (EXCLUSION_RULE). Material that uses an excluded term
+ * evidences them, or that rewrite would read as an unsupported trending skill.
+ */
+export const BANNED_TERM_REPLACEMENTS = ["Infrastructure Automation", "Workflow Orchestration"];
 
 export interface TrendSkill {
   /** Stable id shared by platform variants, e.g. "kubernetes" for AKS / EKS / GKE / Kubernetes. */
@@ -131,7 +141,7 @@ function normalizeTerm(term: unknown): string {
 }
 
 function isUsableTerm(term: string): boolean {
-  return term.length >= 2 && term.length <= 80 && /[a-z]/.test(term) && !BANNED_TREND_TERMS.test(term);
+  return term.length >= 2 && term.length <= 80 && /[a-z]/.test(term) && !isBannedTrendTerm(term);
 }
 
 /** The name without parentheticals, each parenthetical part, and "&"/"and" variants. */
@@ -943,6 +953,8 @@ export function curatedTrends(targetRole: unknown, jobDescription?: unknown): Li
     let added = 0;
     for (const skill of family?.skills || []) {
       if (added >= cap || skills.length >= MAX_TREND_SKILLS) break;
+      // An excluded capability is never suggested, not even as a gap.
+      if (isBannedTrendTerm(skill.name)) continue;
       const nameKey = trendNameKey(skill.name);
       if ((skill.key && keys.has(skill.key)) || names.has(nameKey)) continue;
       skills.push(cloneSkill(skill));
@@ -1032,7 +1044,7 @@ export function normalizeTrendSkills(raw: unknown): TrendSkill[] {
     const record = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : null;
     const rawName = typeof item === "string" ? item : asText(record?.name ?? record?.skill ?? record?.title);
     const stripped = cleanLine(rawName, 200).replace(/^(?:[-*\u2022]+|\d+[.)])\s*/, "");
-    if (!stripped || BANNED_TREND_TERMS.test(stripped)) continue;
+    if (!stripped || isBannedTrendTerm(stripped)) continue;
     const inner = Array.from(stripped.matchAll(/\(([^)]*)\)/g)).flatMap((match) => match[1].split(/[/,]/));
     const name = stripped.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").replace(/[\s,;:]+$/, "").trim();
     if (name.length < 2 || name.length > 60 || !/[a-z]/i.test(name)) continue;
@@ -1124,7 +1136,7 @@ export function trendEvidenceText(...sources: unknown[]): string {
       collectText(source, parts);
     }
   }
-  if (parts.some((part) => BANNED_TREND_TERMS.test(part))) parts.push(BANNED_TERM_REPLACEMENTS.join("\n"));
+  if (parts.some(isBannedTrendTerm)) parts.push(BANNED_TERM_REPLACEMENTS.join("\n"));
   return parts.join("\n");
 }
 

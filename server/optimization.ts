@@ -1,13 +1,22 @@
 import crypto from 'crypto';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
 import { pipelineCache } from './cacheUtility';
-import { computeBulletBudgets } from "../src/lib/bulletBudget";
+import { computeBulletBudgets, roleSourceBullets } from "../src/lib/bulletBudget";
 import type { BudgetOptions } from "../src/lib/bulletBudget";
+import {
+  buildRequirementAnalysisPrompt,
+  parseRequirementAnalysis,
+  parseResumeJson,
+} from "../src/lib/requirementEvidence";
+import type { CandidateMaterial, RequirementAnalysis } from "../src/lib/requirementEvidence";
 
 /**
  * Token Optimization Strategy
  */
+
+/** What the extraction step reads of a free-form resume. JSON resumes are parsed in code, in full. */
+export const RESUME_EXTRACTION_LIMIT = 60000;
 
 /**
  * Trims input text to a reasonable limit before sending to any AI
@@ -17,12 +26,198 @@ export function trimInput(text: string, maxLength: number = 8000): string {
   return text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
 }
 
+function plainText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
+}
+
+/** Skills as one flat list, whatever the master resume's shape: a list, categories, or comma-separated text. */
+function flattenSkills(skills: unknown): string[] {
+  const entry = (item: unknown) =>
+    typeof item === "string" ? item : item && typeof item === "object" ? plainText((item as any).name ?? (item as any).skill) : "";
+  let entries: string[] = [];
+  if (typeof skills === "string") entries = skills.split(",");
+  else if (Array.isArray(skills)) entries = skills.map(entry);
+  else if (skills && typeof skills === "object") {
+    entries = Object.entries(skills as Record<string, unknown>)
+      .filter(([key]) => !key.startsWith("_"))
+      .flatMap(([, items]) => (typeof items === "string" ? items.split(",") : Array.isArray(items) ? items.map(entry) : []));
+  }
+  return entries.map((item) => item.trim()).filter(Boolean);
+}
+
+/**
+ * A JSON master resume in the extraction schema, read in code: every role and
+ * bullet exactly as written, nothing truncated, no model call. Null for
+ * free-form text, and for JSON whose roles carry no bullets this parser
+ * recognises - both still go through extraction.
+ */
+export function structuredResumeFromText(resumeText: string): any | null {
+  const data = parseResumeJson(resumeText);
+  const roles = Array.isArray(data?.experience) ? data.experience : Array.isArray(data?.work_experience) ? data.work_experience : null;
+  if (!data || !roles || roles.length === 0) return null;
+  const experience = roles
+    .filter((role: unknown) => role && typeof role === "object")
+    .map((role: any) => {
+      const bullets = roleSourceBullets(role);
+      const description = plainText(role.description);
+      return {
+        role: plainText(role.role ?? role.title),
+        company: plainText(role.company),
+        duration: plainText(role.duration),
+        achievements: bullets.length > 0 ? bullets : description ? [description] : [],
+      };
+    });
+  if (!experience.some((role: { achievements: string[] }) => role.achievements.length > 0)) return null;
+  const info = data.personal_info && typeof data.personal_info === "object" ? data.personal_info : {};
+  const linkedinText = plainText(info.linkedinText);
+  return {
+    personal_info: {
+      name: plainText(info.name),
+      location: plainText(info.location),
+      email: plainText(info.email),
+      phone: plainText(info.phone),
+      linkedin: plainText(info.linkedin),
+      ...(linkedinText ? { linkedinText } : {}),
+    },
+    summary: plainText(data.summary) || plainText(info.summary),
+    skills: flattenSkills(data.skills),
+    experience,
+    projects: (Array.isArray(data.projects) ? data.projects : [])
+      .map((project: any) =>
+        typeof project === "string"
+          ? { title: project.trim(), description: "" }
+          : { title: plainText(project?.title ?? project?.name), description: plainText(project?.description) }
+      )
+      .filter((project: { title: string; description: string }) => project.title || project.description),
+    education: Array.isArray(data.education) ? data.education : [],
+    certifications: Array.isArray(data.certifications) ? data.certifications : [],
+  };
+}
+
+export interface ModelKeys {
+  geminiKey: string;
+  openaiKey?: string;
+  pipelineType?: string;
+}
+
+export interface JsonModelResult {
+  text: string;
+  usage: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number };
+  model: string;
+  provider: "gemini" | "openai";
+}
+
+/**
+ * One JSON-mode call: OpenAI first when the pipeline is hybrid-openai and a key
+ * exists, then each Gemini model in order until one answers.
+ */
+export async function generateJsonText(
+  prompt: string,
+  keys: ModelKeys,
+  models: { gemini: string[]; openai?: string }
+): Promise<JsonModelResult> {
+  let lastError: unknown = null;
+  if (keys.pipelineType === "hybrid-openai" && keys.openaiKey && models.openai) {
+    try {
+      const openai = new OpenAI({ apiKey: keys.openaiKey });
+      const completion = await openai.chat.completions.create({
+        model: models.openai,
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      });
+      const input = completion.usage?.prompt_tokens || 0;
+      const output = completion.usage?.completion_tokens || 0;
+      return {
+        text: completion.choices[0]?.message?.content || "",
+        usage: { promptTokenCount: input, candidatesTokenCount: output, totalTokenCount: input + output },
+        model: models.openai,
+        provider: "openai",
+      };
+    } catch (error: any) {
+      lastError = error;
+      console.warn(`[Nexus AI] ${models.openai} failed (${error?.message || error}); trying Gemini...`);
+    }
+  }
+  const genAI = new GoogleGenAI(keys.geminiKey ? { apiKey: keys.geminiKey } : {});
+  for (const model of models.gemini) {
+    try {
+      const response = await genAI.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          ...(model.includes("flash-lite") ? {} : { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }),
+        },
+      });
+      const usage = (response as any).usageMetadata || {};
+      return {
+        text: response.text || "",
+        usage: {
+          promptTokenCount: usage.promptTokenCount || 0,
+          candidatesTokenCount: usage.candidatesTokenCount || 0,
+          totalTokenCount: usage.totalTokenCount || 0,
+        },
+        model,
+        provider: "gemini",
+      };
+    } catch (error: any) {
+      lastError = error;
+      console.warn(`[Nexus AI] ${model} failed (${error?.message || error}); trying the next model...`);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("No model answered.");
+}
+
+/** The JD analysis is the pipeline's judgement: a full flash model first, lite only as a fallback. */
+export const ANALYSIS_MODELS = { gemini: ["gemini-3.5-flash", "gemini-3.1-flash-lite"], openai: "gpt-4o" };
+export const REVIEW_MODELS = { gemini: ["gemini-3.1-flash-lite", "gemini-3.5-flash"], openai: "gpt-4o" };
+export const CORRECTION_MODELS = { gemini: ["gemini-3.5-flash", "gemini-3.1-flash-lite"], openai: "gpt-4o" };
+
+/**
+ * The job brief and verified requirement evidence map (requirementEvidence.ts).
+ * Never throws: data is null when the call or its parse fails, and the
+ * pipeline carries on with keyword extraction instead.
+ */
+export async function analyzeRequirements(
+  input: { jobDescription: string; targetRole?: string; material: CandidateMaterial },
+  keys: ModelKeys
+): Promise<{ data: RequirementAnalysis | null; result: JsonModelResult | null }> {
+  try {
+    console.log("[Nexus AI] Stage 1: Requirement evidence analysis...");
+    const result = await generateJsonText(buildRequirementAnalysisPrompt(input), keys, ANALYSIS_MODELS);
+    const data = parseRequirementAnalysis(result.text, input.material, { jobDescription: input.jobDescription });
+    if (data) {
+      const counts = data.requirements.reduce<Record<string, number>>((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), {});
+      console.log(
+        `[Evidence] ${data.requirements.length} requirements via ${result.model}: ${JSON.stringify(counts)}; ` +
+          `${data.verification.quotes_verified}/${data.verification.quotes_proposed} quotes verified` +
+          (data.verification.downgraded.length ? `; downgraded ${data.verification.downgraded.join(", ")}` : "")
+      );
+    } else {
+      console.warn(`[Evidence] ${result.model} returned no usable requirement analysis.`);
+    }
+    return { data, result };
+  } catch (error: any) {
+    console.warn("[Evidence] Requirement analysis failed:", error?.message || error);
+    return { data: null, result: null };
+  }
+}
+
+/**
+ * Free-form resume text in the extraction schema, read by a model. Reports how
+ * much of the resume did not fit (omittedChars) so the result can disclose it.
+ */
 export async function extractRelevantResumeData(resumeText: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
+  const result: any = await extractResumeDataWithModel(resumeText, geminiApiKey, openaiApiKey, pipelineType);
+  return { ...result, omittedChars: Math.max(0, (resumeText || "").length - RESUME_EXTRACTION_LIMIT) };
+}
+
+async function extractResumeDataWithModel(resumeText: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
   const isHybridOpenAI = pipelineType === 'hybrid-openai' && openaiApiKey;
 
   if (isHybridOpenAI) {
     const openai = new OpenAI({ apiKey: openaiApiKey });
-    const trimmedResume = trimInput(resumeText, 15000);
+    const trimmedResume = trimInput(resumeText, RESUME_EXTRACTION_LIMIT);
     const prompt = `
       Extract essential professional data from this resume. 
       Focus on high-impact achievements and core skills.
@@ -74,7 +269,7 @@ export async function extractRelevantResumeData(resumeText: string, geminiApiKey
   }
 
   const genAI = new GoogleGenAI(geminiApiKey ? { apiKey: geminiApiKey } : {});
-  const trimmedResume = trimInput(resumeText, 15000);
+  const trimmedResume = trimInput(resumeText, RESUME_EXTRACTION_LIMIT);
 
   const prompt = `
     Extract ALL professional data from this resume with absolute fidelity. 

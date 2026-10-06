@@ -3,6 +3,7 @@ import test from "node:test";
 import { buildResumeGenerationPrompt, buildResumeMetaPrompt, buildRoleBulletPrompt } from "./resumePrompt";
 import type { ResumePromptOptions } from "./resumePrompt";
 import { computeBulletBudgets } from "./bulletBudget";
+import { coerceRequirementAnalysis } from "./requirementEvidence";
 
 const source = {
   personal_info: { name: "Sample Candidate", email: "candidate@example.com" },
@@ -92,9 +93,9 @@ test("each role receives the same posting and its own evidence as the meta call"
 
 test("meta output preserves exclusions, evidence boundaries and the existing section contract", () => {
   const prompt = buildResumeMetaPrompt(options);
-  assert.match(prompt, /ABSOLUTELY FORBIDDEN: "CI\/CD", "Pipelines", "DevOps"/);
+  assert.match(prompt, /CANDIDATE EXCLUSIONS - the candidate does not claim "CI\/CD", "Pipelines", "DevOps", "Terraform"/);
   assert.match(prompt, /exclusions override JD vocabulary and custom instructions/);
-  assert.match(prompt, /Do not disguise an\s+unsupported capability with a synonym/);
+  assert.match(prompt, /a synonym standing in for them, as a skill/);
   assert.match(prompt, /instructions, not evidence/);
   assert.match(prompt, /Missing requirements belong in\s+"keyword_gap"/);
   assert.match(prompt, /experience is context, not an output section/);
@@ -103,6 +104,38 @@ test("meta output preserves exclusions, evidence boundaries and the existing sec
   assert.equal(Object.keys(schema.skills).length, 4);
   assert.ok("projects" in schema && "education" in schema && "certifications" in schema);
   assert.ok(!("experience" in schema) && !("star_stories" in schema));
+});
+
+test("every engine's prompt carries the exclusions; the evidence map appears only when one was made", () => {
+  const analysis = coerceRequirementAnalysis({
+    brief: { title: "Cloud Engineer", required_years: 5 },
+    requirements: [
+      {
+        text: "Azure monitoring",
+        tier: "required",
+        status: "evidenced",
+        evidence: [{ text: "Configured Azure monitoring alerts for production incidents.", source: "resume" }],
+      },
+      { text: "Kubernetes", tier: "required", status: "not_evidenced", evidence: [] },
+      { text: "Terraform", tier: "preferred", status: "evidenced", evidence: [{ text: "Used Terraform", source: "resume" }] },
+    ],
+  });
+  for (const build of [buildResumeGenerationPrompt, buildResumeMetaPrompt]) {
+    const plain = build(options);
+    assert.match(plain, /CANDIDATE EXCLUSIONS/);
+    assert.doesNotMatch(plain, /REQUIREMENT EVIDENCE MAP/);
+
+    const withMap = build({ ...options, requirementAnalysis: analysis });
+    assert.match(withMap, /=== JOB BRIEF \(structured from the full posting\) ===/);
+    assert.match(withMap, /PROVEN - feature these prominently/);
+    assert.match(withMap, /evidence: "Configured Azure monitoring alerts for production incidents\."/);
+    assert.match(withMap, /NOT EVIDENCED - never claim[^\n]*\n  \[R2, required\] Kubernetes/);
+    assert.match(withMap, /EXCLUDED BY THE CANDIDATE[^\n]*\n  \[R3, preferred\] Terraform/);
+  }
+  assert.match(
+    buildResumeGenerationPrompt({ ...options, requirementAnalysis: analysis }),
+    /The REQUIREMENT EVIDENCE MAP below is authoritative/
+  );
 });
 
 test("minimal meta input does not emit undefined values or unused context sections", () => {
