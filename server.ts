@@ -21,7 +21,7 @@ import { runAgents } from "./server/agents";
 import { generatePerRole, selectStarStories } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
-import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
+import { buildResumeGenerationPrompt, buildResumeMetaPrompt } from "./src/lib/resumePrompt";
 import { applyMatchScores } from "./src/lib/matchScore";
 import { applyImpactAudit } from "./src/lib/impactScore";
 import { activeBulletRules, bulletRulesFingerprint, enforceBulletBudgets, planBulletBudgets } from "./src/lib/bulletBudget";
@@ -1084,7 +1084,8 @@ async function startServer() {
 
       // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
       const roleCount = optimizedInput.experience.length;
-      const finalPrompt = buildResumeGenerationPrompt({
+      const generationJobDescription = Optimization.trimInput(jobDescription, 6000);
+      const generationOptions = {
         targetRole,
         audience: audienceText,
         audienceBrief: documentAudienceBrief,
@@ -1102,10 +1103,11 @@ async function startServer() {
         // The extracted keyword list alone is too lossy to differentiate two job
         // descriptions for similar roles, which caused near-identical output across
         // different JDs. The model needs the actual posting to tailor against.
-        jobDescription: Optimization.trimInput(jobDescription, 6000),
+        jobDescription: generationJobDescription,
         inputLabel: "INPUT DATA (structured, pre-extracted and trimmed)",
         inputData: JSON.stringify(optimizedInput, null, 2),
-      });
+      };
+      const finalPrompt = buildResumeGenerationPrompt(generationOptions);
 
       let result;
       let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
@@ -1215,57 +1217,7 @@ async function startServer() {
         const genAI = new GoogleGenAI({ apiKey: geminiKey });
         
         // 1. Generate Meta Data (Summary, Skills, Why This Job, etc.)
-        const metaPrompt = `
-          ACT AS:
-          You are a Principal Resume Intelligence Architect and FAANG Recruiter.
-          Optimize the meta-sections of this resume for factual realism and believable operational ownership.
-
-          Target Role: ${targetRole}.
-          Audience: ${audienceText}. Mode: ${mode}.
-          Keywords: ${optimizedInput.jd_keywords.join(', ')}.
-          ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}` : ''}
-          ${documentAudienceBrief}${trendBrief ? `\n          ${trendBrief}` : ''}
-          
-          INPUT DATA:
-          ${JSON.stringify({
-            personal_info: optimizedInput.personal_info,
-            summary: optimizedInput.summary,
-            skills: optimizedInput.skills,
-            projects: optimizedInput.projects,
-            education: optimizedInput.education,
-            certifications: optimizedInput.certifications,
-            jd_keywords: optimizedInput.jd_keywords
-          }, null, 2)}
-          
-          STRICT RULES:
-          1. Summary: 50-100 words, high impact, NO AI-slop words. Use natural, grounded operational verbs. Provide a concise overview of technical expertise and career trajectory.
-          2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
-          3. Why This Job: 75-125 words compelling response based on factual alignment.
-          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them. Keep project descriptions to a maximum of 2 sentences or 25 words, focusing strictly on the technical architecture and the business outcome.
-          5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it.
-          6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
-          7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
-          8. COMPLETE DATA: You MUST process and include EVERY SINGLE section provided in the INPUT DATA. Do not omit any roles, projects, or certifications.
-          9. SCORING: Return "match_score" as null. JD-alignment scoring is computed deterministically by the platform from the real job description and the real resume - any number you guess is discarded. Populate "ats_keywords_from_jd" and "keyword_gap" only with terms that literally appear in the job description.
-          
-          OUTPUT JSON SCHEMA:
-          {
-            "personal_info": { ... },
-            "summary": "...",
-            "skills": { "Category 1": ["skill1", ...], ... },
-            "why_this_job": "...",
-            "projects": [ { "title": "...", "description": "..." } ],
-            "education": [ { "degree": "...", "institution": "...", "expected_completion": "..." } ],
-            "certifications": [...],
-            "ats_keywords_from_jd": [...],
-            "ats_keywords_added_to_resume": [...],
-            "keyword_gap": [...],
-            "match_score": null,
-            "improvement_notes": [...],
-            "audience_alignment_notes": "...",
-            "audit_report": { ... }
-          }
-        `;
+        const metaPrompt = buildResumeMetaPrompt(generationOptions);
 
         // 2. Generate Roles Individually (Parallel) and Deduplicate
         console.log(`[Pipeline] Spawning meta generation and ${optimizedInput.experience.length} role generation tasks...`);
@@ -1289,7 +1241,7 @@ async function startServer() {
             brainDump,
             {
               // Each role is tailored against the real posting, like the whole-document path.
-              jobDescription: Optimization.trimInput(jobDescription, 6000),
+              jobDescription: generationJobDescription,
               jdKeywords: optimizedInput.jd_keywords,
               audienceBrief: roleAudienceBrief,
               budgetPlan,

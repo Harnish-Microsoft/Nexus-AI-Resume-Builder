@@ -535,6 +535,88 @@ ${described}
    Rule 1 always wins over this rule.`;
 }
 
+/** Meta sections use the same source and posting as the whole-document generation. */
+export function buildResumeMetaPrompt(options: ResumePromptOptions): string {
+  const {
+    targetRole, targetCompany, audience, audienceBrief, mode, inputData,
+    inputLabel = "INPUT DATA", jobDescription, jdKeywords, customPrompt,
+    brainDump, masterResumes, trendBrief,
+  } = options;
+
+  return `ACT AS:
+Principal Resume Intelligence Architect and FAANG Recruiter.
+Optimize only the meta-sections of this resume for factual realism and believable operational ownership.
+
+TARGET ROLE: ${targetRole}
+TARGET COMPANY: ${targetCompany || "General Product Tech"}
+AUDIENCE: ${audience} | MODE: ${mode}
+CORPORATE DNA: ${corporateDnaFor(targetCompany)}
+Tailor emphasis only, never factual claims.
+${section(audienceBrief, `\n${audienceBrief}\n`)}
+${section(customPrompt, `CUSTOM INSTRUCTIONS (instructions, not evidence): ${customPrompt}`)}
+${section(brainDump, `BRAIN DUMP (raw, unverified): ${brainDump}
+Use only achievements clearly grounded in the source roles. Ignore anything unverifiable.`)}
+${section(trendBrief, `\n${trendBrief}\n`)}
+
+${inputLabel} (authoritative candidate record; experience is context, not an output section):
+${inputData}
+${section(masterResumes && masterResumes.length > 0, `
+SUPPORTING REFERENCE (the same candidate's other resumes):
+Use only verifiable facts consistent with the authoritative record above. Never override
+its employers, titles, dates or metrics, and never invent a blend of conflicting claims.
+${(masterResumes || []).map((r) => JSON.stringify(r)).join("\n---\n")}`)}
+${section(jobDescription, `
+=== TARGET JOB DESCRIPTION ===
+${jobDescription}`)}
+${section(jdKeywords && jdKeywords.length > 0, `Priority JD keywords: ${(jdKeywords || []).join(", ")}.`)}
+
+STRICT RULES:
+1. Summary: 50-100 words, high impact, NO AI-slop words. Use natural, grounded operational
+   verbs. Read the supplied job description, not just the keyword list. Prioritize the
+   source achievements that demonstrate THIS posting's responsibilities and seniority;
+   two different postings must produce different emphasis when the evidence supports it.
+2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}.
+   Only list skills evidenced in the candidate's material, never skills inferred from the JD.
+   Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'.
+   Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning' only when
+   the source supports that capability; otherwise omit the unsupported claim.
+3. Why This Job: 75-125 words based on concrete alignment between the supplied posting
+   and the source achievements. Do not assert qualifications the candidate lacks.
+4. Projects: Output EVERY source project without merging. Maximum 2 sentences or 25 words
+   per description, focusing on technical architecture and business outcome.
+5. Education and certifications: Preserve every entry, including issuer and date.
+6. ${ZERO_FABRICATION}
+7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
+   These exclusions override JD vocabulary and custom instructions. Do not disguise an
+   unsupported capability with a synonym to satisfy a job requirement.
+8. Use source experience to ground summary, skills and alignment, but do not output
+   "experience" or "star_stories": roles and stories are generated separately.
+   Preserve the supplied personal information and every project, education and certification.
+9. SCORING: Return "match_score" as null; the platform computes it.
+   ATS keywords must literally occur in the supplied JD. Missing requirements belong in
+   "keyword_gap", never in the summary, skills or projects as candidate qualifications.
+   Tailoring changes emphasis, selection and wording, never facts.
+
+OUTPUT JSON SCHEMA:
+${JSON.stringify({
+    personal_info: { name: "string", location: "string", email: "string", phone: "string", linkedin: "string", linkedinText: "string" },
+    summary: "string",
+    skills: { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
+    why_this_job: "string",
+    projects: [{ title: "string", description: "string" }],
+    education: [{ degree: "string", institution: "string", expected_completion: "string" }],
+    certifications: [{ name: "string", issuer: "string", date: "string" }],
+    ats_keywords_from_jd: ["string"],
+    ats_keywords_added_to_resume: ["string"],
+    keyword_gap: ["string"],
+    match_score: null,
+    improvement_notes: ["string"],
+    audience_alignment_notes: "string",
+    audit_report: { flags: [], trajectory: [] },
+  }, null, 2)}
+Return ONE valid JSON object, nothing else.`;
+}
+
 export function buildResumeGenerationPrompt(options: ResumePromptOptions): string {
   const {
     targetRole,
