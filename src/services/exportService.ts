@@ -2,8 +2,8 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } fro
 import { saveAs } from 'file-saver';
 import { formatCertification } from '../lib/certifications';
 
-export const downloadDOCX = async (res: any, targetRole: string, companyName: string, showToast: (msg: string, type: any) => void) => {
-  if (!res) return;
+export const downloadDOCX = async (res: any, targetRole: string, companyName: string, showToast: (msg: string, type: any) => void, beforeSave?: () => void) => {
+  if (!res) return false;
 
   try {
     const doc = new Document({
@@ -158,11 +158,14 @@ export const downloadDOCX = async (res: any, targetRole: string, companyName: st
     const company = companyName ? `-${companyName}` : '';
     const docxTitle = `${role}${company}_Harnish Jariwala`;
     
+    beforeSave?.();
     saveAs(blob, `${docxTitle}.docx`);
     showToast('DOCX Downloaded successfully!', 'success');
+    return true;
   } catch (err: any) {
     console.error('DOCX Generation Error:', err);
-    showToast('Failed to generate DOCX. Please try again.', 'error');
+    showToast(err instanceof Error ? err.message : 'Failed to generate DOCX. Please try again.', 'error');
+    return false;
   }
 };
 

@@ -79,7 +79,10 @@ import { ENGINE_DESCRIPTIONS, ENGINE_LABELS, ENGINE_MODES, PROVIDER_LABELS, engi
 import type { EngineMode } from './lib/aiModels';
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
-import { extractTextFromPDFFile } from './lib/pdfUtils';
+import { extractTextFromPDFFile, validatePDFExport } from './lib/pdfUtils';
+import type { ExportValidationReport } from './lib/exportValidation';
+import { documentFingerprint, exportReview, revalidateResume, validationIsCurrent, validationStamp } from './lib/resumeValidation';
+import type { ValidationContext } from './lib/resumeValidation';
 import { saveAs } from 'file-saver';
 const LinkedInImporter = lazy(() => import('./components/LinkedInImporter').then(m => ({ default: m.LinkedInImporter })));
 const ResumeJsonModal = lazy(() => import('./components/ResumeJsonModal').then(m => ({ default: m.ResumeJsonModal })));
@@ -510,7 +513,11 @@ export default function App() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [targetRole, setTargetRole] = useState('');
   const [targetCompany, setTargetCompany] = useState('none');
-  const [brainDump, setBrainDump] = useState('');
+  const [brainDump, setBrainDump] = useState(() => localStorage.getItem('candidateBrainDump') || '');
+  const [exportValidation, setExportValidation] = useState<ExportValidationReport | null>(null);
+  useEffect(() => {
+    localStorage.setItem('candidateBrainDump', brainDump);
+  }, [brainDump]);
   // The trend list the next run will follow: the same role fallback and posting as the
   // optimize call. Deferred, so matching a long posting never slows typing.
   const deferredJobDescription = useDeferredValue(jobDescription);
@@ -559,7 +566,8 @@ export default function App() {
   }, [versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void, title?: string, confirmLabel?: string } | null>(null);
+  const exportReviewPending = useRef(false);
 
   useEffect(() => {
     if (encryptedApiKey) {
@@ -1128,6 +1136,67 @@ export default function App() {
     currentOptimizingEngine,
     setCurrentOptimizingEngine
   } = useResumeStore();
+
+  const validationContext = useMemo<ValidationContext>(() => ({
+    resumeText, brainDump, jobDescription, targetRole, otherResumes: masterResumes,
+  }), [resumeText, brainDump, jobDescription, targetRole, masterResumes]);
+  const validationContextRef = useRef(validationContext);
+  validationContextRef.current = validationContext;
+
+  useEffect(() => {
+    if (isOptimizing || !activeAudience || !results[activeAudience]) return;
+    const current = results[activeAudience];
+    if (validationIsCurrent(current, validationContext)) return;
+    try {
+      const checked = revalidateResume(current, validationContext);
+      setResults(previous => previous[activeAudience] === current ? { ...previous, [activeAudience]: checked } : previous);
+      setExportValidation(null);
+    } catch (error) {
+      console.error('Resume revalidation failed:', error);
+      showToast('Resume checks could not be refreshed. Export will require successful revalidation.', 'error');
+    }
+  }, [results, activeAudience, validationContext, isOptimizing]);
+
+  const prepareExport = async (automatic = false) => {
+    const store = useResumeStore.getState();
+    const audience = store.activeAudience;
+    const current = audience ? store.results[audience] : undefined;
+    if (!current) throw new Error('Optimize a resume before exporting so its claims can be reviewed.');
+    const checked = validationIsCurrent(current, validationContext) ? current : revalidateResume(current, validationContext);
+    if (checked !== current && audience) setResults(previous => ({ ...previous, [audience]: checked }));
+    const review = exportReview(checked);
+    if (review.advisories.length) showToast(`Eligibility/evidence advisory: ${review.advisories.join('; ')}`, 'info');
+    if (review.concerns.length) {
+      if (automatic) throw new Error('Drive autosave paused: review the current claims and use a manual export to acknowledge them.');
+      if (exportReviewPending.current || confirmDialog) throw new Error('Finish the open confirmation before starting another export.');
+      exportReviewPending.current = true;
+      const approved = await new Promise<boolean>(resolve => {
+        setConfirmDialog({
+          title: 'Review before export',
+          confirmLabel: 'Export anyway',
+          message: `${review.concerns.join('\n\n')}\n\n${review.advisories.length ? `Eligibility/evidence advisories (not export blockers):\n${review.advisories.join('\n')}\n\n` : ''}These issues are not resolved by exporting. Export this version anyway?`,
+          onConfirm: () => { exportReviewPending.current = false; setConfirmDialog(null); resolve(true); },
+          onCancel: () => { exportReviewPending.current = false; setConfirmDialog(null); resolve(false); },
+        });
+      });
+      if (!approved) return null;
+    }
+    const latest = useResumeStore.getState();
+    if (latest.activeAudience !== audience || documentFingerprint(latest.results[audience!]) !== documentFingerprint(checked) ||
+        !validationIsCurrent(checked, validationContextRef.current)) {
+      throw new Error('The resume changed during review. Export again to review the current version.');
+    }
+    return checked;
+  };
+
+  const assertExportCurrent = (reviewed: OptimizationResult) => {
+    const store = useResumeStore.getState();
+    const current = store.activeAudience ? store.results[store.activeAudience] : undefined;
+    if (!current || documentFingerprint(current) !== documentFingerprint(reviewed) ||
+        !validationIsCurrent(reviewed, validationContextRef.current)) {
+      throw new Error('The resume or its evidence changed during export. Export again to review the current version.');
+    }
+  };
 
   const [linkedInUrl, setLinkedInUrl] = useState(() => localStorage.getItem('linkedInUrl') || '');
   const [linkedInPdfText, setLinkedInPdfText] = useState(() => localStorage.getItem('linkedInPdfText') || '');
@@ -1823,8 +1892,11 @@ export default function App() {
 
   const handleDriveAutosave = async () => {
     try {
+      const reviewed = await prepareExport(true);
+      if (!reviewed) return;
       const element = document.getElementById('resume-container');
       if (!element) return;
+      const expectedText = element.innerText;
 
       // Get all styles and imports
       const allStyles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
@@ -1874,33 +1946,43 @@ export default function App() {
       }
       
       const blob = await pdfResponse.blob();
+      await checkPDFExport(blob, expectedText);
+      assertExportCurrent(reviewed);
+      if (element.innerText !== expectedText) throw new Error('The preview changed during autosave. Save again after reviewing it.');
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
         const base64data = (reader.result as string).split(',')[1];
+        try {
+          assertExportCurrent(reviewed);
+          const saveResponse = await fetch('/api/save-to-drive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pdfData: base64data,
+              fileName: driveFileName,
+              versioningEnabled: versioningEnabled,
+              accessToken: driveAccessToken,
+              parentFolderId: selectedDriveFolder?.id
+            })
+          });
         
-        const saveResponse = await fetch('/api/save-to-drive', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pdfData: base64data,
-            fileName: driveFileName,
-            versioningEnabled: versioningEnabled,
-            accessToken: driveAccessToken,
-            parentFolderId: selectedDriveFolder?.id
-          })
-        });
-        
-        const saveData = await saveResponse.json();
-        if (saveResponse.ok && saveData.success) {
-          showToast('Autosaved to Google Drive', 'success');
-          fetchDriveFiles();
-        } else if (saveData.error && saveData.error.includes('AUTH_EXPIRED')) {
-          setDriveAccessToken(null);
+          const saveData = await saveResponse.json();
+          if (saveResponse.ok && saveData.success) {
+            showToast('Autosaved to Google Drive', 'success');
+            fetchDriveFiles();
+          } else {
+            if (saveData.error?.includes('AUTH_EXPIRED')) setDriveAccessToken(null);
+            throw new Error(saveData.error || 'Drive autosave failed.');
+          }
+        } catch (error) {
+          console.error('Drive autosave failed:', error);
+          showToast(error instanceof Error ? error.message : 'Drive autosave failed.', 'error');
         }
       };
     } catch (err) {
       console.error('Autosave error:', err);
+      showToast(err instanceof Error ? err.message : 'PDF autosave failed.', 'error');
     }
   };
 
@@ -2601,6 +2683,7 @@ export default function App() {
       setResults({
         [BLENDED_RESULT_KEY]: {
           ...data,
+          content_validation: validationStamp(data, validationContext, 'generated'),
           _engine: selectedEngine,
           _model: usedModels.map(model => modelLabel(modelCatalog, model)).join(', '),
           _models: usedModels
@@ -2889,27 +2972,42 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     }
   };
 
+  const checkPDFExport = async (blob: Blob, expectedText: string) => {
+    setExportValidation(null);
+    const report = await validatePDFExport(blob, expectedText);
+    setExportValidation(report);
+    if (report.errors.length) {
+      throw new Error(`PDF validation failed. ${report.errors[0]} Fix the layout before exporting.`);
+    }
+    if (report.warnings.length) showToast(report.warnings.join(' '), 'info');
+    return report;
+  };
+
   const downloadPDF = async () => {
+    let reviewed: OptimizationResult;
+    try {
+      reviewed = await prepareExport();
+      if (!reviewed) return;
+    } catch (error) {
+      console.error('Pre-export review failed:', error);
+      showToast(error instanceof Error ? error.message : 'Resume export checks failed.', 'error');
+      return;
+    }
     const element = document.getElementById('resume-container');
     if (!element) return;
-
-    // Save version automatically
-    saveResumeVersion();
-
-    // Sync to Job Tracker as Applied
-    syncJobTrackerApplied();
-
 
     // Temporarily clear active section for clean PDF
     const previousActiveSection = activeSection;
     formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: null });
     setIsDownloading(true);
+    let pdfSucceeded = false;
 
     try {
       // Small delay to allow React to re-render without highlights
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       const targetOuterHTML = element.outerHTML;
+      const expectedText = element.innerText;
 
       // Show the loader UI overlay
       setOptimizationProgress(0);
@@ -3016,6 +3114,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       }
       
       const blob = await pdfResponse.blob();
+      await checkPDFExport(blob, expectedText);
+      assertExportCurrent(reviewed);
+      if (element.innerText !== expectedText) throw new Error('The preview changed during export. Export again after reviewing it.');
 
       // Convert blob to base64 for Drive saving
       const reader = new FileReader();
@@ -3025,6 +3126,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         
         // Save to Google Drive
         try {
+          assertExportCurrent(reviewed);
           const driveSaveResponse = await fetch('/api/save-to-drive', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3059,7 +3161,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       // Trigger download
       saveAs(blob, downloadFileName);
-      showToast('PDF Downloaded successfully!', 'success');
+      saveResumeVersion();
+      syncJobTrackerApplied();
+      pdfSucceeded = true;
+      showToast('PDF downloaded; text and reading order checked.', 'success');
 
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
@@ -3070,7 +3175,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         progressIntervalRef.current = null;
       }
       setOptimizationProgress(100);
-      setOptimizationStatus("PDF Generated Successfully!");
+      setOptimizationStatus(pdfSucceeded ? "PDF Generated Successfully!" : "PDF Export Failed");
       
       setTimeout(() => {
         setIsOptimizing(false);
@@ -3084,11 +3189,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   };
 
   const handleDownloadDOCX = async () => {
-    const res = results[activeAudience!] || data;
-    await downloadDOCX(res, targetRole, companyName, showToast);
-    
-    // Sync to Job Tracker as Applied
-    syncJobTrackerApplied();
+    try {
+      const res = await prepareExport();
+      if (!res) return;
+      if (await downloadDOCX(res, targetRole, companyName, showToast, () => assertExportCurrent(res))) syncJobTrackerApplied();
+    } catch (error) {
+      console.error('DOCX pre-export review failed:', error);
+      showToast(error instanceof Error ? error.message : 'Resume export checks failed.', 'error');
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -3575,6 +3683,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             onConfirm={confirmDialog.onConfirm} 
             onCancel={confirmDialog.onCancel} 
             isDarkMode={isDarkMode} 
+            title={confirmDialog.title}
+            confirmLabel={confirmDialog.confirmLabel}
           />
         )}
 
@@ -3986,7 +4096,26 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 verification={results[activeAudience].draft_verification}
                                 coverage={results[activeAudience].input_coverage}
                                 isDarkMode={isDarkMode}
+                                onSaveEvidence={note => setBrainDump(previous => [previous.trim(), note].filter(Boolean).join('\n'))}
                               />
+                            )}
+                            {activeAudience && results[activeAudience] && !validationIsCurrent(results[activeAudience], validationContext) && (
+                              <p className="p-3 rounded-xl border text-xs text-amber-500" role="status">
+                                Content or evidence changed. Previous reports are stale until revalidation completes; export will recheck this version.
+                              </p>
+                            )}
+                            {activeAudience && validationIsCurrent(results[activeAudience], validationContext) && results[activeAudience]?.content_validation?.status === 'checked_in_code' && (
+                              <p className="p-3 rounded-xl border text-xs" role="status">
+                                Current content checked in code; scores refreshed. AI semantic review and generation-only reports are no longer current. Run Optimize again for a full review.
+                              </p>
+                            )}
+                            {exportValidation && (
+                              <div className="p-4 rounded-xl border text-xs" role="status">
+                                <h3 className="font-bold">Last PDF export check</h3>
+                                <p>{exportValidation.page_count} pages · {exportValidation.blocks_checked} text blocks checked. {exportValidation.errors.length ? 'Export stopped.' : 'Text preserved in reading order.'}</p>
+                                {[...exportValidation.errors, ...exportValidation.warnings].map((message, index) => <p className="mt-1" key={index}>{message}</p>)}
+                                <p className="mt-1 opacity-60">Checks extracted text against the rendered preview, not hiring probability or every ATS. Review visual layout separately.</p>
+                              </div>
                             )}
                             {activeAudience && results[activeAudience]?.impact_audit && (() => {
                               const audit = results[activeAudience].impact_audit!;

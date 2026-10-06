@@ -26,7 +26,9 @@ import { buildFigureIndex, findUnsupportedFigures } from "./impactScore";
 import type { FigureIndex } from "./impactScore";
 import { jdRequirementTerms, prepareEvidenceText, termAbsent, termEvidence } from "./matchScore";
 import type { Corpus } from "./matchScore";
-import { formatDocumentEvidenceBrief, parseModelJson } from "./requirementEvidence";
+import { buildCandidateMaterial, formatDocumentEvidenceBrief, parseModelJson } from "./requirementEvidence";
+import { inspectMetricProvenance } from "./metricProvenance";
+import type { MetricProvenance } from "./metricProvenance";
 import type { CandidateMaterial, RequirementAnalysis } from "./requirementEvidence";
 import { deleteSegments, readSegment, resumeSegments, writeSegment } from "./resumeSegments";
 import type { ResumeSegment, ResumeSegmentKind } from "./resumeSegments";
@@ -88,6 +90,7 @@ export interface DraftVerificationReport {
   remaining: VerificationIssue[];
   /** What code removed to enforce the candidate's exclusions. */
   removed: ExclusionRemoval[];
+  metric_provenance?: MetricProvenance[];
 }
 
 export type DraftModelCall = (prompt: string, purpose: "review" | "correction") => Promise<string>;
@@ -140,6 +143,7 @@ function asText(value: unknown): string {
  * ------------------------------------------------------------------ */
 
 interface CheckTools {
+  material: CandidateMaterial;
   figures: FigureIndex | null;
   evidence: Corpus;
   /** Posting terms with no trace in the candidate's material (excluded ones are checked separately). */
@@ -157,7 +161,7 @@ function prepareChecks(ctx: DraftReviewContext): CheckTools {
   const absentTerms = jdRequirementTerms(ctx.jobDescription, ctx.targetRole, ctx.jdKeywords)
     .map((entry) => entry.term)
     .filter((term) => findExcludedTerms(term).length === 0 && termAbsent(term, evidence));
-  return { figures, evidence, absentTerms };
+  return { figures, evidence, absentTerms, material: ctx.material || buildCandidateMaterial(ctx.evidenceText || "") };
 }
 
 type Finding = Omit<DraftIssue, "location" | "origin">;
@@ -211,8 +215,27 @@ function inspectWith(resume: any, tools: CheckTools): DraftIssue[] {
     for (const finding of checkText(segment.text, segment.kind, tools)) {
       issues.push({ location: segment.id, origin: "check", ...finding });
     }
+    for (const metric of segmentMetrics(resume, segment, tools)) {
+      if (metric.status === "needs_review" && !issues.some(issue => issue.location === segment.id && issue.type === "unsupported_figure")) {
+        issues.push({ location: segment.id, origin: "check", type: "unsupported_figure", problem: `${metric.figure}: ${metric.reason}` });
+      }
+    }
   }
+
   return issues;
+}
+
+function segmentMetrics(resume: any, segment: ResumeSegment, tools: CheckTools): MetricProvenance[] {
+  const roleIndex = /^E(\d+)\./.exec(segment.id);
+  const role = roleIndex ? resume.experience?.[Number(roleIndex[1]) - 1] : undefined;
+  const projectIndex = /^P(\d+)$/.exec(segment.id);
+  const title = projectIndex ? resume.projects?.[Number(projectIndex[1]) - 1]?.title : undefined;
+  return inspectMetricProvenance(
+    segment, tools.material,
+    typeof role?.company === "string" ? role.company : undefined,
+    typeof role?.role === "string" ? role.role : undefined,
+    typeof title === "string" ? title : undefined
+  );
 }
 
 /** Every problem code can find in the draft. */
@@ -413,6 +436,7 @@ function applyCorrections(
     }
     if (text === segment.text.trim() || text.length > MAX_LENGTH[segment.kind]) continue;
     if (checkText(text, segment.kind, tools).length > 0) continue;
+    if (segmentMetrics(resume, { ...segment, text }, tools).some(metric => metric.status === "needs_review")) continue;
     if (writeSegment(resume, segment.id, text)) fixed.push(record);
   }
   for (const id of deleteSegments(resume, Array.from(deletions.keys()))) {
@@ -485,6 +509,7 @@ export function coerceVerificationReport(value: unknown): DraftVerificationRepor
     fixed: list(report.fixed),
     remaining: list(report.remaining),
     removed: list(report.removed),
+    metric_provenance: list(report.metric_provenance),
   };
 }
 
@@ -534,6 +559,11 @@ export function refreshVerificationReport(resume: any): any {
     const report = coerceVerificationReport(resume.draft_verification);
     if (!report) return resume;
     const segments = resumeSegments(resume);
+    report.metric_provenance = report.metric_provenance?.flatMap(metric => {
+      const segment = segments.find(item => item.id === metric.location && item.text === metric.text) ||
+        segments.find(item => item.text === metric.text);
+      return segment ? [{ ...metric, location: segment.id }] : [];
+    });
     report.remaining = report.remaining.flatMap((issue) => {
       const text = typeof issue?.text === "string" ? issue.text : "";
       const segment =
@@ -611,6 +641,7 @@ export async function reviewAndCorrectDraft(
       return segment ? [{ ...issue, location: segment.id }] : [];
     });
     report.remaining = toVerificationIssues(segments, mergeIssues(tools ? inspectWith(resume, tools) : [], unresolved));
+    if (tools) report.metric_provenance = segments.flatMap(segment => segmentMetrics(resume, segment, tools));
   } catch (e: any) {
     console.warn("[draftReview] Could not list the remaining issues:", e?.message || e);
   }

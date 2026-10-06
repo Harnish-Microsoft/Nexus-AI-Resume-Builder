@@ -2,12 +2,14 @@ import React from 'react';
 import type { EvidenceStatus, EvidenceTierSummary, RequirementEvidenceReport } from '../lib/requirementEvidence';
 import type { DraftVerificationReport } from '../lib/draftReview';
 import type { InputCoverageReport } from '../lib/inputCoverage';
+import { GuidedEvidenceForm } from './GuidedEvidenceForm';
 
 interface RequirementEvidenceCardProps {
   evidence?: RequirementEvidenceReport;
   verification?: DraftVerificationReport;
   coverage?: InputCoverageReport;
   isDarkMode: boolean;
+  onSaveEvidence?: (note: string) => void;
 }
 
 const STATUS_ORDER: EvidenceStatus[] = ['evidenced', 'partial', 'not_evidenced', 'excluded'];
@@ -57,7 +59,7 @@ function verificationSummary(report: DraftVerificationReport): string {
     report.issues_found > 0 || remaining > 0
       ? `${report.issues_found} issue${report.issues_found === 1 ? '' : 's'} found, ${fixed} corrected, ${remaining} left for you to review.`
       : 'No problems found.';
-  if (report.ai_review === 'skipped') return `Checked in code only (fast mode). ${counts}`;
+  if (report.ai_review === 'skipped') return `Checked in code only; no current AI semantic review. ${counts}`;
   if (report.ai_review === 'failed') return `AI review unavailable, so only the checks in code ran. ${counts}`;
   if (report.corrections === 'failed') return `${counts} The correction step failed, so nothing was rewritten.`;
   return counts;
@@ -68,7 +70,7 @@ function verificationSummary(report: DraftVerificationReport): string {
  * apart from keyword coverage, which measures wording - plus the review of the
  * draft and anything the pipeline could not read.
  */
-export const RequirementEvidenceCard: React.FC<RequirementEvidenceCardProps> = ({ evidence, verification, coverage, isDarkMode }) => {
+export const RequirementEvidenceCard: React.FC<RequirementEvidenceCardProps> = ({ evidence, verification, coverage, isDarkMode, onSaveEvidence }) => {
   const requirements = list(evidence?.requirements);
   const notes = list(coverage?.notes);
   if (requirements.length === 0 && !verification && notes.length === 0) return null;
@@ -176,6 +178,19 @@ export const RequirementEvidenceCard: React.FC<RequirementEvidenceCardProps> = (
         </div>
       )}
 
+      {onSaveEvidence && <GuidedEvidenceForm report={evidence} onSave={onSaveEvidence} />}
+      {!!verification?.metric_provenance?.length && (
+        <details className={divider}>
+          <summary className="cursor-pointer text-xs font-bold">Metric sources ({verification.metric_provenance.length})</summary>
+          {verification.metric_provenance.map((metric, index) => (
+            <p key={`${metric.location}-${index}`} className="mt-2 text-[10px]">
+              <strong>{metric.location}: {metric.figure}</strong> — {metric.source
+                ? `${metric.source.company || metric.source.source}: "${metric.source.text}"`
+                : metric.reason}
+            </p>
+          ))}
+        </details>
+      )}
       {verification && (
         <div className={`${divider} space-y-1.5`}>
           <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">Draft check</p>

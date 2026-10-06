@@ -1192,11 +1192,13 @@ async function startServer() {
         audience: audienceText, 
         audienceMix: blend ? blend.entries : null,
         customPrompt,
+        brainDump,
+        masterResumes,
         pipelineType: selectedPipeline,
         hasGemini: !!geminiKey,
         hasOpenAI: !!openaiKey,
         // Results made before evidence-first optimization must not be served again.
-        pipelineVersion: "evidence-v1",
+        pipelineVersion: "evidence-v2-metric-provenance",
         // Nor results written by models the admins have since replaced.
         models: modelRoutes,
         ...(bulletRules ? { bulletRules: bulletRulesFingerprint(bulletRules) } : {}),

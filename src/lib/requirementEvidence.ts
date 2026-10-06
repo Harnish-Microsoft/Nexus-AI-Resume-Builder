@@ -411,7 +411,10 @@ export function buildCandidateMaterial(
     lines.push("", "CANDIDATE NOTES (brain dump, in the candidate's own words):", notes);
     for (const line of notes.split(/\r?\n/)) {
       const text = line.trim();
-      if (text) segments.push({ text, source: "brain_dump" });
+      const attributed = /^\[Evidence\] (.+?) @ (.+?): (.+)$/.exec(text);
+      if (text) segments.push(attributed
+        ? { text: attributed[3], source: "brain_dump", role: attributed[1], company: attributed[2] }
+        : { text, source: "brain_dump" });
     }
   }
 

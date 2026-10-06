@@ -345,6 +345,7 @@ export function bulletStrength(text: string): number {
  * ------------------------------------------------------------------ */
 
 export interface Figure {
+  start: number;
   /** As written, e.g. "$2.5M", "43", "380ms", "73%". */
   raw: string;
   /** Canonical numeric value, e.g. "2.5". */
@@ -453,6 +454,7 @@ export function extractFigures(text: string): Figure[] {
 
     const suffix = percent && rest.startsWith("%") ? "%" : letters ? letters[0] : "";
     figures.push({
+      start: match.index + match[1].length,
       raw: `${currency}${intRaw}${fraction ? `.${fraction}` : ""}${suffix}`,
       value,
       scaled: scale ? scaleValue(value, lookupWord(SCALES, scale[1].toLowerCase()) ?? 1) : null,

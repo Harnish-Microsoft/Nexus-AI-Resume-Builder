@@ -23,15 +23,15 @@ export const Toast = ({ message, type, onClose }: { message: string, type: 'succ
   );
 };
 
-export const ConfirmDialog = ({ message, onConfirm, onCancel, isDarkMode }: { message: string, onConfirm: () => void, onCancel: () => void, isDarkMode: boolean }) => {
+export const ConfirmDialog = ({ message, onConfirm, onCancel, isDarkMode, title = 'Confirm Action', confirmLabel = 'Confirm' }: { message: string, onConfirm: () => void, onCancel: () => void, isDarkMode: boolean, title?: string, confirmLabel?: string }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className={`p-6 rounded-xl shadow-2xl max-w-sm w-full mx-4 ${isDarkMode ? 'bg-[#141414] border border-white/10 text-white' : 'bg-white border border-black/5 text-black'}`}>
-        <h3 className="text-lg font-bold mb-4">Confirm Action</h3>
-        <p className="text-sm opacity-80 mb-6">{message}</p>
+      <div role="dialog" aria-modal="true" aria-label={title} className={`p-6 rounded-xl shadow-2xl max-w-sm w-full mx-4 ${isDarkMode ? 'bg-[#141414] border border-white/10 text-white' : 'bg-white border border-black/5 text-black'}`}>
+        <h3 className="text-lg font-bold mb-4">{title}</h3>
+        <p className="text-sm opacity-80 mb-6 whitespace-pre-line max-h-[60vh] overflow-y-auto">{message}</p>
         <div className="flex justify-end gap-3">
           <button onClick={onCancel} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}>Cancel</button>
-          <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-bold bg-red-500 text-white hover:bg-red-600 transition-colors">Confirm</button>
+          <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-bold bg-red-500 text-white hover:bg-red-600 transition-colors">{confirmLabel}</button>
         </div>
       </div>
     </div>

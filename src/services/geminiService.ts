@@ -40,6 +40,7 @@ import {
 import type { AudienceCoverageReport, AudienceMix } from "../lib/audienceProfiles";
 
 export interface OptimizationResult {
+  content_validation?: import("../lib/resumeValidation").ValidationStamp;
   personal_info: {
     name: string;
     location: string;
