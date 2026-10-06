@@ -53,7 +53,8 @@ import {
   Pin,
   PinOff,
   Menu,
-  Palette
+  Palette,
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -3753,14 +3754,19 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   </div>
                   <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0</span>
                   <div
+                    role={isAdminEmail(user?.email) ? 'button' : undefined}
+                    tabIndex={isAdminEmail(user?.email) ? 0 : undefined}
+                    onClick={isAdminEmail(user?.email) ? openModelSettings : undefined}
+                    onKeyDown={isAdminEmail(user?.email) ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModelSettings(); } } : undefined}
                     className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-bold uppercase ${
                       fallbackUsed ? 'border-amber-500/30 bg-amber-500/10 text-amber-500' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 animate-pulse'
-                    }`}
-                    title={engineTooltip}
+                    } ${isAdminEmail(user?.email) ? 'cursor-pointer hover:bg-emerald-500/20' : ''}`}
+                    title={isAdminEmail(user?.email) ? `${engineTooltip}\n\nClick to manage AI models` : engineTooltip}
                   >
                       <Cpu className="w-3 h-3" />
                       <span>{engineBadge}</span>
                       {fallbackUsed && <span className="ml-1 px-1.5 rounded bg-amber-500/20">Fallback used</span>}
+                      {isAdminEmail(user?.email) && <Settings className="w-3 h-3 ml-0.5 opacity-70" />}
                   </div>
                   <Link to="/profile" className={`flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full border transition-colors ${isDarkMode ? 'border-white/20 hover:border-emerald-500/50 bg-neutral-900' : 'border-black/10 hover:border-emerald-500/50 bg-white'}`}>
                     {user ? (
