@@ -28,6 +28,8 @@ import { withoutExcludedTerms } from "./src/lib/exclusions";
 import { analysisKeywords, applyRequirementEvidence, buildCandidateMaterial } from "./src/lib/requirementEvidence";
 import type { RequirementAnalysis } from "./src/lib/requirementEvidence";
 import { applyExclusionGuarantee, refreshVerificationReport, reviewAndCorrectDraft } from "./src/lib/draftReview";
+import { ATS_FONTS, atsSafePDFStyle } from "./src/lib/atsDocument";
+import type { AtsFont } from "./src/lib/atsDocument";
 import type { DraftModelCall, DraftReviewContext } from "./src/lib/draftReview";
 import { buildInputCoverage } from "./src/lib/inputCoverage";
 import type { InputCoverageReport } from "./src/lib/inputCoverage";
@@ -53,8 +55,9 @@ dotenv.config();
 
 // Initialize Firebase Admin
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+let db: admin.firestore.Firestore;
 if (!fs.existsSync(firebaseConfigPath)) {
-  console.error("firebase-applet-config.json not found. Skipping Firebase initialization.");
+  throw new Error("firebase-applet-config.json not found. Firebase initialization is required.");
 } else {
   const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
   
@@ -79,7 +82,6 @@ if (!fs.existsSync(firebaseConfigPath)) {
   }
 
   // Robust Firestore initialization: fallback to default database if specific ID fails or is not provided
-  let db: admin.firestore.Firestore;
   try {
     const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "")
       ? firebaseConfig.firestoreDatabaseId
@@ -201,7 +203,7 @@ async function logUsage(log: UsageLog) {
 }
 
 // PDF Sessions storage
-const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, scale?: number, timestamp: number }>();
+const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, scale?: number, atsSafe: boolean, atsFont: AtsFont, timestamp: number }>();
 
 // Cleanup old sessions every 30 minutes
 setInterval(() => {
@@ -537,7 +539,8 @@ async function verifyDraftResult(result: any, context: DraftReviewContext, call:
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("PORT must be a valid TCP port.");
 
   app.use(cors());
   app.use(bodyParser.json({ limit: '50mb' }));
@@ -1198,7 +1201,7 @@ async function startServer() {
         hasGemini: !!geminiKey,
         hasOpenAI: !!openaiKey,
         // Results made before evidence-first optimization must not be served again.
-        pipelineVersion: "evidence-v2-metric-provenance",
+        pipelineVersion: "evidence-v3-keyword-target",
         // Nor results written by models the admins have since replaced.
         models: modelRoutes,
         ...(bulletRules ? { bulletRules: bulletRulesFingerprint(bulletRules) } : {}),
@@ -1581,18 +1584,18 @@ async function startServer() {
 
   // API Endpoint for PDF Generation (Direct)
   app.post("/api/generate-pdf", async (req, res) => {
-    const { html, css, fonts } = req.body;
-    await handlePdfGeneration(html, css, fonts, res);
+    const { html, css, fonts, atsSafe, atsFont } = req.body;
+    await handlePdfGeneration(html, css, fonts, res, "Resume", undefined, atsSafe === true, ATS_FONTS.find(font => font === atsFont) || "Arial");
   });
 
   // API Endpoint to create a PDF session
   app.post("/api/pdf-session", (req, res) => {
-    const { html, css, fonts, title, scale } = req.body;
+    const { html, css, fonts, title, scale, atsSafe, atsFont } = req.body;
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
     const sessionId = uuidv4();
-    pdfSessions.set(sessionId, { html, css, fonts, title, scale, timestamp: Date.now() });
+    pdfSessions.set(sessionId, { html, css, fonts, title, scale, atsSafe: atsSafe === true, atsFont: ATS_FONTS.find(font => font === atsFont) || "Arial", timestamp: Date.now() });
     res.json({ sessionId });
   });
 
@@ -1823,7 +1826,7 @@ async function startServer() {
     }
     // Optional: delete session after retrieval to save memory
     // pdfSessions.delete(sessionId);
-    await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title, session.scale);
+    await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title, session.scale, session.atsSafe, session.atsFont);
   });
 
   // Counts pages in a Chrome-generated PDF. Chrome/Skia writes object dictionaries
@@ -1836,7 +1839,7 @@ async function startServer() {
     return matches ? matches.length : 0;
   }
 
-  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume", scale?: number) {
+  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume", scale?: number, atsSafe = false, atsFont: AtsFont = "Arial") {
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
@@ -1985,6 +1988,7 @@ async function startServer() {
                 -webkit-text-fill-color: currentColor !important;
                 -webkit-text-stroke: 0 !important;
               }
+              ${atsSafe ? atsSafePDFStyle(atsFont) : ''}
             </style>
           </head>
           <body>
@@ -2024,7 +2028,7 @@ async function startServer() {
         displayHeaderFooter: false,
         preferCSSPageSize: true,
         scale: s,
-        margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
+        margin: { top: atsSafe ? '16mm' : '10mm', right: atsSafe ? '16mm' : '10mm', bottom: atsSafe ? '16mm' : '10mm', left: atsSafe ? '16mm' : '10mm' }
       });
 
       // Full size first - most resumes already fit and need no shrinking at all.
@@ -2032,7 +2036,7 @@ async function startServer() {
       let pageCount = countPdfPages(pdfBuffer);
 
       // pageCount === 0 means the buffer couldn't be parsed; fail open and ship it.
-      if (pageCount > MAX_PAGES) {
+      if (!atsSafe && pageCount > MAX_PAGES) {
         let lo = MIN_SCALE;
         let hi = 1;
         let best: Uint8Array | null = null;

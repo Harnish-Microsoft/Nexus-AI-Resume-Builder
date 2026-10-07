@@ -83,6 +83,11 @@ import { extractTextFromPDFFile, validatePDFExport } from './lib/pdfUtils';
 import type { ExportValidationReport } from './lib/exportValidation';
 import { documentFingerprint, exportReview, revalidateResume, validationIsCurrent, validationStamp } from './lib/resumeValidation';
 import type { ValidationContext } from './lib/resumeValidation';
+import { AtsResumePreview } from './components/AtsResumePreview';
+import { AtsCompatibilityCard } from './components/AtsCompatibilityCard';
+import { ATS_FONTS, canonicalResume, exportBlocks, resumeFileName, structuredResumeWarnings, typographyWarnings } from './lib/atsDocument';
+import type { AtsFont } from './lib/atsDocument';
+import { validateExportText } from './lib/exportValidation';
 import { saveAs } from 'file-saver';
 const LinkedInImporter = lazy(() => import('./components/LinkedInImporter').then(m => ({ default: m.LinkedInImporter })));
 const ResumeJsonModal = lazy(() => import('./components/ResumeJsonModal').then(m => ({ default: m.ResumeJsonModal })));
@@ -515,6 +520,16 @@ export default function App() {
   const [targetCompany, setTargetCompany] = useState('none');
   const [brainDump, setBrainDump] = useState(() => localStorage.getItem('candidateBrainDump') || '');
   const [exportValidation, setExportValidation] = useState<ExportValidationReport | null>(null);
+  const [atsSafeLayout, setAtsSafeLayout] = useState(() => localStorage.getItem('atsSafeLayout') !== 'false');
+  const [atsFont, setAtsFont] = useState<AtsFont>(() => {
+    const saved = localStorage.getItem('atsFont');
+    return ATS_FONTS.find(font => font === saved) || 'Arial';
+  });
+  useEffect(() => {
+    localStorage.setItem('atsSafeLayout', String(atsSafeLayout));
+    localStorage.setItem('atsFont', atsFont);
+    setExportValidation(null);
+  }, [atsSafeLayout, atsFont]);
   useEffect(() => {
     localStorage.setItem('candidateBrainDump', brainDump);
   }, [brainDump]);
@@ -568,6 +583,7 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void, title?: string, confirmLabel?: string } | null>(null);
   const exportReviewPending = useRef(false);
+  const exportSnapshots = useRef(new WeakMap<OptimizationResult, string>());
 
   useEffect(() => {
     if (encryptedApiKey) {
@@ -1158,13 +1174,19 @@ export default function App() {
   }, [results, activeAudience, validationContext, isOptimizing]);
 
   const prepareExport = async (automatic = false) => {
+    if (isPiiMasked) throw new Error('Unmask candidate details before exporting a complete application resume.');
     const store = useResumeStore.getState();
     const audience = store.activeAudience;
     const current = audience ? store.results[audience] : undefined;
     if (!current) throw new Error('Optimize a resume before exporting so its claims can be reviewed.');
     const checked = validationIsCurrent(current, validationContext) ? current : revalidateResume(current, validationContext);
     if (checked !== current && audience) setResults(previous => ({ ...previous, [audience]: checked }));
-    const review = exportReview(checked);
+    const snapshot = canonicalResume(checked, profileOverridesRef.current);
+    exportSnapshots.current.set(snapshot, exportOptionsRef.current);
+    snapshot.content_validation = validationStamp(snapshot, validationContext, checked.content_validation?.status || 'checked_in_code');
+    const review = exportReview(snapshot);
+    review.advisories.push(...structuredResumeWarnings(snapshot));
+    if (!atsSafeLayout) review.concerns.push('Custom layout/font settings need visual review. ATS-safe layout uses readable text without shrinking to force a page count.');
     if (review.advisories.length) showToast(`Eligibility/evidence advisory: ${review.advisories.join('; ')}`, 'info');
     if (review.concerns.length) {
       if (automatic) throw new Error('Drive autosave paused: review the current claims and use a manual export to acknowledge them.');
@@ -1183,17 +1205,20 @@ export default function App() {
     }
     const latest = useResumeStore.getState();
     if (latest.activeAudience !== audience || documentFingerprint(latest.results[audience!]) !== documentFingerprint(checked) ||
-        !validationIsCurrent(checked, validationContextRef.current)) {
+        documentFingerprint(canonicalResume(checked, profileOverridesRef.current)) !== documentFingerprint(snapshot) ||
+        !validationIsCurrent(checked, validationContextRef.current) ||
+        exportSnapshots.current.get(snapshot) !== exportOptionsRef.current) {
       throw new Error('The resume changed during review. Export again to review the current version.');
     }
-    return checked;
+    return snapshot;
   };
 
   const assertExportCurrent = (reviewed: OptimizationResult) => {
     const store = useResumeStore.getState();
     const current = store.activeAudience ? store.results[store.activeAudience] : undefined;
-    if (!current || documentFingerprint(current) !== documentFingerprint(reviewed) ||
-        !validationIsCurrent(reviewed, validationContextRef.current)) {
+    if (!current || documentFingerprint(canonicalResume(current, profileOverridesRef.current)) !== documentFingerprint(reviewed) ||
+        !validationIsCurrent(reviewed, validationContextRef.current) ||
+        exportSnapshots.current.get(reviewed) !== exportOptionsRef.current) {
       throw new Error('The resume or its evidence changed during export. Export again to review the current version.');
     }
   };
@@ -1212,11 +1237,18 @@ export default function App() {
 
   // Profile Overrides
   const [profileName, setProfileName] = useState(() => localStorage.getItem('profileName') || '');
-  const [profileLocation, setProfileLocation] = useState(() => localStorage.getItem('profileLocation') || 'Hyderabad, Telangana, India');
+  const [profileLocation, setProfileLocation] = useState(() => localStorage.getItem('profileLocation') || '');
   const [profileEmail, setProfileEmail] = useState(() => localStorage.getItem('profileEmail') || '');
   const [profilePhone, setProfilePhone] = useState(() => localStorage.getItem('profilePhone') || '');
   const [profileLinkedIn, setProfileLinkedIn] = useState(() => localStorage.getItem('profileLinkedIn') || '');
   const [profileLinkedInText, setProfileLinkedInText] = useState(() => localStorage.getItem('profileLinkedInText') || '');
+  const profileOverridesRef = useRef<Partial<OptimizationResult["personal_info"]>>({});
+  profileOverridesRef.current = {
+    name: profileName, location: profileLocation, email: profileEmail, phone: profilePhone,
+    linkedin: profileLinkedIn, linkedinText: profileLinkedInText,
+  };
+  const previewSnapshot = activeAudience && results[activeAudience]
+    ? canonicalResume(results[activeAudience], profileOverridesRef.current) : null;
   
   const [isResumePersistent, setIsResumePersistent] = useState(() => localStorage.getItem('isResumePersistent') !== 'false');
 
@@ -1804,6 +1836,7 @@ export default function App() {
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [printScale, setPrintScale] = useState(1);
+  const exportOptionsRef = useRef('');
 
   // Sent with every PDF export. Shrink-to-fit for long resumes is applied by the
   // server through Chrome's native print scale (page.pdf({ scale })) instead of a
@@ -1877,6 +1910,7 @@ export default function App() {
   }, [resumeText, results, activeAudience, previewMode, zoom]);
   const [contentHeight, setContentHeight] = useState(1123);
   const [isPiiMasked, setIsPiiMasked] = useState(false);
+  exportOptionsRef.current = JSON.stringify(atsSafeLayout ? [true, atsFont, isPiiMasked] : [false, atsFont, isPiiMasked, previewMode, sectionStyles, printScale]);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
 
   // Autosave to Drive logic
@@ -1914,9 +1948,9 @@ export default function App() {
 
       const role = targetRole || 'Resume';
       const company = companyName ? `-${companyName}` : '';
-      const driveFileName = `${role}${company}-Harnish Jariwala.pdf`;
+      const driveFileName = resumeFileName(reviewed, role, 'pdf', companyName);
       // Keep the company name out of the PDF /Title metadata - see downloadPDF.
-      const pdfTitle = `Harnish Jariwala - ${role}`;
+      const pdfTitle = `${reviewed.personal_info.name || 'Candidate'} - ${role}`;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -1926,6 +1960,8 @@ export default function App() {
           css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
           scale: printScale,
+          atsSafe: atsSafeLayout,
+          atsFont,
           fonts: customFonts.map(font => `
             @font-face {
               font-family: '${font.name}';
@@ -1946,7 +1982,7 @@ export default function App() {
       }
       
       const blob = await pdfResponse.blob();
-      await checkPDFExport(blob, expectedText);
+      await checkPDFExport(blob, expectedText, reviewed, element);
       assertExportCurrent(reviewed);
       if (element.innerText !== expectedText) throw new Error('The preview changed during autosave. Save again after reviewing it.');
       const reader = new FileReader();
@@ -2972,9 +3008,24 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     }
   };
 
-  const checkPDFExport = async (blob: Blob, expectedText: string) => {
+  const checkPDFExport = async (blob: Blob, expectedText: string, snapshot: OptimizationResult, element: HTMLElement) => {
     setExportValidation(null);
+    const sourceText = exportBlocks(snapshot).filter(block => block.kind !== 'heading').map(block => block.text).join('\n');
+    const previewReport = validateExportText(sourceText, [expectedText]);
+    if (previewReport.errors.length) {
+      setExportValidation(previewReport);
+      throw new Error(`Source-to-preview validation failed: ${previewReport.errors[0]}. Switch to ATS-safe layout or restore missing content.`);
+    }
     const report = await validatePDFExport(blob, expectedText);
+    if (blob.size > 2_500_000) report.warnings.push("PDF exceeds Greenhouse's documented 2.5 MB parsing limit; check the target portal.");
+    const samples = Array.from(element.querySelectorAll('p, li, .resume-bullet-text')).filter(node => node.textContent?.trim());
+    for (const sample of samples) {
+      const style = getComputedStyle(sample);
+      const sizePx = parseFloat(style.fontSize);
+      const spacing = style.letterSpacing === 'normal' ? 0 : parseFloat(style.letterSpacing) / sizePx;
+      const warnings = typographyWarnings(style.fontFamily, sizePx * 0.75, parseFloat(style.lineHeight) / sizePx, spacing);
+      warnings.forEach(warning => { if (!report.warnings.includes(warning)) report.warnings.push(warning); });
+    }
     setExportValidation(report);
     if (report.errors.length) {
       throw new Error(`PDF validation failed. ${report.errors[0]} Fix the layout before exporting.`);
@@ -3059,15 +3110,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       const role = targetRole || 'Resume';
       const companyStr = companyName ? `-${companyName}` : '';
-      const driveFileName = `${role}${companyStr}-Harnish Jariwala.pdf`;
-      const downloadFileName = `${role}-Harnish Jariwala.pdf`;
+      const driveFileName = resumeFileName(reviewed, role, 'pdf', companyName);
+      const downloadFileName = resumeFileName(reviewed, role, 'pdf');
       // The company name is deliberately kept OUT of the PDF's Title metadata.
       // Chrome writes document.title into the PDF /Title field, which every reader
       // shows in its title bar and document properties. Embedding the target
       // company there means a recruiter at the next company opens the file and
       // sees it was tailored for a competitor. The company still goes in the
       // Google Drive filename, which is private to the user.
-      const pdfTitle = `Harnish Jariwala - ${role}`;
+      const pdfTitle = `${reviewed.personal_info.name || 'Candidate'} - ${role}`;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -3079,6 +3130,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
           scale: printScale,
+          atsSafe: atsSafeLayout,
+          atsFont,
           fonts: customFonts.map(font => `
             @font-face {
               font-family: '${font.name}';
@@ -3114,7 +3167,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       }
       
       const blob = await pdfResponse.blob();
-      await checkPDFExport(blob, expectedText);
+      await checkPDFExport(blob, expectedText, reviewed, element);
       assertExportCurrent(reviewed);
       if (element.innerText !== expectedText) throw new Error('The preview changed during export. Export again after reviewing it.');
 
@@ -3192,7 +3245,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     try {
       const res = await prepareExport();
       if (!res) return;
-      if (await downloadDOCX(res, targetRole, companyName, showToast, () => assertExportCurrent(res))) syncJobTrackerApplied();
+      if (await downloadDOCX(res, targetRole, companyName, showToast, () => assertExportCurrent(res), atsFont)) syncJobTrackerApplied();
     } catch (error) {
       console.error('DOCX pre-export review failed:', error);
       showToast(error instanceof Error ? error.message : 'Resume export checks failed.', 'error');
@@ -3286,7 +3339,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <h2 className="font-bold border-b border-black/10 mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Projects</h2>
             {res.projects.map((proj: any, i: number) => (
               <div key={i} className="mb-1.5">
-                <div className="font-bold" style={{ fontSize: '11.5' }}>{typeof proj === 'string' ? proj : proj.title}</div>
+                <div className="font-bold" style={{ fontSize: '11.5pt' }}>{typeof proj === 'string' ? proj : proj.title}</div>
                 {typeof proj !== 'string' && proj.description && (
                   <div className="flex gap-2">
                     <span className="shrink-0 text-[10.5pt]">•</span>
@@ -4017,7 +4070,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 <div className="flex items-center justify-between">
                                   <div>
                                     <div className="flex items-center gap-2">
-                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Keyword Coverage</h3>
+                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Composite JD Alignment</h3>
                                       {readiness && (
                                         <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${readinessTone[readiness.level] || ''}`} title={readiness.guidance}>
                                           {readiness.label}
@@ -4026,8 +4079,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     </div>
                                     <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>
                                       {breakdown
-                                        ? `How much of this JD's wording the resume covers (${breakdown.jd_keywords_evaluated} requirements). Not proof of qualification or a hiring probability.`
-                                        : 'Wording coverage of the current JD'}
+                                        ? `Combined wording coverage, experience depth, role vocabulary and tenure fit (${breakdown.jd_keywords_evaluated} terms). The separate 80% target measures source-supported keywords only.`
+                                        : 'Legacy composite score; not an ATS pass or hiring probability.'}
                                     </p>
                                   </div>
                                   <div className="flex items-center gap-3">
@@ -4099,6 +4152,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 onSaveEvidence={note => setBrainDump(previous => [previous.trim(), note].filter(Boolean).join('\n'))}
                               />
                             )}
+                            {previewSnapshot && <AtsCompatibilityCard
+                              resume={previewSnapshot} context={validationContext} safe={atsSafeLayout} font={atsFont}
+                              masked={isPiiMasked}
+                              onSafe={setAtsSafeLayout} onFont={setAtsFont}
+                              onCopy={text => { navigator.clipboard.writeText(text).then(() => showToast('Application fields copied. Review before submitting.', 'success')).catch(error => { console.error('Copy failed:', error); showToast('Could not copy application fields.', 'error'); }); }}
+                            />}
                             {activeAudience && results[activeAudience] && !validationIsCurrent(results[activeAudience], validationContext) && (
                               <p className="p-3 rounded-xl border text-xs text-amber-500" role="status">
                                 Content or evidence changed. Previous reports are stale until revalidation completes; export will recheck this version.
@@ -5136,7 +5195,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   const tone = level === 'strong' ? 'text-emerald-500' : level === 'good' ? 'text-sky-500' : level === 'partial' ? 'text-yellow-500' : 'text-red-500';
                                   return (
                                   <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
-                                    <span className="font-bold" title="Wording coverage of the JD, not proof of qualification">Keyword Coverage</span>
+                                    <span className="font-bold" title="Composite alignment, not the separate evidence-limited 80% keyword target">Composite JD Alignment</span>
                                     <span className={`font-bold text-sm ${tone}`} title={insight.score_breakdown?.optimized?.readiness?.label}>
                                       {insight.match_score}%
                                     </span>
@@ -5796,7 +5855,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       <div className="flex flex-wrap items-center justify-start lg:justify-end gap-2">
                         <div className="flex items-center gap-1 bg-black/5 dark:bg-white/5 rounded-lg p-0.5 mr-2">
                           <button 
-                            onClick={() => downloadJSON(activeAudience ? results[activeAudience] : data, targetRole, companyName, showToast)}
+                            onClick={() => { if (previewSnapshot) downloadJSON(previewSnapshot, targetRole, companyName, showToast); }}
                             className={`p-1.5 rounded-md transition-colors hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400`}
                             title="Download Resume JSON"
                           >
@@ -5925,7 +5984,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               id="resume-container"
                               className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                             >
-                          {previewMode === 'standard' ? (
+                          {atsSafeLayout && previewSnapshot ? (
+                            <AtsResumePreview resume={isPiiMasked ? {
+                              ...previewSnapshot,
+                              personal_info: { ...previewSnapshot.personal_info, location: '[REDACTED LOCATION]', email: '[REDACTED EMAIL]', phone: '[REDACTED PHONE]', linkedin: '' },
+                            } : previewSnapshot} font={atsFont} />
+                          ) : previewMode === 'standard' ? (
                             <div className="resume-page" style={{ paddingBottom: isDownloading ? '0' : '2rem' }}>
                               {renderSection('header')}
                               {renderSection('summary')}

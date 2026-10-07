@@ -24,7 +24,7 @@ import { EXCLUSION_RULE, excludedTermsQuoted, findExcludedTerms, removeExcludedS
 import type { ExclusionRemoval } from "./exclusions";
 import { buildFigureIndex, findUnsupportedFigures } from "./impactScore";
 import type { FigureIndex } from "./impactScore";
-import { jdRequirementTerms, prepareEvidenceText, termAbsent, termEvidence } from "./matchScore";
+import { computeKeywordCoverageTarget, jdRequirementTerms, prepareEvidenceText, termAbsent, termEvidence } from "./matchScore";
 import type { Corpus } from "./matchScore";
 import { buildCandidateMaterial, formatDocumentEvidenceBrief, parseModelJson } from "./requirementEvidence";
 import { inspectMetricProvenance } from "./metricProvenance";
@@ -143,6 +143,7 @@ function asText(value: unknown): string {
  * ------------------------------------------------------------------ */
 
 interface CheckTools {
+  context: DraftReviewContext;
   material: CandidateMaterial;
   figures: FigureIndex | null;
   evidence: Corpus;
@@ -161,7 +162,7 @@ function prepareChecks(ctx: DraftReviewContext): CheckTools {
   const absentTerms = jdRequirementTerms(ctx.jobDescription, ctx.targetRole, ctx.jdKeywords)
     .map((entry) => entry.term)
     .filter((term) => findExcludedTerms(term).length === 0 && termAbsent(term, evidence));
-  return { figures, evidence, absentTerms, material: ctx.material || buildCandidateMaterial(ctx.evidenceText || "") };
+  return { context: ctx, figures, evidence, absentTerms, material: ctx.material || buildCandidateMaterial(ctx.evidenceText || "") };
 }
 
 type Finding = Omit<DraftIssue, "location" | "origin">;
@@ -222,6 +223,19 @@ function inspectWith(resume: any, tools: CheckTools): DraftIssue[] {
     }
   }
 
+  const target = computeKeywordCoverageTarget(resume, tools.context.jobDescription, tools.material.text, tools.context.targetRole);
+  const summary = resumeSegments(resume).find(segment => segment.kind === "summary");
+  if (summary && target && target.actual < target.target && tools.context.analysis) {
+    const proven = tools.context.analysis.requirements.filter(requirement => requirement.status === "evidenced");
+    const missing = target.supported_missing.filter(term => proven.some(requirement =>
+      requirement.evidence.some(quote => termEvidence(term, prepareEvidenceText(quote.text)) === 1)
+    ));
+    if (missing.length) issues.push({
+      location: summary.id, origin: "check", type: "missed_evidence",
+      problem: `Below the evidence-limited 80% vocabulary target. Source-proven terms not surfaced: ${missing.join(", ")}.`,
+      fix: "Surface only the verified source facts naturally in the summary. Do not invent qualifications or repeat keywords.",
+    });
+  }
   return issues;
 }
 

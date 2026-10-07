@@ -26,6 +26,13 @@ import { BANNED_LEAD_VERBS } from "./impactScore";
 import { formatDocumentEvidenceBrief } from "./requirementEvidence";
 import type { RequirementAnalysis } from "./requirementEvidence";
 
+export const KEYWORD_TARGET_RULE = `EVIDENCE-LIMITED KEYWORD TARGET:
+Aim for at least 80% of the posting's weighted vocabulary ONLY where candidate material supports it.
+Use the posting's exact supported terms naturally in skills, summary and the relevant source role.
+Never move a fact between employers, invent a credential/metric, repeat keywords to game the score,
+or include excluded skills. Unsupported requirements stay gaps even when the target cannot be met.
+Scores are computed in code; never promise an ATS pass or fabricate a score.`;
+
 export interface ResumePromptOptions {
   targetRole: string;
   audience: string;
@@ -552,6 +559,7 @@ export function buildResumeMetaPrompt(options: ResumePromptOptions): string {
   return `ACT AS:
 Principal Resume Intelligence Architect and FAANG Recruiter.
 Optimize only the meta-sections of this resume for factual realism and believable operational ownership.
+${KEYWORD_TARGET_RULE}
 
 TARGET ROLE: ${targetRole}
 TARGET COMPANY: ${targetCompany || "General Product Tech"}
@@ -674,6 +682,7 @@ export function buildResumeGenerationPrompt(options: ResumePromptOptions): strin
       : `Count the roles present in the source input and return EXACTLY that many objects in "experience".`;
 
   return `ACT AS:
+${KEYWORD_TARGET_RULE}
 Principal Resume Intelligence Architect + Tier-1 Technical Recruiter + Enterprise ATS Strategist.
 Produce a recruiter-safe, ATS-parseable, technically mature resume that reflects factual realism
 and believable ownership. Your output is consumed by a JSON parser, never read as prose by a human.
@@ -1093,6 +1102,7 @@ ${retryFeedback.previousBullets.map((b) => `- ${b}`).join("\n")}
   return `ACT AS:
 Principal Resume Intelligence Architect + Tier-1 Technical Recruiter, holding the FAANG
 hiring bar. You are rewriting ONE role of a resume; every other role is written separately.
+${KEYWORD_TARGET_RULE}
 Your output is consumed by a JSON parser, never read as prose by a human.
 
 TARGET ROLE: ${targetRole || "Professional"}

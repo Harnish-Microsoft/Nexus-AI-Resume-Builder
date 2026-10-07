@@ -11,6 +11,8 @@
  * and vite (browser), exactly like resumePrompt.ts.
  */
 
+import { findExcludedTerms } from "./exclusions";
+
 export interface ScoreComponent {
   id: string;
   label: string;
@@ -1163,6 +1165,47 @@ function coverage(terms: JdTerms, rawCorpus: string): CoverageOutcome {
     missing,
     required: tiers.required,
     preferred: tiers.preferred,
+  };
+}
+
+export interface KeywordCoverageTarget {
+  target: number;
+  actual: number;
+  evidence_ceiling: number;
+  status: "met" | "supported_terms_remaining" | "evidence_limited";
+  supported_missing: string[];
+  unsupported: string[];
+}
+
+/** Same weighted JD dictionary/credits as coverage scoring; unrelated role/tenure components are excluded. */
+export function computeKeywordCoverageTarget(
+  resume: unknown, jobDescription: string, candidateMaterial: string, targetRole = "", target = 80
+): KeywordCoverageTarget | null {
+  if (jobDescription.trim().length < 40) return null;
+  const terms = extractJdTerms(jobDescription, targetRole, []);
+  if (terms.size < 3) return null;
+  const source = makeCorpus(candidateMaterial);
+  const output = makeCorpus(optimizedFullText(resume));
+  const supportedMissing: string[] = [];
+  const unsupported: string[] = [];
+  let total = 0, earned = 0, available = 0;
+  for (const [term, { weight }] of terms) {
+    total += weight;
+    const evidenceCredit = findExcludedTerms(term).length ? 0 : termCredit(term, source);
+    const outputCredit = termCredit(term, output);
+    // Unsupported wording must not earn this evidence-limited target.
+    earned += weight * Math.min(evidenceCredit, outputCredit);
+    available += weight * evidenceCredit;
+    if (evidenceCredit > outputCredit) supportedMissing.push(term);
+    if (evidenceCredit < 1) unsupported.push(term);
+  }
+  if (!total) return null;
+  const actualRaw = earned / total * 100;
+  const ceilingRaw = available / total * 100;
+  return {
+    target, actual: Math.floor(actualRaw * 10) / 10, evidence_ceiling: Math.floor(ceilingRaw * 10) / 10,
+    status: actualRaw >= target ? "met" : ceilingRaw < target ? "evidence_limited" : "supported_terms_remaining",
+    supported_missing: supportedMissing, unsupported,
   };
 }
 
