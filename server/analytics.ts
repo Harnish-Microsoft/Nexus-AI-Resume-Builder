@@ -12,13 +12,7 @@ export interface UsageLog {
   cost: number;
 }
 
-export function calculateCost(
-  model: string,
-  inputTokens: number,
-  outputTokens: number,
-  /** The price the admins set for this model in the catalog; the built-in table otherwise. */
-  catalogPricing?: { input: number; output: number } | null
-): number {
+export function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
   // Normalize model name for pricing lookup
   let priceKey = model;
   if (model.includes('gpt-4o-mini')) priceKey = 'gpt-4o-mini';
@@ -27,7 +21,7 @@ export function calculateCost(
   else if (model.includes('gemini-3') || model.includes('gemini-3.1-flash')) priceKey = 'gemini-3-flash-preview';
   else if (model.includes('gemini')) priceKey = 'gemini-3-flash-preview';
 
-  const pricing = catalogPricing || MODEL_PRICING[priceKey] || { input: 0, output: 0 };
+  const pricing = MODEL_PRICING[priceKey] || { input: 0, output: 0 };
   
   // Pricing is usually per 1M tokens
   const inputCost = (inputTokens / 1_000_000) * pricing.input;

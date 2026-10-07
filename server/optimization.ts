@@ -1,21 +1,11 @@
 import crypto from 'crypto';
+import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { pipelineCache } from './cacheUtility';
-import type { ModelCallResult, ModelRunner } from './modelRunner';
-import { computeBulletBudgets, roleSourceBullets } from "../src/lib/bulletBudget";
-import type { BudgetOptions } from "../src/lib/bulletBudget";
-import {
-  buildRequirementAnalysisPrompt,
-  parseRequirementAnalysis,
-  parseResumeJson,
-} from "../src/lib/requirementEvidence";
-import type { CandidateMaterial, RequirementAnalysis } from "../src/lib/requirementEvidence";
 
 /**
  * Token Optimization Strategy
  */
-
-/** What the extraction step reads of a free-form resume. JSON resumes are parsed in code, in full. */
-export const RESUME_EXTRACTION_LIMIT = 60000;
 
 /**
  * Trims input text to a reasonable limit before sending to any AI
@@ -25,119 +15,64 @@ export function trimInput(text: string, maxLength: number = 8000): string {
   return text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
 }
 
-function plainText(value: unknown): string {
-  return typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
-}
+export async function extractRelevantResumeData(resumeText: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
+  const isHybridOpenAI = pipelineType === 'hybrid-openai' && openaiApiKey;
 
-/** Skills as one flat list, whatever the master resume's shape: a list, categories, or comma-separated text. */
-function flattenSkills(skills: unknown): string[] {
-  const entry = (item: unknown) =>
-    typeof item === "string" ? item : item && typeof item === "object" ? plainText((item as any).name ?? (item as any).skill) : "";
-  let entries: string[] = [];
-  if (typeof skills === "string") entries = skills.split(",");
-  else if (Array.isArray(skills)) entries = skills.map(entry);
-  else if (skills && typeof skills === "object") {
-    entries = Object.entries(skills as Record<string, unknown>)
-      .filter(([key]) => !key.startsWith("_"))
-      .flatMap(([, items]) => (typeof items === "string" ? items.split(",") : Array.isArray(items) ? items.map(entry) : []));
-  }
-  return entries.map((item) => item.trim()).filter(Boolean);
-}
+  if (isHybridOpenAI) {
+    const openai = new OpenAI({ apiKey: openaiApiKey });
+    const trimmedResume = trimInput(resumeText, 15000);
+    const prompt = `
+      Extract essential professional data from this resume. 
+      Focus on high-impact achievements and core skills.
+      Return ONLY a JSON object:
+      {
+        "personal_info": { "name": "", "location": "", "email": "", "phone": "", "linkedin": "" },
+        "summary": "Brief professional overview",
+        "skills": ["Skill 1", "Skill 2"],
+        "experience": [
+          {
+            "role": "Job Title",
+            "company": "Company Name",
+            "duration": "Dates",
+            "achievements": ["Achievement 1", "Achievement 2"]
+          }
+        ],
+        "projects": [
+          { "title": "Project Name", "description": "Description" }
+        ],
+        "education": ["Degree, School"],
+        "certifications": [
+          { "name": "Cert Name", "issuer": "Issuing Body", "date": "Date" }
+        ]
+      }
+      STRICT RULE: Extract EVERY SINGLE role present in the resume. Do not skip any jobs, even very old ones.
+      Extract all bullets per role EXACTLY AS WRITTEN in the original resume. DO NOT summarize, rewrite, or attempt to refine the language of bullet points in this stage. Maintain absolute fidelity to original experience text.
+      
+      RESUME:
+      ${trimmedResume}
+    `;
 
-/**
- * A JSON master resume in the extraction schema, read in code: every role and
- * bullet exactly as written, nothing truncated, no model call. Null for
- * free-form text, and for JSON whose roles carry no bullets this parser
- * recognises - both still go through extraction.
- */
-export function structuredResumeFromText(resumeText: string): any | null {
-  const data = parseResumeJson(resumeText);
-  const roles = Array.isArray(data?.experience) ? data.experience : Array.isArray(data?.work_experience) ? data.work_experience : null;
-  if (!data || !roles || roles.length === 0) return null;
-  const experience = roles
-    .filter((role: unknown) => role && typeof role === "object")
-    .map((role: any) => {
-      const bullets = roleSourceBullets(role);
-      const description = plainText(role.description);
-      return {
-        role: plainText(role.role ?? role.title),
-        company: plainText(role.company),
-        duration: plainText(role.duration),
-        achievements: bullets.length > 0 ? bullets : description ? [description] : [],
+    try {
+      console.log(`[Nexus AI] Stage 1: Extraction. Attempting with OpenAI (gpt-4o)...`);
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" }
+      });
+      const text = completion.choices[0].message.content || "";
+      const parsed = JSON.parse(text);
+      return { 
+        data: parsed, 
+        usage: { promptTokenCount: completion.usage?.prompt_tokens, candidatesTokenCount: completion.usage?.completion_tokens, totalTokenCount: completion.usage?.total_tokens }, 
+        _model: "gpt-4o" 
       };
-    });
-  if (!experience.some((role: { achievements: string[] }) => role.achievements.length > 0)) return null;
-  const info = data.personal_info && typeof data.personal_info === "object" ? data.personal_info : {};
-  const linkedinText = plainText(info.linkedinText);
-  return {
-    personal_info: {
-      name: plainText(info.name),
-      location: plainText(info.location),
-      email: plainText(info.email),
-      phone: plainText(info.phone),
-      linkedin: plainText(info.linkedin),
-      ...(linkedinText ? { linkedinText } : {}),
-    },
-    summary: plainText(data.summary) || plainText(info.summary),
-    skills: flattenSkills(data.skills),
-    experience,
-    projects: (Array.isArray(data.projects) ? data.projects : [])
-      .map((project: any) =>
-        typeof project === "string"
-          ? { title: project.trim(), description: "" }
-          : { title: plainText(project?.title ?? project?.name), description: plainText(project?.description) }
-      )
-      .filter((project: { title: string; description: string }) => project.title || project.description),
-    education: Array.isArray(data.education) ? data.education : [],
-    certifications: Array.isArray(data.certifications) ? data.certifications : [],
-  };
-}
-
-/** One answered call: the text, its tokens, and the model and provider that answered. */
-export type JsonModelResult = ModelCallResult;
-
-/**
- * The job brief and verified requirement evidence map (requirementEvidence.ts).
- * An answer that yields no usable analysis counts as that model failing, so the
- * fallback is tried. Never throws: data is null when both fail, and the
- * pipeline carries on with keyword extraction instead.
- */
-export async function analyzeRequirements(
-  input: { jobDescription: string; targetRole?: string; material: CandidateMaterial },
-  runner: ModelRunner
-): Promise<{ data: RequirementAnalysis | null; result: JsonModelResult | null }> {
-  try {
-    console.log("[Nexus AI] Stage 1: Requirement evidence analysis...");
-    const { data, result } = await runner.callParsed(buildRequirementAnalysisPrompt(input), "analysis", (text) =>
-      parseRequirementAnalysis(text, input.material, { jobDescription: input.jobDescription })
-    );
-    const counts = data.requirements.reduce<Record<string, number>>((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), {});
-    console.log(
-      `[Evidence] ${data.requirements.length} requirements via ${result.model}: ${JSON.stringify(counts)}; ` +
-        `${data.verification.quotes_verified}/${data.verification.quotes_proposed} quotes verified` +
-        (data.verification.downgraded.length ? `; downgraded ${data.verification.downgraded.join(", ")}` : "")
-    );
-    return { data, result };
-  } catch (error: any) {
-    console.warn("[Evidence] Requirement analysis failed:", error?.message || error);
-    return { data: null, result: null };
+    } catch (error) {
+      console.error("Error extracting resume data with OpenAI:", error);
+    }
   }
-}
 
-/**
- * Free-form resume text in the extraction schema, read by a model. Reports how
- * much of the resume did not fit (omittedChars) so the result can disclose it.
- * Reading the resume is analysis: under Hybrid OpenAI it runs on Gemini. When
- * neither the primary nor the fallback returns usable JSON, the
- * ModelChainError is thrown, because nothing can be written without it.
- */
-export async function extractRelevantResumeData(resumeText: string, runner: ModelRunner) {
-  const result = await extractResumeDataWithModel(resumeText, runner);
-  return { ...result, omittedChars: Math.max(0, (resumeText || "").length - RESUME_EXTRACTION_LIMIT) };
-}
-
-async function extractResumeDataWithModel(resumeText: string, runner: ModelRunner) {
-  const trimmedResume = trimInput(resumeText, RESUME_EXTRACTION_LIMIT);
+  const genAI = new GoogleGenAI(geminiApiKey ? { apiKey: geminiApiKey } : {});
+  const trimmedResume = trimInput(resumeText, 15000);
 
   const prompt = `
     Extract ALL professional data from this resume with absolute fidelity. 
@@ -180,17 +115,88 @@ async function extractResumeDataWithModel(resumeText: string, runner: ModelRunne
   `;
 
   // Stage 1: Extraction
-  console.log("[Nexus AI] Stage 1: Extraction...");
-  const { data, result } = await runner.callParsed(prompt, "analysis", (text) => {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-  });
-  console.log(`[Extraction] ${result.model}: found ${data.experience?.length || 0} roles and ${data.projects?.length || 0} projects.`);
-  return { data, usage: result.usage, _model: result.model };
+  let primaryModel = "gemini-3.1-flash-lite"; // Swapped to lite as primary to avoid 3.5-flash quota issues
+  let fallbackModel = "gemini-3.5-flash"; 
+
+  try {
+    try {
+      console.log(`[Nexus AI] Stage 1: Extraction. Attempting with ${primaryModel}...`);
+      const response = await genAI.models.generateContent({
+        model: primaryModel,
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      const text = response.text || "";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+      
+      if (parsed) {
+        console.log(`[Extraction] Success. Found ${parsed.experience?.length || 0} roles and ${parsed.projects?.length || 0} projects.`);
+        return { data: parsed, usage: (response as any).usageMetadata, _model: primaryModel };
+      }
+    } catch (quotaError: any) {
+      const errorMsg = quotaError?.message?.toLowerCase() || "";
+      if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
+        console.log(`[Optimization] ${primaryModel} quota reached. Trying ${fallbackModel}...`);
+        const response = await genAI.models.generateContent({
+          model: fallbackModel,
+          contents: prompt,
+          config: { responseMimeType: "application/json" }
+        });
+        const text = response.text || "";
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        
+        if (parsed) {
+          return { data: parsed, usage: (response as any).usageMetadata, _model: fallbackModel };
+        }
+      } else {
+        throw quotaError;
+      }
+    }
+    return { data: null, usage: null };
+  } catch (error) {
+    console.error("Error extracting resume data:", error);
+    return { data: null, usage: null };
+  }
 }
 
-/** The posting's top keywords, when the requirement analysis gave none. Optional: [] when the models fail. */
-export async function extractJDKeywords(jobDescription: string, runner: ModelRunner) {
+export async function extractJDKeywords(jobDescription: string, geminiApiKey: string, openaiApiKey: string = '', pipelineType: string = 'hybrid-gemini') {
+  const isHybridOpenAI = pipelineType === 'hybrid-openai' && openaiApiKey;
+
+  if (isHybridOpenAI) {
+    const openai = new OpenAI({ apiKey: openaiApiKey });
+    const trimmedJD = trimInput(jobDescription, 10000);
+    const prompt = `
+      Extract the top 12 essential keywords and requirements from this job description.
+      Return ONLY a JSON array of strings.
+      
+      JD:
+      ${trimmedJD}
+    `;
+
+    try {
+      console.log(`[Nexus AI] Stage 1: JD Keywords. Attempting with OpenAI (gpt-4o)...`);
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" }
+      });
+      const text = completion.choices[0].message.content || "";
+      const parsed = JSON.parse(text);
+      // Expected output is a JSON array
+      const keywords = (parsed && Array.isArray(parsed)) ? parsed : (parsed.keywords || []);
+      return { 
+        data: keywords, 
+        usage: { promptTokenCount: completion.usage?.prompt_tokens, candidatesTokenCount: completion.usage?.completion_tokens, totalTokenCount: completion.usage?.total_tokens }, 
+        _model: "gpt-4o" 
+      };
+    } catch (error) {
+      console.error("Error extracting JD keywords with OpenAI:", error);
+    }
+  }
+
+  const genAI = new GoogleGenAI(geminiApiKey ? { apiKey: geminiApiKey } : {});
   const trimmedJD = trimInput(jobDescription, 10000);
 
   const prompt = `
@@ -202,27 +208,133 @@ export async function extractJDKeywords(jobDescription: string, runner: ModelRun
   `;
 
   // Stage 1: JD Analysis
+  let primaryModel = "gemini-3.1-flash-lite"; // Swapped to lite as primary
+  let fallbackModel = "gemini-3.5-flash";
+
   try {
-    console.log("[Nexus AI] Stage 1: JD Keywords...");
-    const { data, result } = await runner.callParsed(prompt, "analysis", (text) => {
-      // OpenAI's JSON mode answers with an object such as {"keywords": [...]}.
+    try {
+      console.log(`[Nexus AI] Stage 1: JD Keywords. Attempting with ${primaryModel}...`);
+      const response = await genAI.models.generateContent({
+        model: primaryModel,
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      const text = response.text || "";
       const jsonMatch = text.match(/\[[\s\S]*\]/);
-      const keywords = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-      return Array.isArray(keywords) && keywords.length > 0 ? (keywords as string[]) : null;
-    });
-    return { data, usage: result.usage, _model: result.model };
+      const keywords = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+      
+      if (keywords && keywords.length > 0) {
+        return { data: keywords, usage: (response as any).usageMetadata, _model: primaryModel };
+      }
+    } catch (quotaError: any) {
+      const errorMsg = quotaError?.message?.toLowerCase() || "";
+      if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted")) {
+        console.log(`[Optimization] ${primaryModel} quota reached. Trying ${fallbackModel}...`);
+        const response = await genAI.models.generateContent({
+          model: fallbackModel,
+          contents: prompt,
+          config: { responseMimeType: "application/json" }
+        });
+        const text = response.text || "";
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        const keywords = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+        
+        if (keywords && keywords.length > 0) {
+          return { data: keywords, usage: (response as any).usageMetadata, _model: fallbackModel };
+        }
+      } else {
+        throw quotaError;
+      }
+    }
+    return { data: [], usage: null };
   } catch (error) {
     console.error("Error extracting JD keywords:", error);
-    return { data: [] as string[], usage: null };
+    return { data: [], usage: null };
   }
 }
 
+const MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
 /**
- * `budgetOptions` carries the candidate's bullet rules (and the posting the
- * platform rule reads); pass the same options to planBulletBudgets over the
- * returned experience to get the plan these labels came from.
+ * Best-effort parse of one endpoint of a duration string into a Date.
+ * Handles "Jan 2024", "January 2024", "01/2024", "2024-01" and bare "2024".
+ * Returns null when nothing recognisable is found.
  */
-export function trimContentForAI(resumeData: any, keywords: string[], budgetOptions: BudgetOptions = {}) {
+function parseDurationEndpoint(part: string, isEnd: boolean): Date | null {
+  const s = part.trim().toLowerCase();
+  if (!s) return null;
+  if (/present|current|now|till date|to date|ongoing/.test(s)) return new Date();
+
+  const monthName = s.match(/([a-z]{3,9})\.?\s*,?\s*(\d{4})/);
+  if (monthName && MONTHS[monthName[1].slice(0, 3)] !== undefined) {
+    return new Date(Number(monthName[2]), MONTHS[monthName[1].slice(0, 3)], 1);
+  }
+
+  const numeric = s.match(/(\d{1,2})[\/\-.](\d{4})/);
+  if (numeric) {
+    const m = Number(numeric[1]);
+    if (m >= 1 && m <= 12) return new Date(Number(numeric[2]), m - 1, 1);
+  }
+
+  const isoish = s.match(/(\d{4})[\/\-.](\d{1,2})/);
+  if (isoish) {
+    const m = Number(isoish[2]);
+    if (m >= 1 && m <= 12) return new Date(Number(isoish[1]), m - 1, 1);
+  }
+
+  const yearOnly = s.match(/\b(19|20)\d{2}\b/);
+  if (yearOnly) {
+    const y = Number(yearOnly[0]);
+    return isEnd ? new Date(y, 11, 31) : new Date(y, 0, 1);
+  }
+
+  return null;
+}
+
+/**
+ * Tenure of a role in whole months, or null when the duration cannot be parsed.
+ */
+export function parseTenureMonths(duration: string): number | null {
+  if (!duration || typeof duration !== "string") return null;
+
+  const parts = duration.split(/\s*(?:-|–|—|\bto\b|\buntil\b)\s*/i).filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const start = parseDurationEndpoint(parts[0], false);
+  const end = parseDurationEndpoint(parts[parts.length - 1], true);
+  if (!start || !end || end < start) return null;
+
+  const months =
+    (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+  return Math.max(1, months + 1);
+}
+
+/**
+ * Bullet allowance for a role, driven by tenure first and recency second.
+ *
+ * Tenure dominates deliberately: a long bullet list under a very short stint
+ * reads as padding and undermines the credibility of the whole document.
+ * Returns null when the duration cannot be parsed, letting the model fall back
+ * to the prompt's own heuristics rather than acting on a bad guess.
+ */
+export function suggestBulletBudget(duration: string, isMostRecent: boolean): string | null {
+  const months = parseTenureMonths(duration);
+  if (months === null) return null;
+
+  if (months <= 2) return "1";
+  if (months <= 6) return "1-2";
+  if (months <= 12) return "2-3";
+
+  const endsNow = /present|current|now|till date|to date|ongoing/i.test(duration);
+  if (isMostRecent || endsNow) return months >= 24 ? "6-7" : "4-5";
+  if (months >= 24) return "3-4";
+  return "2-3";
+}
+
+export function trimContentForAI(resumeData: any, keywords: string[]) {
   // Remove duplicates from skills and achievements
   const seenSkills = new Set<string>();
   const uniqueSkills = (resumeData.skills || []).filter((s: string) => {
@@ -232,51 +344,36 @@ export function trimContentForAI(resumeData: any, keywords: string[], budgetOpti
     return true;
   });
 
-  const roles = (Array.isArray(resumeData.experience) ? resumeData.experience : []).map(
-    (exp: any, index: number) => {
-      const seenBullets = new Set<string>();
-      return {
-        id: `role_${index + 1}`,
-        role: exp?.role,
-        company: exp?.company,
-        duration: exp?.duration,
-        // Remove duplicate bullets and provide more context for AI selection
-        original_bullets: (Array.isArray(exp?.achievements) ? exp.achievements : [])
-          .filter((a: unknown): a is string => typeof a === "string" && a.trim().length > 0)
-          .filter((a: string) => {
-            const normalized = a.toLowerCase().trim();
-            if (seenBullets.has(normalized)) return false;
-            seenBullets.add(normalized);
-            return true;
-          })
-          .slice(0, 50),
-      };
-    }
-  );
-
-  // Computed here rather than left to the model, which is unreliable at date
-  // arithmetic, and over the whole list so recency follows the real end dates.
-  // The candidate's bullet rules, when given, come before the tenure tiers.
-  // Omitted entirely when the duration is unparseable.
-  const budgets = computeBulletBudgets(roles, budgetOptions);
-  const experience = roles.map((role: any, index: number) => {
-    const budget = budgets[index];
-    const { original_bullets, ...rest } = role;
-    return {
-      ...rest,
-      ...(budget.tenureMonths !== null ? { tenure_months: budget.tenureMonths } : {}),
-      ...(budget.label !== null ? { bullet_budget: budget.label } : {}),
-      original_bullets,
-    };
-  });
-
     // Ensure we don't exceed reasonable limits but provide enough for Step 3
     return {
       personal_info: resumeData.personal_info || {},
       // Trim summary to reasonable length for prompt safety
       summary: resumeData.summary?.substring(0, 1200),
       skills: uniqueSkills.slice(0, 100),
-      experience,
+      experience: (resumeData.experience || []).map((exp: any, index: number) => {
+        const seenBullets = new Set<string>();
+        const tenureMonths = parseTenureMonths(exp.duration);
+        const bulletBudget = suggestBulletBudget(exp.duration, index === 0);
+        return {
+          id: `role_${index + 1}`,
+          role: exp.role,
+          company: exp.company,
+          duration: exp.duration,
+          // Computed here rather than left to the model, which is unreliable at
+          // date arithmetic. Omitted entirely when the duration is unparseable.
+          ...(tenureMonths !== null ? { tenure_months: tenureMonths } : {}),
+          ...(bulletBudget !== null ? { bullet_budget: bulletBudget } : {}),
+          // Remove duplicate bullets and provide more context for AI selection
+          original_bullets: (exp.achievements || [])
+            .filter((a: string) => {
+              const normalized = a.toLowerCase().trim();
+              if (seenBullets.has(normalized)) return false;
+              seenBullets.add(normalized);
+              return true;
+            })
+            .slice(0, 50)
+        };
+      }),
       projects: (resumeData.projects || []).slice(0, 20),
       education: resumeData.education,
       certifications: resumeData.certifications,

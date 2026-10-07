@@ -1,7 +1,4 @@
-import { EngineConfig } from './geminiService';
-import { isEngineMode, providerFor } from '../lib/aiModels';
-import type { EngineMode } from '../lib/aiModels';
-import { getModelCatalog } from './modelCatalog';
+import { EngineConfig, EngineType } from './geminiService';
 
 export type TaskType = 
   | 'parse_resume'
@@ -18,31 +15,63 @@ export type TaskType =
   | 'linkedin_analysis'
   | 'optimize_headline'
   | 'optimize_about'
-  | 'linkedin_top_choice'
-  | 'classify_role'
-  | 'rank_resumes';
+  | 'linkedin_top_choice';
 
 export interface RouterConfig {
-  /** The selected engine ("production" is the legacy name of Hybrid Gemini). */
-  mode: EngineMode | 'production';
+  mode: EngineType | 'production';
   geminiConfig: EngineConfig;
   openaiConfig: EngineConfig;
 }
 
-/** Tasks that write for the reader. Under Hybrid OpenAI these run on OpenAI; everything else reads or checks, on Gemini. */
-const WRITING_TASKS = new Set<TaskType>(['rewrite_resume', 'cover_letter', 'recruiter_simulation', 'linkedin_analysis']);
-
-/**
- * The provider and model a task runs on. Gemini and Hybrid Gemini use Gemini for
- * everything, OpenAI uses OpenAI for everything, and Hybrid OpenAI splits the
- * work. The model is always the provider's primary from the admins' catalog;
- * callAI adds the fallback.
- */
 export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
-  const mode: EngineMode = isEngineMode(config.mode) ? config.mode : 'hybrid-gemini';
-  const provider = providerFor(mode, WRITING_TASKS.has(task) ? 'writing' : 'analysis');
-  const engineConfig = provider === 'gemini' ? config.geminiConfig : config.openaiConfig;
-  const model = getModelCatalog().providers[provider].primary;
-  console.log(`[Router] Task: ${task} → ${provider} (${model || 'no model configured'})`);
-  return { ...engineConfig, engine: provider, model };
+  let selectedEngine: EngineType;
+
+  if (config.mode === 'gemini' || config.mode === 'openai') {
+    selectedEngine = config.mode;
+  } else {
+    // Production Mode Routing Logic
+    switch (task) {
+      // Tasks routed to Gemini (Cost-effective & High Performance)
+      case 'parse_resume':
+      case 'extract_job_description':
+      case 'extract_skills':
+      case 'ats_scoring':
+      case 'evaluate_suitability':
+      case 'multi_audience':
+      case 'interview_questions':
+      case 'recruiter_message':
+      case 'optimize_headline':
+      case 'optimize_about':
+      case 'rewrite_resume':
+      case 'cover_letter':
+      case 'linkedin_top_choice':
+        selectedEngine = 'gemini';
+        break;
+
+      // Tasks routed to OpenAI (Premium Quality & Complex Reasoning)
+      case 'recruiter_simulation':
+      case 'linkedin_analysis':
+        selectedEngine = 'openai';
+        break;
+        
+      default:
+        // Fallback to Gemini if task is unknown
+        selectedEngine = 'gemini';
+    }
+  }
+
+  const engineConfig = selectedEngine === 'gemini' ? config.geminiConfig : config.openaiConfig;
+  
+  // USER REQUIREMENT: Use gemini-3.1-flash-lite for all tasks EXCEPT resume optimization and cover letters
+  if (selectedEngine === 'gemini' && task !== 'rewrite_resume' && task !== 'cover_letter') {
+    return {
+      ...engineConfig,
+      model: 'gemini-3.1-flash-lite'
+    };
+  }
+
+  // Log the routing decision
+  console.log(`[Router] Task: ${task} → Engine: ${selectedEngine} (${engineConfig.model})`);
+  
+  return engineConfig;
 }

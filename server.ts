@@ -18,46 +18,18 @@ import { renderResumeToHTML } from "./server/resumeTemplate.ts";
 import { pipelineCache } from "./server/cacheUtility";
 import { calculateCost, UsageLog } from "./server/analytics";
 import { runAgents } from "./server/agents";
-import { generatePerRole, roleModelCall, selectStarStories } from "./server/roleGenerator";
+import { generatePerRole } from "./server/roleGenerator";
 import { deduplicateAndScore } from "./server/dedup";
 import { saveResumeVersion } from "./server/memory";
-import { buildResumeGenerationPrompt, buildResumeMetaPrompt } from "./src/lib/resumePrompt";
-import { applyMatchScores, focusJobDescription } from "./src/lib/matchScore";
-import { applyImpactAudit } from "./src/lib/impactScore";
-import { withoutExcludedTerms } from "./src/lib/exclusions";
-import { analysisKeywords, applyRequirementEvidence, buildCandidateMaterial } from "./src/lib/requirementEvidence";
-import type { RequirementAnalysis } from "./src/lib/requirementEvidence";
-import { applyExclusionGuarantee, refreshVerificationReport, reviewAndCorrectDraft } from "./src/lib/draftReview";
-import { ATS_FONTS, atsSafePDFStyle } from "./src/lib/atsDocument";
-import type { AtsFont } from "./src/lib/atsDocument";
-import type { DraftModelCall, DraftReviewContext } from "./src/lib/draftReview";
-import { buildInputCoverage } from "./src/lib/inputCoverage";
-import type { InputCoverageReport } from "./src/lib/inputCoverage";
-import { activeBulletRules, bulletRulesFingerprint, enforceBulletBudgets, planBulletBudgets } from "./src/lib/bulletBudget";
-import type { BulletRules } from "./src/lib/bulletBudget";
-import {
-  activeLinkedInTrends,
-  applyTrendCoverage,
-  buildTrendBrief,
-  describeTrendSource,
-  trendEvidenceText,
-  trendFingerprint,
-  trendPreferTerms,
-} from "./src/lib/linkedinTrends";
-import type { LinkedInTrends } from "./src/lib/linkedinTrends";
-import { audienceHeadline, buildAudienceBrief, normalizeAudienceMix } from "./src/lib/audienceProfiles";
-import { isEngineMode, isModelChainError, isValidModelId, modelChain, pricingFor, providersOf, thinkingFor } from "./src/lib/aiModels";
-import type { EngineMode } from "./src/lib/aiModels";
-import { ModelRunner, requestCatalog } from "./server/modelRunner";
+import { buildResumeGenerationPrompt } from "./src/lib/resumePrompt";
 // import { scrapeJobs } from "./server/jobScraper";
 
 dotenv.config();
 
 // Initialize Firebase Admin
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-let db: admin.firestore.Firestore;
 if (!fs.existsSync(firebaseConfigPath)) {
-  throw new Error("firebase-applet-config.json not found. Firebase initialization is required.");
+  console.error("firebase-applet-config.json not found. Skipping Firebase initialization.");
 } else {
   const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
   
@@ -82,6 +54,7 @@ if (!fs.existsSync(firebaseConfigPath)) {
   }
 
   // Robust Firestore initialization: fallback to default database if specific ID fails or is not provided
+  let db: admin.firestore.Firestore;
   try {
     const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "")
       ? firebaseConfig.firestoreDatabaseId
@@ -141,55 +114,6 @@ async function getApiKeys(idToken: string) {
     }
 }
 
-/**
- * Reference material from the caller's OTHER master resumes, scoped to the caller.
- *
- * These previously came from a top-level `master_resumes` collection read with
- * no user filter, so on a shared Firestore every optimization was seeded with
- * other people's resumes. A user's own resumes are synced to their user
- * document by the client (App.tsx syncAllData), which is the correct source.
- *
- * The resume currently being rewritten is excluded: it is already supplied as
- * the input document, and re-supplying it as reference material would sit under
- * an instruction telling the model not to reuse its facts.
- */
-const MAX_MASTER_RESUME_REFERENCES = 5;
-
-async function getUserMasterResumes(idToken: string, excludeResumeText = ""): Promise<any[]> {
-  if (!idToken || idToken === "SYSTEM_PIPELINE" || idToken === "undefined" || idToken === "null") {
-    return [];
-  }
-  try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const snapshot = await db.collection("users").doc(decodedToken.uid).get();
-    const stored = snapshot.exists ? snapshot.data()?.masterResumes : null;
-    if (!Array.isArray(stored)) return [];
-
-    const excluded = String(excludeResumeText || "").trim();
-    const references = stored
-      .filter((entry: any) => {
-        if (!entry) return false;
-        if (!excluded) return true;
-        try {
-          return JSON.stringify(entry.data ?? entry, null, 2).trim() !== excluded;
-        } catch {
-          return true;
-        }
-      })
-      .slice(0, MAX_MASTER_RESUME_REFERENCES)
-      .map((entry: any) => (entry.data ? { name: entry.name, data: entry.data } : entry));
-
-    console.log(`[Pipeline] Using ${references.length} reference resumes for user ${decodedToken.uid}.`);
-    return references;
-  } catch (err) {
-    console.warn(
-      "[Pipeline] Failed to fetch user master resumes, proceeding without them:",
-      err instanceof Error ? err.message : String(err)
-    );
-    return [];
-  }
-}
-
 // Function to log usage to Firestore
 async function logUsage(log: UsageLog) {
   try {
@@ -203,7 +127,7 @@ async function logUsage(log: UsageLog) {
 }
 
 // PDF Sessions storage
-const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, scale?: number, atsSafe: boolean, atsFont: AtsFont, timestamp: number }>();
+const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, scale?: number, timestamp: number }>();
 
 // Cleanup old sessions every 30 minutes
 setInterval(() => {
@@ -290,257 +214,9 @@ function decrypt(text: string) {
   throw new Error("DECRYPTION_FAILED: The encryption key has changed or the data is corrupted. Please re-save your API keys in your profile.");
 }
 
-/**
- * API keys sent with a request, each raw or as encrypted by /api/encrypt-key
- * (a JSON {gemini, openai} or a single key). A raw key is OpenAI's when it starts
- * with "sk-", otherwise Gemini's. The first key found for a provider wins.
- */
-function requestKeys(...values: unknown[]): { gemini: string; openai: string } {
-  const keys = { gemini: "", openai: "" };
-  const take = (key: unknown) => {
-    if (typeof key !== "string" || !key.trim()) return;
-    const value = key.trim();
-    if (value.startsWith("sk-")) {
-      if (!keys.openai) keys.openai = value;
-    } else if (!keys.gemini) {
-      keys.gemini = value;
-    }
-  };
-  for (const value of values) {
-    if (typeof value !== "string" || !value.trim()) continue;
-    if (!value.includes(":")) {
-      take(value);
-      continue;
-    }
-    let decrypted = "";
-    try {
-      decrypted = decrypt(value);
-    } catch {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(decrypted);
-      if (typeof parsed?.gemini === "string" && parsed.gemini && !keys.gemini) keys.gemini = parsed.gemini;
-      if (typeof parsed?.openai === "string" && parsed.openai && !keys.openai) keys.openai = parsed.openai;
-    } catch {
-      take(decrypted);
-    }
-  }
-  return keys;
-}
-
-/** A model answer that must be a JSON object. Anything else is rejected, so the fallback model is tried. */
-function parseJsonObject(text: string): Record<string, any> | null {
-  const data = JSON.parse(text);
-  return data && typeof data === "object" && !Array.isArray(data) ? data : null;
-}
-
-/** One usage log per model a request used, priced from the admins' catalog where it has a price. */
-function logModelUsage(runner: ModelRunner, endpoint: string) {
-  for (const { model, provider, usage } of runner.usageByModel()) {
-    logUsage({
-      userId: "anonymous",
-      model,
-      inputTokens: usage.promptTokenCount,
-      outputTokens: usage.candidatesTokenCount,
-      totalTokens: usage.totalTokenCount,
-      cacheHit: false,
-      endpoint,
-      timestamp: Date.now(),
-      cost: calculateCost(model, usage.promptTokenCount, usage.candidatesTokenCount, pricingFor(runner.catalog, model, provider)),
-    });
-  }
-}
-
-/**
- * Deterministic post-processing shared by every generation branch (OpenAI
- * premium, Gemini split-gen, and the fallbacks) before the response is cached:
- *
- *   1. enforce each role's bullet budget - the candidate's bullet rules first,
- *      then the tenure tiers (trims, never pads),
- *   2. when the candidate follows LinkedIn trends, report which trending skills
- *      the resume uses, could use, or lacks evidence for, and drop skills
- *      entries that name only unsupported ones,
- *   3. replace the model's guessed match_score/baseline_score with values
- *      computed from the real job description and the real resume,
- *   4. run the impact audit, tracing every figure back to the candidate's own
- *      material.
- *
- * Budgets run first so the scores and the audit describe the document the
- * candidate actually receives. The source text deliberately excludes the
- * reference resumes so that the client, which re-runs the same steps, agrees.
- * The budget report records the rules' decisions, and the trend report the
- * evidence it found (reference resumes included), so the client's pass reuses
- * them instead of re-deciding from evidence it no longer has.
- */
-function finalizeResumeResult(
-  result: any,
-  params: {
-    jobDescription: string;
-    originalResumeText: string;
-    targetRole?: string;
-    jdKeywords?: string[];
-    brainDump?: string;
-    customPrompt?: string;
-    /** Active bullet rules; null or omitted for the tenure tiers alone. */
-    bulletRules?: BulletRules | null;
-    /** Source roles with their original bullets, for the platform rule's evidence. */
-    sourceRoles?: unknown[];
-    now?: Date;
-    /** Curated LinkedIn trends when the candidate follows them; null or omitted otherwise. */
-    trends?: LinkedInTrends | null;
-    /** More of the candidate's own material (their other resumes) that can evidence a trending skill. */
-    trendEvidence?: unknown[];
-    /** The verified requirement evidence map made for this run; null when the analysis failed. */
-    requirementAnalysis?: RequirementAnalysis | null;
-    /** What each step read of the resume and the posting. */
-    inputCoverage?: InputCoverageReport;
-  }
-): any {
-  if (!result || typeof result.result !== "string") return result;
-  try {
-    const parsed = JSON.parse(result.result);
-    const {
-      brainDump, customPrompt, bulletRules, sourceRoles, now, trends, trendEvidence,
-      requirementAnalysis, inputCoverage, ...scoreParams
-    } = params;
-    const sourceText = [params.originalResumeText, brainDump, customPrompt]
-      .filter((part) => typeof part === "string" && part.trim().length > 0)
-      .join("\n\n");
-    // Trending skills are judged against the candidate's material only; the custom
-    // prompt is instructions, not evidence. The notes stay a separate source so a JSON
-    // resume still counts by its values only. The client re-runs this with the same material.
-    const trendExtra: unknown[] = trends ? [brainDump, ...(Array.isArray(trendEvidence) ? trendEvidence : [])] : [];
-
-    // First, so the budgets, scores and audits describe a document that honours them.
-    applyExclusionGuarantee(parsed);
-    const budget = enforceBulletBudgets(parsed, {
-      sourceText,
-      rules: bulletRules ?? null,
-      jobDescription: params.jobDescription,
-      sourceRoles,
-      now,
-      ...(trends ? { preferTerms: trendPreferTerms(trends, trendEvidenceText(params.originalResumeText, ...trendExtra)) } : {}),
-    });
-    // After budgets, so it describes the delivered document; before scoring, because
-    // it drops skills entries that name only unsupported trending skills. The server
-    // writes the first report, so one already here came from the model: discard it.
-    if (trends) {
-      delete parsed.linkedin_trends;
-      applyTrendCoverage(parsed, trends, { sourceText: params.originalResumeText, extraEvidence: trendExtra });
-    }
-    applyMatchScores(parsed, scoreParams);
-    // What the candidate's material proves, apart from how many posting words the resume uses.
-    applyRequirementEvidence(parsed, requirementAnalysis ?? null);
-    applyImpactAudit(parsed, { sourceText });
-    // Budgets and trend coverage may have removed flagged items: list only what is delivered.
-    refreshVerificationReport(parsed);
-    if (inputCoverage) parsed.input_coverage = inputCoverage;
-    else delete parsed.input_coverage;
-    if (budget) {
-      const outside = budget.roles.filter((r) => r.status === "trimmed" || r.status === "under");
-      console.log(
-        `[Budget] ${budget.roles.length} roles, ${budget.trimmed} bullet(s) trimmed, compliant=${budget.compliant}` +
-          (outside.length > 0
-            ? ` (${outside.map((r) => `${r.role || "role"}: ${r.delivered}/${r.budget ?? `max ${r.max}`} ${r.status}`).join("; ")})`
-            : "")
-      );
-    }
-    const trendReport = parsed.linkedin_trends;
-    if (trends && trendReport) {
-      console.log(
-        `[Trends] ${trendReport.label}: ${trendReport.used.length} used, ${trendReport.available.length} supported but unused, ` +
-          `${trendReport.gaps.length} gaps, ${trendReport.unsupported.length} unsupported, ` +
-          `${trendReport.removed.length} unsupported skills entr${trendReport.removed.length === 1 ? "y" : "ies"} removed`
-      );
-    }
-    console.log(
-      `[Scoring] baseline=${parsed.baseline_score ?? "n/a"} match=${parsed.match_score ?? "n/a"} ` +
-        `(${parsed.score_breakdown?.jd_keywords_evaluated ?? 0} JD requirements evaluated) ` +
-        `impact=${parsed.impact_audit?.score ?? "n/a"} ` +
-        `(${parsed.impact_audit?.bullets_evaluated ?? 0} bullets, ` +
-        `${parsed.impact_audit?.findings?.length ?? 0} findings, ` +
-        `${parsed.impact_audit?.unverified_figure_bullets ?? 0} with unverified figures, ` +
-        `${parsed.impact_audit?.star_dropped ?? 0} STAR dropped)`
-    );
-    const evidence = parsed.requirement_evidence;
-    if (evidence) {
-      console.log(
-        `[Evidence] qualification=${evidence.qualification_evidence ?? "n/a"} ` +
-          `required ${evidence.required.evidenced}+${evidence.required.partial} partial of ${evidence.required.total}` +
-          (evidence.hard_gaps.length ? `; hard gaps: ${evidence.hard_gaps.join("; ")}` : "")
-      );
-    }
-    return { ...result, result: JSON.stringify(parsed) };
-  } catch (e: any) {
-    console.warn("[Scoring] Could not finalize the generated resume:", e?.message || e);
-    return result;
-  }
-}
-
-/** What the requirement analysis reads of the posting; the generation prompts get GENERATION_JD_LIMIT. */
-const ANALYSIS_JD_LIMIT = 30000;
-const GENERATION_JD_LIMIT = 12000;
-
-type TokenUsage = { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number };
-
-function emptyUsage(): TokenUsage {
-  return { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
-}
-
-function addUsage(total: TokenUsage, usage: Partial<TokenUsage> | null | undefined): void {
-  total.promptTokenCount += usage?.promptTokenCount || 0;
-  total.candidatesTokenCount += usage?.candidatesTokenCount || 0;
-  total.totalTokenCount += usage?.totalTokenCount || 0;
-}
-
-function sumUsage(base: Partial<TokenUsage> | null | undefined, extra: TokenUsage): TokenUsage {
-  const total = emptyUsage();
-  addUsage(total, base);
-  addUsage(total, extra);
-  return total;
-}
-
-/** The candidate's material as one text: resumes as JSON, notes and instructions as written. */
-function candidateMaterialText(...parts: unknown[]): string {
-  return parts
-    .map((part) => {
-      if (typeof part === "string") return part;
-      if (part && typeof part === "object") return JSON.stringify((part as any).data ?? part);
-      return "";
-    })
-    .filter((text) => text.trim().length > 0)
-    .join("\n\n");
-}
-
-/**
- * Reviews and corrects the generated document (draftReview.ts) and attaches
- * the verification report. Never throws: a document that cannot be parsed is
- * returned untouched for finalizeResumeResult to handle as before.
- */
-async function verifyDraftResult(result: any, context: DraftReviewContext, call: DraftModelCall): Promise<any> {
-  if (!result || typeof result.result !== "string") return result;
-  let parsed: any;
-  try {
-    parsed = JSON.parse(result.result);
-  } catch (e: any) {
-    console.warn("[Verify] Generated document is not JSON; skipping the review:", e?.message || e);
-    return result;
-  }
-  console.log("[Pipeline] Step 4: Verifying the draft against the candidate's material...");
-  const report = await reviewAndCorrectDraft(parsed, context, call);
-  parsed.draft_verification = report;
-  console.log(
-    `[Verify] review=${report.ai_review} corrections=${report.corrections}: ${report.issues_found} issue(s), ` +
-      `${report.fixed.length} fixed, ${report.remaining.length} remaining, ${report.removed.length} removed for exclusions`
-  );
-  return { ...result, result: JSON.stringify(parsed) };
-}
-
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT || 3000);
-  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("PORT must be a valid TCP port.");
+  const PORT = 3000;
 
   app.use(cors());
   app.use(bodyParser.json({ limit: '50mb' }));
@@ -1062,48 +738,6 @@ async function startServer() {
     }
   });
 
-  // The browser's OpenAI calls (callAI in src/services/geminiService.ts). Exactly the
-  // model asked for: the browser runs the primary and fallback itself, so nothing
-  // is substituted here, and a failure is returned as one.
-  app.post("/api/optimize", async (req, res) => {
-    const authHeader = req.header('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: "Missing or invalid Authorization header" });
-    }
-    const { prompt, model, encryptedKey } = req.body || {};
-    if (typeof prompt !== "string" || !prompt.trim()) {
-      return res.status(400).json({ error: "A prompt is required." });
-    }
-    if (!isValidModelId(model)) {
-      return res.status(400).json({ error: "A valid OpenAI model ID is required." });
-    }
-    const openaiKey = requestKeys(encryptedKey).openai;
-    if (!openaiKey) {
-      return res.status(400).json({ error: "No OpenAI API key was sent. Save your OpenAI key in your profile." });
-    }
-    try {
-      const openai = new OpenAI({ apiKey: openaiKey });
-      // OpenAI's JSON mode requires the word "JSON" in the prompt.
-      const json = /json/i.test(prompt);
-      const completion = await openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        ...(json ? { response_format: { type: "json_object" as const } } : {}),
-      });
-      const input = completion.usage?.prompt_tokens || 0;
-      const output = completion.usage?.completion_tokens || 0;
-      res.json({
-        result: completion.choices[0]?.message?.content || "",
-        usage: { promptTokenCount: input, candidatesTokenCount: output, totalTokenCount: completion.usage?.total_tokens || input + output },
-        model,
-      });
-    } catch (error: any) {
-      console.error(`[OpenAI] ${model} failed:`, error?.message || error);
-      const status = Number(error?.status);
-      res.status(status >= 400 && status < 600 ? status : 502).json({ error: error?.message || "The OpenAI request failed." });
-    }
-  });
-
   app.post("/api/v2/optimize", async (req, res) => {
     const authHeader = req.header('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -1117,36 +751,16 @@ async function startServer() {
       targetRole, 
       mode, 
       audience, 
-      audienceMix,
       customPrompt, 
       pipelineType,
       targetCompany,
       brainDump,
-      apiKey,
-      geminiApiKey,
-      bulletRules: requestedBulletRules,
-      linkedinTrends,
-      modelCatalog
+      apiKey
     } = req.body;
 
     if (!resumeText || !jobDescription) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-
-    // Untrusted input: clamped and sanitized; null when absent or switched off,
-    // which reproduces the tenure-only budgets exactly.
-    const bulletRules = activeBulletRules(requestedBulletRules);
-    // Curated LinkedIn trends (src/lib/linkedinTrends.ts); null unless the candidate
-    // follows them, which leaves the cache key, the prompts and the output as before.
-    const trends = activeLinkedInTrends(linkedinTrends, targetRole, jobDescription);
-
-    // Every selected reader is written for in ONE run: the weighted mix becomes a
-    // brief in each prompt. The brief is rebuilt here from the validated mix, never
-    // taken from the client as prompt text.
-    const blend = normalizeAudienceMix(audienceMix);
-    const audienceText = blend ? audienceHeadline(blend) : audience;
-    const documentAudienceBrief = buildAudienceBrief(blend, "document");
-    const roleAudienceBrief = buildAudienceBrief(blend, "role");
 
     try {
       // 1. Fetch keys securely from Firestore
@@ -1154,37 +768,55 @@ async function startServer() {
       let geminiKey = keys?.gemini || "";
       let openaiKey = keys?.openai || "";
       
-      // 1.1 Fetch this user's own master resumes, minus the one being rewritten
-      const masterResumes = await getUserMasterResumes(idToken, resumeText);
-
-      // 2. Keys sent with the request (raw or encrypted) take precedence. Each is
-      // classified by its form, so an OpenAI key is never used as a Gemini key.
-      const sentKeys = requestKeys(apiKey, geminiApiKey);
-      if (sentKeys.gemini) geminiKey = sentKeys.gemini;
-      if (sentKeys.openai) openaiKey = sentKeys.openai;
-      // The user's own keys. The platform's key never runs on models the browser sends.
-      const ownKeys = { gemini: Boolean(geminiKey), openai: Boolean(openaiKey) };
-
+      // 1.1 Fetch Master Resumes from Firestore
+      let masterResumes: any[] = [];
+      try {
+        const snapshot = await db.collection("master_resumes").get();
+        masterResumes = snapshot.docs.map(doc => doc.data());
+        console.log(`[Pipeline] Fetched ${masterResumes.length} master resumes.`);
+      } catch (err) {
+        console.warn("[Pipeline] Failed to fetch master resumes, proceeding without them:", err);
+      }
+      
       // Only fall back to system key if NO identity is provided (Guest Mode)
       if (!idToken) {
         geminiKey = geminiKey || process.env.GEMINI_API_KEY || "";
+        openaiKey = openaiKey || "";
       }
       
       if (!geminiKey && !idToken) {
          console.warn("No API key found in Guest Mode. System may fall back to platform default.");
       }
+
+      // 2. Override with API key from request if provided (supports both raw and encrypted)
+      if (apiKey) {
+        try {
+          const decrypted = decrypt(apiKey);
+          let parsedKeys: any = {};
+          try {
+            parsedKeys = JSON.parse(decrypted);
+          } catch (e) {
+            parsedKeys = { gemini: decrypted };
+          }
+          if (parsedKeys.gemini) geminiKey = parsedKeys.gemini;
+          if (parsedKeys.openai) openaiKey = parsedKeys.openai;
+        } catch (e) {
+          // If decryption fails, assume it's a raw key (for Gemini)
+          if (typeof apiKey === 'string' && apiKey.length > 20) {
+             geminiKey = apiKey;
+          }
+        }
+      }
       
       if (!geminiKey) console.warn("Gemini API key not found. Expecting platform-provided authentication to be available.");
       
       const selectedPipeline = pipelineType || 'hybrid-gemini';
-      const engineMode: EngineMode = isEngineMode(selectedPipeline) ? selectedPipeline : 'hybrid-gemini';
-      // Every call below runs on the admins' models: primary, then fallback, then stop.
-      const catalog = requestCatalog(modelCatalog, ownKeys);
-      const runner = new ModelRunner(catalog, engineMode, { gemini: geminiKey, openai: openaiKey });
-      const modelRoutes = providersOf(engineMode).map((provider) =>
-        modelChain(catalog, provider).map((id) => `${id}@${thinkingFor(catalog, id)}`).join(">")
-      );
-      console.log(`[Pipeline] Engine ${engineMode} on ${modelRoutes.join(" | ")}`);
+
+      const config: any = {};
+      if (geminiKey) config.apiKey = geminiKey;
+      
+      // Need to find where Gemini is instantiated to update it
+      // Let's first verify where it's initialized and how it's used before changing too much.
 
       // 2. Check Cache First (Key includes all relevant fields + API key presence to avoid stale results from different keys)
       const cacheKey = pipelineCache.generateKey({ 
@@ -1192,20 +824,11 @@ async function startServer() {
         jobDescription: jobDescription,
         targetRole, 
         mode, 
-        audience: audienceText, 
-        audienceMix: blend ? blend.entries : null,
+        audience, 
         customPrompt,
-        brainDump,
-        masterResumes,
         pipelineType: selectedPipeline,
         hasGemini: !!geminiKey,
-        hasOpenAI: !!openaiKey,
-        // Results made before evidence-first optimization must not be served again.
-        pipelineVersion: "evidence-v3-keyword-target",
-        // Nor results written by models the admins have since replaced.
-        models: modelRoutes,
-        ...(bulletRules ? { bulletRules: bulletRulesFingerprint(bulletRules) } : {}),
-        ...(trends ? { linkedinTrends: trendFingerprint(trends) } : {})
+        hasOpenAI: !!openaiKey
       });
       
       const cachedResult = pipelineCache.get(cacheKey);
@@ -1229,84 +852,37 @@ async function startServer() {
         throw new Error("No valid API keys found. Please provide at least 1 Gemini or OpenAI API key in your profile.");
       }
 
-      // STEP 1: Read the resume, and analyse the posting against the candidate's own material.
-      // A JSON master resume is parsed in code: read in full, exactly as written, no model call.
-      const structuredResume = Optimization.structuredResumeFromText(resumeText);
-      // The analysis and the review see the same facts the writer may use: this resume, the
-      // brain dump, and the candidate's other resumes the prompts reference.
-      const material = buildCandidateMaterial(resumeText, brainDump, { otherResumes: masterResumes });
-      const analysisPosting = focusJobDescription(jobDescription, ANALYSIS_JD_LIMIT);
-      console.log(
-        `[Pipeline] Step 1: ${structuredResume ? "Structured resume parsed in code" : "Resume extraction"} ` +
-          `+ requirement evidence analysis (${geminiKey ? 'User Key' : 'System Key'})...`
-      );
-      const [resumeExtraction, analysisRun] = await Promise.all([
-        structuredResume
-          ? Promise.resolve({ data: structuredResume, usage: null, _model: "structured-json", omittedChars: 0 })
-          : Optimization.extractRelevantResumeData(resumeText, runner),
-        Optimization.analyzeRequirements({ jobDescription: analysisPosting.text, targetRole, material }, runner),
+      // STEP 1: Gemini (Cheap) - Extraction & Analysis
+      console.log(`[Pipeline] Step 1: Gemini Extraction (${geminiKey ? 'User Key' : 'System Key'})...`);
+      const [resumeExtraction, jdExtraction] = await Promise.all([
+        Optimization.extractRelevantResumeData(resumeText, geminiKey, openaiKey, selectedPipeline),
+        Optimization.extractJDKeywords(jobDescription, geminiKey, openaiKey, selectedPipeline)
       ]);
 
       const resumeData = resumeExtraction?.data;
-      const requirementAnalysis = analysisRun.data;
-      // Every posting term is scored; the prompts never list an excluded capability as a priority.
-      let jdKeywords = analysisKeywords(requirementAnalysis);
-      if (jdKeywords.length === 0) {
-        console.warn("[Pipeline] No requirement analysis; falling back to keyword extraction.");
-        const jdExtraction = await Optimization.extractJDKeywords(jobDescription, runner);
-        jdKeywords = jdExtraction?.data || [];
-      }
+      const jdKeywords = jdExtraction?.data || [];
+      const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3-flash-preview";
+      
+      const geminiUsage = {
+        promptTokenCount: (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0),
+        candidatesTokenCount: (resumeExtraction?.usage?.candidatesTokenCount || 0) + (jdExtraction?.usage?.candidatesTokenCount || 0),
+        totalTokenCount: (resumeExtraction?.usage?.totalTokenCount || 0) + (jdExtraction?.usage?.totalTokenCount || 0)
+      };
 
-      if (!resumeData) throw new Error("The resume could not be read.");
+      if (!resumeData) throw new Error("Failed to extract resume data using Gemini.");
 
       // STEP 2: Internal Logic (Free) - Trimming
       console.log("[Pipeline] Step 2: Trimming Content...");
-      // ONE budget plan for every generation path and for enforcement, read from
-      // the full posting so the platform rule sees what the candidate pasted.
-      const budgetOptions = { now: new Date(), rules: bulletRules, jobDescription };
-      const optimizedInput = Optimization.trimContentForAI(resumeData, withoutExcludedTerms(jdKeywords), budgetOptions);
-      const budgetPlan = planBulletBudgets(optimizedInput.experience, budgetOptions);
-      if (budgetPlan.rules) {
-        console.log(
-          `[Budget] Bullet rules: ${budgetPlan.budgets
-            .map((b) => `${b.company || b.role || "role"} ${b.label ?? `max ${b.max}`} (${b.basis})`)
-            .join("; ")}` +
-            (budgetPlan.pageFit
-              ? ` | page fit ${budgetPlan.pageFit.before}->${budgetPlan.pageFit.after} of ${budgetPlan.pageFit.cap}`
-              : "")
-        );
-      }
+      const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords);
       
       console.log("=== OPTIMIZED INPUT EXPERIENCE ===");
       console.dir(optimizedInput.experience, { depth: null });
 
-      // Which trending skills the prompts may name is decided by the candidate's own
-      // material - this resume, the brain dump and their other resumes - never by the
-      // custom prompt, which is instructions rather than evidence.
-      const trendReferences = trends ? masterResumes.map((entry: any) => entry?.data ?? entry) : [];
-      const trendBrief = trends
-        ? buildTrendBrief(trends, { scope: "document", evidenceText: trendEvidenceText(resumeText, brainDump, ...trendReferences) })
-        : "";
-      if (trends) console.log(`[Trends] ${describeTrendSource(trends)}: ${trends.skills.length} trending skills considered.`);
-
-      // STEP 3: Final generation on the admins' writing models
+      // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
       const roleCount = optimizedInput.experience.length;
-      // Boilerplate goes before anything is cut, and any cut is disclosed in input_coverage.
-      const generationPosting = focusJobDescription(jobDescription, GENERATION_JD_LIMIT);
-      const generationJobDescription = generationPosting.text;
-      const inputCoverage = buildInputCoverage({
-        resumeChars: resumeText.length,
-        resumeMethod: structuredResume ? "structured" : "extracted",
-        resumeOmittedChars: (resumeExtraction as any)?.omittedChars || 0,
-        materialOmittedChars: requirementAnalysis ? material.omitted_chars : 0,
-        analysisPosting: requirementAnalysis ? analysisPosting : null,
-        generationPosting,
-      });
-      if (inputCoverage.notes.length > 0) console.log(`[Coverage] ${inputCoverage.notes.join(" ")}`);
-      const generationOptions = {
+      const finalPrompt = buildResumeGenerationPrompt({
         targetRole,
-        audience: audienceText,
-        audienceBrief: documentAudienceBrief,
+        audience,
         mode,
         targetCompany,
         customPrompt,
@@ -1314,148 +890,248 @@ async function startServer() {
         roleCount,
         jdKeywords: optimizedInput.jd_keywords,
         masterResumes,
-        bulletBudgets: budgetPlan.budgets,
-        bulletRules: budgetPlan.rules,
-        platformDecision: budgetPlan.platform,
-        trendBrief,
         // The extracted keyword list alone is too lossy to differentiate two job
         // descriptions for similar roles, which caused near-identical output across
         // different JDs. The model needs the actual posting to tailor against.
-        jobDescription: generationJobDescription,
+        jobDescription: Optimization.trimInput(jobDescription, 6000),
         inputLabel: "INPUT DATA (structured, pre-extracted and trimmed)",
         inputData: JSON.stringify(optimizedInput, null, 2),
-        // Proven requirements lead; unproven and excluded ones are named as never to be claimed.
-        requirementAnalysis,
-      };
-      const finalPrompt = buildResumeGenerationPrompt(generationOptions);
+      });
 
-      let result: any;
+      let result;
+      let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
 
-      if (runner.providerFor("writing") === "openai") {
-        // Hybrid OpenAI: one whole-document call on the OpenAI models; Gemini read and analysed above.
-        console.log(`[Hybrid Pipeline] Step 3: Whole-document generation on ${modelChain(catalog, "openai").join(" > ")}...`);
-        // An answer that is not a JSON object counts as a failed call, so the fallback is tried.
-        const { result: generation } = await runner.callParsed(finalPrompt, "writing", (text) => (parseJsonObject(text) ? text : null), {
-          system: "You are a senior executive resume strategist. Output strictly JSON. Ensure EVERY SINGLE role from input is preserved.",
-        });
-        result = {
-          result: generation.text,
-          intermediateData: { resumeData, jdKeywords },
-          _engine: engineMode,
-          _model: generation.model
-        };
+      if (pipelineType === 'hybrid-openai') {
+        // OPENAI BRANCH
+        try {
+          console.log(`[Hybrid Pipeline] Step 3: Premium OpenAI Generation (${usedModel})...`);
+          const openai = new OpenAI({ apiKey: openaiKey });
+          const chatCompletion = await openai.chat.completions.create({
+            model: usedModel,
+            messages: [{ 
+              role: "system", 
+              content: "You are a senior executive resume strategist. Output strictly JSON. Ensure EVERY SINGLE role from input is preserved." 
+            }, { 
+              role: "user", 
+              content: finalPrompt
+            }],
+            response_format: { type: "json_object" }
+          });
+
+          const responseText = chatCompletion.choices[0].message.content || "";
+          const genInput = chatCompletion.usage?.prompt_tokens || 0;
+          const genOutput = chatCompletion.usage?.completion_tokens || 0;
+
+          logUsage({
+            userId: "anonymous",
+            model: usedModel,
+            inputTokens: genInput,
+            outputTokens: genOutput,
+            totalTokens: genInput + genOutput,
+            cacheHit: false,
+            endpoint: "/api/v2/optimize",
+            timestamp: Date.now(),
+            cost: calculateCost(usedModel, genInput, genOutput)
+          });
+
+          // Log Gemini Extraction
+          logUsage({
+            userId: "anonymous",
+            model: extractionModelUsed,
+            inputTokens: geminiUsage.promptTokenCount,
+            outputTokens: geminiUsage.candidatesTokenCount,
+            totalTokens: geminiUsage.totalTokenCount,
+            cacheHit: false,
+            endpoint: "/api/v2/optimize",
+            timestamp: Date.now(),
+            cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
+          });
+
+          result = {
+            result: responseText,
+            usage: {
+              promptTokenCount: genInput,
+              candidatesTokenCount: genOutput,
+              totalTokenCount: genInput + genOutput
+            },
+            geminiUsage,
+            intermediateData: { resumeData, jdKeywords },
+            _engine: 'hybrid-openai',
+            _model: usedModel
+          };
+        } catch (openaiError: any) {
+          console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash Lite...", openaiError.message);
+          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use Gemini 3.1 Flash Lite then 3.5 Flash
+          let fallbackModelName = "gemini-3.1-flash-lite";
+          const genAI = new GoogleGenAI({ apiKey: geminiKey });
+          
+          let fallbackResult;
+          try {
+            fallbackResult = await genAI.models.generateContent({
+              model: fallbackModelName,
+              contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+              config: { responseMimeType: "application/json" }
+            });
+          } catch (e) {
+            console.warn(`[Pipeline] Fallback to ${fallbackModelName} failed, trying 3.5-flash...`);
+            fallbackModelName = "gemini-3.5-flash";
+            fallbackResult = await genAI.models.generateContent({
+              model: fallbackModelName,
+              contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+              config: { responseMimeType: "application/json" }
+            });
+          }
+          
+          const text = fallbackResult.text || "";
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) throw new Error("Both OpenAI and Fallback Gemini failed.");
+
+          result = {
+            result: jsonMatch[0],
+            usage: {
+              promptTokenCount: fallbackResult.usageMetadata?.promptTokenCount || 0,
+              candidatesTokenCount: fallbackResult.usageMetadata?.candidatesTokenCount || 0,
+              totalTokenCount: fallbackResult.usageMetadata?.totalTokenCount || 0
+            },
+            geminiUsage,
+            intermediateData: { resumeData, jdKeywords },
+            _model: fallbackModelName,
+            _fallback: true
+          };
+        }
       } else {
-        // Gemini: the summary, skills and other sections in one call, and each role in its own, in parallel.
-        console.log(`[Pipeline] Step 3: Split Generation on ${modelChain(catalog, "gemini").join(" > ")}...`);
-        const metaPrompt = buildResumeMetaPrompt(generationOptions);
-        // Per-role calls run on the same models, count in the same totals, and try the
-        // fallback when an answer is not a usable role.
-        const writeRole = roleModelCall(runner);
+        // GEMINI BRANCH
+        try {
+        console.log(`[Pipeline] Step 3: Split Generation (Gemini ${usedModel} with HIGH thinking)...`);
+        const genAI = new GoogleGenAI({ apiKey: geminiKey });
+        
+        // 1. Generate Meta Data (Summary, Skills, Why This Job, etc.)
+        const metaPrompt = `
+          ACT AS:
+          You are a Principal Resume Intelligence Architect and FAANG Recruiter.
+          Optimize the meta-sections of this resume for factual realism and believable operational ownership.
 
+          Target Role: ${targetRole}.
+          Audience: ${audience}. Mode: ${mode}.
+          Keywords: ${optimizedInput.jd_keywords.join(', ')}.
+          ${brainDump ? `ADDITIONAL CONTEXT (BRAIN DUMP): ${brainDump}` : ''}
+          
+          INPUT DATA:
+          ${JSON.stringify({
+            personal_info: optimizedInput.personal_info,
+            summary: optimizedInput.summary,
+            skills: optimizedInput.skills,
+            projects: optimizedInput.projects,
+            education: optimizedInput.education,
+            certifications: optimizedInput.certifications,
+            jd_keywords: optimizedInput.jd_keywords
+          }, null, 2)}
+          
+          STRICT RULES:
+          1. Summary: 50-100 words, high impact, NO AI-slop words. Use natural, grounded operational verbs. Provide a concise overview of technical expertise and career trajectory.
+          2. Skills: Categorize into exactly 4 logical categories relevant to ${targetRole}. Rename 'DevOps & Automation' to 'Infrastructure Operations & Automation'. Strictly replace 'CI/CD Pipeline Design' with 'Infrastructure Provisioning'.
+          3. Why This Job: 75-125 words compelling response based on factual alignment.
+          4. Projects (CRITICAL): You MUST output EVERY project provided in the INPUT DATA. Do not merge them. Keep project descriptions to a maximum of 2 sentences or 25 words, focusing strictly on the technical architecture and the business outcome.
+          5. Education (MANDATORY): You MUST output the Education section. Do not skip or omit it.
+          6. TRUTHFULNESS: DO NOT invent metrics, technologies, or certifications.
+          7. GLOBAL NEGATIVE CONSTRAINTS: ABSOLUTELY FORBIDDEN: "CI/CD", "Pipelines", "DevOps".
+          8. COMPLETE DATA: You MUST process and include EVERY SINGLE section provided in the INPUT DATA. Do not omit any roles, projects, or certifications.
+          
+          OUTPUT JSON SCHEMA:
+          {
+            "personal_info": { ... },
+            "summary": "...",
+            "skills": { "Category 1": ["skill1", ...], ... },
+            "why_this_job": "...",
+            "projects": [ { "title": "...", "description": "..." } ],
+            "education": [ { "degree": "...", "institution": "...", "expected_completion": "..." } ],
+            "certifications": [...],
+            "ats_keywords_from_jd": [...],
+            "ats_keywords_added_to_resume": [...],
+            "keyword_gap": [...],
+            "match_score": 85,
+            "improvement_notes": [...],
+            "audience_alignment_notes": "...",
+            "star_stories": [...],
+            "audit_report": { ... }
+          }
+        `;
+
+        // 2. Generate Roles Individually (Parallel) and Deduplicate
         console.log(`[Pipeline] Spawning meta generation and ${optimizedInput.experience.length} role generation tasks...`);
-        const [metaRun, roleResults] = await Promise.all([
-          runner.callParsed(metaPrompt, "writing", (text) => {
-            const data = parseJsonObject(text);
-            return data && Object.keys(data).length > 0 ? data : null;
+        const [metaResponse, roleResults] = await Promise.all([
+          genAI.models.generateContent({
+            model: usedModel,
+            contents: [{ role: 'user', parts: [{ text: metaPrompt }] }],
+            config: { 
+              responseMimeType: "application/json",
+              thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }
+            }
           }),
           generatePerRole(
-            optimizedInput.experience,
-            geminiKey,
-            targetCompany,
+            optimizedInput.experience, 
+            geminiKey, 
+            targetCompany, 
             targetRole,
-            audienceText,
+            audience,
             mode,
             customPrompt,
-            brainDump,
-            {
-              // Each role is tailored against the real posting, like the whole-document path.
-              jobDescription: generationJobDescription,
-              jdKeywords: optimizedInput.jd_keywords,
-              audienceBrief: roleAudienceBrief,
-              budgetPlan,
-              bulletRules: budgetPlan.rules,
-              // Supporting evidence for grounded expansion; only rule roles receive it.
-              referenceResumes: masterResumes,
-              skills: optimizedInput.skills,
-              now: budgetOptions.now,
-              // Each role may name only the trending skills its own material shows.
-              ...(trends ? { trends } : {}),
-              // Each role leads with the requirements its own bullets prove.
-              requirementAnalysis,
-              call: writeRole,
-            }
+            brainDump
           )
         ]);
 
-        const metaData = metaRun.data;
-
+        const metaText = metaResponse.text || "";
+        if (!metaText || metaText.length < 50) {
+          throw new Error("Meta generation returned empty or invalid response.");
+        }
+        const metaData = JSON.parse(metaText);
+        
         // 3. Deduplicate and Score
         console.log("[Pipeline] Deduplicating and Scoring...");
-        const finalExperience = deduplicateAndScore(
-          roleResults.map(({ star_stories, generation, ...role }) => role)
-        );
+        const finalExperience = deduplicateAndScore(roleResults);
 
         const finalResult = {
           ...metaData,
-          experience: finalExperience,
-          // Drafted per role, next to the evidence and the bullets they expand.
-          // The meta call never sees the bullets, so it cannot write stories that link.
-          star_stories: selectStarStories(roleResults),
+          experience: finalExperience
         };
+
+        // STEP 4: Agentic Review (Multi-Agent Refinement)
+        console.log("[Pipeline] Step 4: Multi-Agent Review...");
+        const agentFeedback = await runAgents(finalResult, geminiKey);
 
         result = {
           result: JSON.stringify(finalResult),
+          agentFeedback,
+          usage: {
+            promptTokenCount: metaResponse.usageMetadata?.promptTokenCount || 0,
+            candidatesTokenCount: metaResponse.usageMetadata?.candidatesTokenCount || 0,
+            totalTokenCount: metaResponse.usageMetadata?.totalTokenCount || 0
+          },
+          geminiUsage,
           intermediateData: { resumeData, jdKeywords },
-          _model: metaRun.result.model,
+          _model: usedModel,
           _optimized: true,
-          _split_gen: true
+          _split_gen: true,
+          _agents: true
         };
 
         console.log("[Pipeline] Split Generation Complete.");
+
+      } catch (genError: any) {
+        console.error("[Pipeline] Split Generation Failed:", genError);
+        // Fallback to simpler single call if split gen fails
+        res.status(500).json({ error: "Failed to optimize resume via split pipeline", details: genError.message });
+        return;
       }
-
-      // STEP 4: Verify the draft against the candidate's material and the evidence map;
-      // correct only what fails, and report what could not be corrected. Optional: when
-      // the models fail here, the report says so and the run carries on.
-      result = await verifyDraftResult(result, {
-        figureSourceText: candidateMaterialText(resumeText, brainDump, customPrompt, ...masterResumes),
-        evidenceText: candidateMaterialText(resumeText, brainDump, ...masterResumes),
-        material,
-        analysis: requirementAnalysis,
-        jobDescription,
-        targetRole,
-        jdKeywords,
-      }, async (prompt, purpose) => (await runner.call(prompt, purpose === "review" ? "analysis" : "writing")).text);
-
-      // Tokens per provider (OpenAI as `usage`, Gemini as `geminiUsage`) and every model that answered.
-      result.usage = runner.usage.openai;
-      result.geminiUsage = runner.usage.gemini;
-      result.modelsUsed = runner.modelsUsed();
-      logModelUsage(runner, "/api/v2/optimize");
-
-      // STEP 5: Deterministic budget, scoring and audit, then cache (Merged/Unified)
-      result = finalizeResumeResult(result, {
-        jobDescription,
-        originalResumeText: resumeText,
-        targetRole,
-        jdKeywords,
-        requirementAnalysis,
-        inputCoverage,
-        brainDump,
-        customPrompt,
-        bulletRules: budgetPlan.rules,
-        sourceRoles: optimizedInput.experience,
-        now: budgetOptions.now,
-        ...(trends ? { trends, trendEvidence: trendReferences } : {}),
-      });
+    }
+    
+    // STEP 5: Cache Result (Merged/Unified)
+    if (result) {
       Optimization.saveToCache(cacheKey, result);
       res.json(result);
+    }
     } catch (error: any) {
       console.error("V2 Optimization Error:", error);
-      if (isModelChainError(error)) {
-        // Every configured model failed: the browser stops instead of trying another path.
-        return res.status(502).json({ error: error.message, code: "MODEL_FAILED" });
-      }
       res.status(500).json({ error: "Failed to optimize resume via V2 pipeline", details: error.message });
     }
   });
@@ -1475,15 +1151,12 @@ async function startServer() {
         mode,
         audience,
         customPrompt,
-        brainDump,
-        bulletRules: requestedBulletRules,
-        modelCatalog
+        brainDump
       } = req.body;
   
       if (!resumeText || !jobDescription) {
         return res.status(400).json({ error: "Missing input" });
       }
-      const bulletRules = activeBulletRules(requestedBulletRules);
   
       // ===============================
       // 1. GET KEYS
@@ -1495,14 +1168,12 @@ async function startServer() {
       } else {
         console.warn("User has no API key configured. Using system key.");
       }
-      // The admins' Gemini models on the user's own key; the built-in ones on the system key.
-      const runner = new ModelRunner(requestCatalog(modelCatalog, { gemini: Boolean(keys?.gemini) }), "gemini", { gemini: geminiKey });
   
       // ===============================
       // 2. EXTRACTION
       // ===============================
-      const resumeExtraction = await Optimization.extractRelevantResumeData(resumeText, runner);
-      const jdExtraction = await Optimization.extractJDKeywords(jobDescription, runner);
+      const resumeExtraction = await Optimization.extractRelevantResumeData(resumeText, geminiKey);
+      const jdExtraction = await Optimization.extractJDKeywords(jobDescription, geminiKey);
   
       const resumeData = resumeExtraction?.data;
       const jdKeywords = jdExtraction?.data || [];
@@ -1515,33 +1186,20 @@ async function startServer() {
       const agentOutput = await runAgents({
         resume: resumeData,
         jd: jdKeywords
-      }, runner);
+      }, geminiKey);
   
       // ===============================
       // 4. ROLE GENERATION (NO DUP)
       // ===============================
-      const sourceExperience = agentOutput.hr.experience || resumeData.experience;
-      const budgetNow = new Date();
-      const writeRole = roleModelCall(runner);
       const roles = await generatePerRole(
-        sourceExperience,
+        agentOutput.hr.experience || resumeData.experience,
         geminiKey,
         targetCompany,
         targetRole,
         audience,
         mode,
         customPrompt,
-        brainDump,
-        // Planned from the full posting so the platform rule can read it.
-        bulletRules
-          ? {
-              budgetPlan: planBulletBudgets(sourceExperience, { now: budgetNow, rules: bulletRules, jobDescription }),
-              bulletRules,
-              skills: resumeData.skills,
-              now: budgetNow,
-              call: writeRole,
-            }
-          : { call: writeRole }
+        brainDump
       );
   
       // ===============================
@@ -1566,15 +1224,11 @@ async function startServer() {
       res.json({
         experience: cleaned,
         score: totalScore,
-        _engine: "multi-agent-v3",
-        modelsUsed: runner.modelsUsed()
+        _engine: "multi-agent-v3"
       });
   
     } catch (error: any) {
       console.error("V3 Error:", error);
-      if (isModelChainError(error)) {
-        return res.status(502).json({ error: error.message, code: "MODEL_FAILED" });
-      }
       res.status(500).json({
         error: "Optimization failed",
         details: error.message
@@ -1584,18 +1238,18 @@ async function startServer() {
 
   // API Endpoint for PDF Generation (Direct)
   app.post("/api/generate-pdf", async (req, res) => {
-    const { html, css, fonts, atsSafe, atsFont } = req.body;
-    await handlePdfGeneration(html, css, fonts, res, "Resume", undefined, atsSafe === true, ATS_FONTS.find(font => font === atsFont) || "Arial");
+    const { html, css, fonts } = req.body;
+    await handlePdfGeneration(html, css, fonts, res);
   });
 
   // API Endpoint to create a PDF session
   app.post("/api/pdf-session", (req, res) => {
-    const { html, css, fonts, title, scale, atsSafe, atsFont } = req.body;
+    const { html, css, fonts, title, scale } = req.body;
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
     const sessionId = uuidv4();
-    pdfSessions.set(sessionId, { html, css, fonts, title, scale, atsSafe: atsSafe === true, atsFont: ATS_FONTS.find(font => font === atsFont) || "Arial", timestamp: Date.now() });
+    pdfSessions.set(sessionId, { html, css, fonts, title, scale, timestamp: Date.now() });
     res.json({ sessionId });
   });
 
@@ -1680,7 +1334,7 @@ async function startServer() {
 
   // OMNI FEATURES: Vision Scanning
   app.post("/api/gemini/scan-resume", async (req, res) => {
-    const { imageData, mimeType, idToken, modelCatalog } = req.body;
+    const { imageData, mimeType, idToken } = req.body;
     if (!imageData) return res.status(400).json({ error: "Image data required" });
 
     try {
@@ -1689,25 +1343,19 @@ async function startServer() {
       if (!geminiKey && idToken) return res.status(401).json({ error: "Personal API key required. Please update your profile settings." });
       if (!geminiKey) return res.status(401).json({ error: "No API key found" });
 
-      // The admins' Gemini models on the user's own key; the built-in ones on the system key.
-      const runner = new ModelRunner(requestCatalog(modelCatalog, { gemini: Boolean(keys?.gemini) }), "gemini", { gemini: geminiKey });
-      const { value, model } = await runner.run("gemini", async (candidate) => {
-        const response = await runner.gemini().models.generateContent({
-          model: candidate,
-          contents: [{
-            parts: [
-              { inlineData: { data: imageData, mimeType: mimeType || "image/png" } },
-              { text: "ACT AS: Expert ATS Resume Parser. EXTRACT ALL DATA from this resume image. Output as a clean JSON object compatible with a resume builder. Fields should include: contact (name, email, phone, location, linkedin), summary, experience (title, company, location, dateRange, highlights array), education (degree, school, location, dateRange), skills (category if applicable, or flat array), and projects. If you cannot read certain parts, leave them null. Output ONLY the JSON." }
-            ]
-          }],
-          config: { responseMimeType: "application/json", ...runner.geminiThinking(candidate) }
-        });
-        return { data: JSON.parse(response.text || "{}"), usage: response.usageMetadata };
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [{
+          parts: [
+            { inlineData: { data: imageData, mimeType: mimeType || "image/png" } },
+            { text: "ACT AS: Expert ATS Resume Parser. EXTRACT ALL DATA from this resume image. Output as a clean JSON object compatible with a resume builder. Fields should include: contact (name, email, phone, location, linkedin), summary, experience (title, company, location, dateRange, highlights array), education (degree, school, location, dateRange), skills (category if applicable, or flat array), and projects. If you cannot read certain parts, leave them null. Output ONLY the JSON." }
+          ]
+        }],
+        config: { responseMimeType: "application/json" }
       });
 
-      logModelUsage(runner, "/api/gemini/scan-resume");
-      res.setHeader("X-AI-Model", model);
-      res.json(value.data);
+      res.json(JSON.parse(response.text || "{}"));
     } catch (error: any) {
       console.error("[Omni Scan] Error:", error);
       res.status(500).json({ error: error.message });
@@ -1781,35 +1429,28 @@ async function startServer() {
 
   // OMNI FEATURES: TTS Feedback
   app.post("/api/resume-feedback-audio", async (req, res) => {
-    const { text, idToken, modelCatalog } = req.body;
+    const { text, idToken } = req.body;
     try {
       const keys = await getApiKeys(idToken);
       const geminiKey = keys?.gemini || (!idToken ? process.env.GEMINI_API_KEY : "");
       if (!geminiKey && idToken) return res.status(401).json({ error: "Personal API key required. Please update your profile settings." });
       if (!geminiKey) return res.status(401).json({ error: "No API key found" });
 
-      // The admins' speech model on the user's own key; the built-in one on the system key.
-      const runner = new ModelRunner(requestCatalog(modelCatalog, { gemini: Boolean(keys?.gemini) }), "gemini", { gemini: geminiKey });
-      const speechModel = runner.catalog.speechModel;
-      const { value } = await runner.run("gemini", async (model) => {
-        const response = await runner.gemini().models.generateContent({
-          model,
-          contents: [{ parts: [{ text: `Provide professional, encouraging audio feedback on this resume critique: ${text}` }] }],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: "Zephyr" }
-              }
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-tts-preview',
+        contents: [{ parts: [{ text: `Provide professional, encouraging audio feedback on this resume critique: ${text}` }] }],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: "Zephyr" }
             }
           }
-        });
-        return { response, usage: response.usageMetadata };
-      }, [speechModel]);
+        }
+      });
 
-      logModelUsage(runner, "/api/resume-feedback-audio");
-      const audioData = value.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      res.setHeader("X-AI-Model", speechModel);
+      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       res.json({ audioData });
     } catch (error: any) {
       console.error("[TTS Feedback] Error:", error);
@@ -1826,7 +1467,7 @@ async function startServer() {
     }
     // Optional: delete session after retrieval to save memory
     // pdfSessions.delete(sessionId);
-    await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title, session.scale, session.atsSafe, session.atsFont);
+    await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title, session.scale);
   });
 
   // Counts pages in a Chrome-generated PDF. Chrome/Skia writes object dictionaries
@@ -1839,7 +1480,7 @@ async function startServer() {
     return matches ? matches.length : 0;
   }
 
-  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume", scale?: number, atsSafe = false, atsFont: AtsFont = "Arial") {
+  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume", scale?: number) {
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
@@ -1988,7 +1629,6 @@ async function startServer() {
                 -webkit-text-fill-color: currentColor !important;
                 -webkit-text-stroke: 0 !important;
               }
-              ${atsSafe ? atsSafePDFStyle(atsFont) : ''}
             </style>
           </head>
           <body>
@@ -2028,7 +1668,7 @@ async function startServer() {
         displayHeaderFooter: false,
         preferCSSPageSize: true,
         scale: s,
-        margin: { top: atsSafe ? '16mm' : '10mm', right: atsSafe ? '16mm' : '10mm', bottom: atsSafe ? '16mm' : '10mm', left: atsSafe ? '16mm' : '10mm' }
+        margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
       });
 
       // Full size first - most resumes already fit and need no shrinking at all.
@@ -2036,7 +1676,7 @@ async function startServer() {
       let pageCount = countPdfPages(pdfBuffer);
 
       // pageCount === 0 means the buffer couldn't be parsed; fail open and ship it.
-      if (!atsSafe && pageCount > MAX_PAGES) {
+      if (pageCount > MAX_PAGES) {
         let lo = MIN_SCALE;
         let hi = 1;
         let best: Uint8Array | null = null;

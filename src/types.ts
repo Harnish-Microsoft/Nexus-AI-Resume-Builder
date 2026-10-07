@@ -107,24 +107,10 @@ export interface SuitabilityResult {
 
 export interface StarStory {
   bullet: string;
-  /** Role and company the bullet belongs to, attached during STAR linkage. */
-  role?: string;
-  company?: string;
-  /** The one competency the story evidences, from the target company's framework. */
-  competency?: string;
-  /** The behavioral question this story answers. */
-  question?: string;
   situation: string;
   task: string;
-  /** Told in first person singular: what the candidate personally did. */
   action: string;
   result: string;
-  /** What the candidate took away or would do differently. */
-  learning?: string;
-  /** Probing questions an interviewer is likely to ask next. */
-  follow_ups?: string[];
-  /** Details the source does not supply, which the candidate must prepare. */
-  prep_gaps?: string[];
 }
 
 export interface TrajectoryAnalysis {

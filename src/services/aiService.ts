@@ -1,12 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { optimizeResume, getDecryptedKey } from "./geminiService";
-import { geminiThinkingConfig, withGeminiModels } from "./modelCatalog";
 
-/** Runs on the admins' Gemini models (Admin Dashboard > AI Models), like every other AI call. */
 export const optimizeFullResume = async (
   resumeData: any,
   jobDescription: string,
   targetRole: string,
+  aiEngine: string = "gemini-3-flash-preview",
   audience: string = "Enterprise",
   config?: any
 ) => {
@@ -21,12 +20,12 @@ export const optimizeFullResume = async (
         mode: 'gemini',
         geminiConfig: {
           engine: 'gemini',
-          model: '',
+          model: aiEngine,
           apiKey: ''
         },
         openaiConfig: {
           engine: 'openai',
-          model: '',
+          model: 'gpt-4o-mini',
           apiKey: ''
         }
       }
@@ -41,11 +40,12 @@ export const optimizeFullResume = async (
 
 export const improveTextWithAI = async (
   text: string, 
-  context?: { jobDescription?: string; targetRole?: string; apiKey?: string }
+  context?: { jobDescription?: string; targetRole?: string; aiEngine?: string; apiKey?: string }
 ) => {
   try {
     const apiKey = await getDecryptedKey(context?.apiKey || '');
     const ai = new GoogleGenAI({ apiKey });
+    const modelName = context?.aiEngine || "gemini-3-flash-preview";
     
     const prompt = `
       You are a professional resume strategist.
@@ -69,13 +69,10 @@ export const improveTextWithAI = async (
       ${context?.jobDescription ? `Job Description: ${context.jobDescription}` : ''}
     `;
 
-    const response = await withGeminiModels((model) =>
-      ai.models.generateContent({
-        model,
-        contents: [{ parts: [{ text: prompt }] }],
-        config: geminiThinkingConfig(model),
-      })
-    );
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: [{ parts: [{ text: prompt }] }],
+    });
 
     const result = response.text?.trim() || text;
     return result.replace(/Office IT [Cc]um Logistics/g, 'Officer IT cum Logistics');
@@ -88,11 +85,12 @@ export const improveTextWithAI = async (
 export const rewriteSectionWithAI = async (
   sectionType: string, 
   content: any, 
-  context?: { jobDescription?: string; targetRole?: string; apiKey?: string }
+  context?: { jobDescription?: string; targetRole?: string; aiEngine?: string; apiKey?: string }
 ) => {
   try {
     const apiKey = await getDecryptedKey(context?.apiKey || '');
     const ai = new GoogleGenAI({ apiKey });
+    const modelName = context?.aiEngine || "gemini-3-flash-preview";
 
     const prompt = `
       You are a professional resume strategist.
@@ -117,16 +115,13 @@ export const rewriteSectionWithAI = async (
       ${JSON.stringify(content, null, 2)}
     `;
 
-    const response = await withGeminiModels((model) =>
-      ai.models.generateContent({
-        model,
-        contents: [{ parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json",
-          ...geminiThinkingConfig(model),
-        }
-      })
-    );
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+      }
+    });
 
     const result = response.text?.trim();
     if (!result) return content;

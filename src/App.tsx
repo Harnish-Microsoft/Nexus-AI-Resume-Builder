@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useDeferredValue, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import { 
   FileText, 
@@ -53,8 +53,7 @@ import {
   Pin,
   PinOff,
   Menu,
-  Palette,
-  Settings
+  Palette
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -63,30 +62,16 @@ import { SortableSection } from './components/SortableSection';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { ResumeHealthScore } from './components/ResumeHealthScore';
-import { BulletRulesSettings } from './components/BulletRulesSettings';
-import { BulletBudgetReportCard } from './components/BulletBudgetReportCard';
-import { LinkedInTrendsCard } from './components/LinkedInTrendsCard';
-import { RequirementEvidenceCard } from './components/RequirementEvidenceCard';
-import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES, isAdminEmail } from './constants';
+import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING, TARGET_COMPANIES, BACKGROUND_THEMES } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
 import { ResumeData, SuitabilityResult, Certification, MasterResume } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeAudienceMix, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus, testModelConnection } from './services/geminiService';
-import { getModelCatalog, loadModelCatalog, useModelCatalog } from './services/modelCatalog';
-import { ENGINE_DESCRIPTIONS, ENGINE_LABELS, ENGINE_MODES, PROVIDER_LABELS, engineRoutes, isModelChainError, modelLabel, providerFor, providersOf } from './lib/aiModels';
-import type { EngineMode } from './lib/aiModels';
+import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig, autoSelectPlayerCoachRole, selectBestMasterResume, startDeepResearch, getDeepResearchStatus } from './services/geminiService';
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
-import type { ExportValidationReport } from './lib/exportValidation';
-import { documentFingerprint, exportReview, revalidateResume, validationIsCurrent, validationStamp } from './lib/resumeValidation';
-import type { ValidationContext } from './lib/resumeValidation';
-import { AtsResumePreview } from './components/AtsResumePreview';
-import { AtsCompatibilityCard } from './components/AtsCompatibilityCard';
-import { ATS_FONTS, canonicalResume, exportBlocks, resumeFileName, structuredResumeWarnings, typographyWarnings } from './lib/atsDocument';
-import type { AtsFont } from './lib/atsDocument';
-import { validateExportText } from './lib/exportValidation';
+import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
 const LinkedInImporter = lazy(() => import('./components/LinkedInImporter').then(m => ({ default: m.LinkedInImporter })));
 const ResumeJsonModal = lazy(() => import('./components/ResumeJsonModal').then(m => ({ default: m.ResumeJsonModal })));
@@ -120,48 +105,12 @@ import { TermsModal } from './components/TermsModal';
 import { formatCertification } from './lib/certifications';
 
 import defaultMasterResume from './services/master_resume.json';
-import { rankResumesByJd, type ResumeRankingResult } from './lib/matchScore';
-import { defaultBulletRules, normalizeBulletRules, type BulletRules } from './lib/bulletBudget';
-import { bulletRulesSummary } from './lib/bulletRulesPreview';
-import { curatedTrends } from './lib/linkedinTrends';
-import {
-  BLENDED_RESULT_KEY,
-  CUSTOM_AUDIENCE_ID,
-  MAX_BLENDED_AUDIENCES,
-  audienceHeadline,
-  postingFingerprint,
-  resolveAudienceMix,
-  type AudienceMix,
-} from './lib/audienceProfiles';
 
 // Lazy load heavy components for better initial performance
 const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ default: m.CareerTools })));
 const AdditionalTools = lazy(() => import('./components/AdditionalTools').then(m => ({ default: m.AdditionalTools })));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const ProfessionalWelcomePage = lazy(() => import('./components/ProfessionalWelcomePage').then(m => ({ default: m.ProfessionalWelcomePage })));
-
-const BULLET_RULES_STORAGE_KEY = 'nexus_bullet_rules';
-
-/** Saved bullet rules, or the pre-filled defaults when none are saved or they are unreadable. */
-function loadSavedBulletRules(): BulletRules {
-  try {
-    const saved = localStorage.getItem(BULLET_RULES_STORAGE_KEY);
-    return (saved && normalizeBulletRules(JSON.parse(saved))) || defaultBulletRules();
-  } catch {
-    return defaultBulletRules();
-  }
-}
-
-const LINKEDIN_TRENDS_STORAGE_KEY = 'nexus_follow_linkedin_trends';
-
-/** Whether to follow the curated LinkedIn trends: on unless the candidate switched it off. */
-function loadFollowLinkedInTrends(): boolean {
-  try {
-    return localStorage.getItem(LINKEDIN_TRENDS_STORAGE_KEY) !== 'false';
-  } catch {
-    return true;
-  }
-}
 
 const LoadingSpinner = () => (
   <div className="flex flex-col items-center justify-center p-12">
@@ -437,50 +386,12 @@ export default function App() {
       return saved || 'default';
   });
 
-  // 'auto' lets Optimize pick the master resume that already scores highest
-  // against the JD. Any deliberate pick by the user flips this to 'manual' so
-  // their choice is never silently overridden.
-  const [resumeSelectionMode, setResumeSelectionMode] = useState<'auto' | 'manual'>(() => {
-      const saved = localStorage.getItem('resumeSelectionMode');
-      return saved === 'manual' ? 'manual' : 'auto';
-  });
-  const [autoSelection, setAutoSelection] = useState<ResumeRankingResult | null>(null);
-
-  const setResumeSelectionModePersisted = (mode: 'auto' | 'manual') => {
-    setResumeSelectionMode(mode);
-    localStorage.setItem('resumeSelectionMode', mode);
-  };
-
-  // The candidate's bullet rules (recent roles, pinned companies, platform roles,
-  // page fit), saved on this device and with the profile.
-  const [bulletRules, setBulletRules] = useState<BulletRules>(loadSavedBulletRules);
-  useEffect(() => {
-    try {
-      localStorage.setItem(BULLET_RULES_STORAGE_KEY, JSON.stringify(bulletRules));
-    } catch {
-      // Storage full or unavailable: the rules still apply for this session.
-    }
-  }, [bulletRules]);
-
-  // Follow the curated LinkedIn trends for the target role. Only trending skills the
-  // candidate's own material supports are used; the rest are reported as gaps.
-  const [followLinkedInTrends, setFollowLinkedInTrends] = useState<boolean>(loadFollowLinkedInTrends);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LINKEDIN_TRENDS_STORAGE_KEY, String(followLinkedInTrends));
-    } catch {
-      // Storage unavailable: the choice still applies for this session.
-    }
-  }, [followLinkedInTrends]);
-
   const handleSetActiveResume = (id: string) => {
     setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === id })));
     setSelectedResumeId(id);
     const selected = masterResumes.find(r => r.id === id) || masterResumes[0];
     localStorage.setItem('selectedResumeId', id);
     setResumeText(JSON.stringify(selected.data, null, 2));
-    setResumeSelectionModePersisted('manual');
-    setAutoSelection(null);
   };
 
   const handleDuplicateResume = (id: string) => {
@@ -507,7 +418,7 @@ export default function App() {
   useEffect(() => {
     if (isInitialLoad.current) return;
     if (user) setHasUnsavedChanges(true);
-  }, [resumeText, customPrompt, bulletRules, followLinkedInTrends, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
+  }, [resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user, masterResumes]);
   const [jobDescription, setJobDescription] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
@@ -517,43 +428,13 @@ export default function App() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [targetRole, setTargetRole] = useState('');
   const [targetCompany, setTargetCompany] = useState('none');
-  const [brainDump, setBrainDump] = useState(() => localStorage.getItem('candidateBrainDump') || '');
-  const [exportValidation, setExportValidation] = useState<ExportValidationReport | null>(null);
-  const [atsSafeLayout, setAtsSafeLayout] = useState(() => localStorage.getItem('atsSafeLayout') !== 'false');
-  const [atsFont, setAtsFont] = useState<AtsFont>(() => {
-    const saved = localStorage.getItem('atsFont');
-    return ATS_FONTS.find(font => font === saved) || 'Arial';
-  });
-  useEffect(() => {
-    localStorage.setItem('atsSafeLayout', String(atsSafeLayout));
-    localStorage.setItem('atsFont', atsFont);
-    setExportValidation(null);
-  }, [atsSafeLayout, atsFont]);
-  useEffect(() => {
-    localStorage.setItem('candidateBrainDump', brainDump);
-  }, [brainDump]);
-  // The trend list the next run will follow: the same role fallback and posting as the
-  // optimize call. Deferred, so matching a long posting never slows typing.
-  const deferredJobDescription = useDeferredValue(jobDescription);
-  const trendPreview = useMemo(
-    () => (followLinkedInTrends ? curatedTrends(targetRole || 'Professional Candidate', deferredJobDescription) : null),
-    [followLinkedInTrends, targetRole, deferredJobDescription]
-  );
+  const [brainDump, setBrainDump] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [fastMode, setFastMode] = useState(false);
   const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const [customAudience, setCustomAudience] = useState('');
-  // The last Auto-Select and the posting it was made for. Its weights and reasons describe
-  // that posting only, so they stop applying as soon as the job description changes.
-  const [audienceSuggestion, setAudienceSuggestion] = useState<{ mix: AudienceMix; posting: string } | null>(null);
-  // Selected readers in priority order (first = primary), blended into ONE resume.
-  const audienceMix = useMemo(() => {
-    const suggested =
-      audienceSuggestion && audienceSuggestion.posting === postingFingerprint(jobDescription) ? audienceSuggestion.mix : null;
-    return resolveAudienceMix(selectedAudiences, { customLabel: customAudience, suggested });
-  }, [selectedAudiences, customAudience, audienceSuggestion, jobDescription]);
   const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
   const companyDropdownRef = useRef<HTMLDivElement>(null);
@@ -580,9 +461,7 @@ export default function App() {
   }, [versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void, title?: string, confirmLabel?: string } | null>(null);
-  const exportReviewPending = useRef(false);
-  const exportSnapshots = useRef(new WeakMap<OptimizationResult, string>());
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void } | null>(null);
 
   useEffect(() => {
     if (encryptedApiKey) {
@@ -593,11 +472,6 @@ export default function App() {
       }));
     }
   }, [encryptedApiKey]);
-
-  // The admins' AI models, shared by every user; the cached or built-in copy is used until it arrives.
-  useEffect(() => {
-    loadModelCatalog();
-  }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
@@ -636,13 +510,6 @@ export default function App() {
             }
             if (data.customPrompt) {
               setCustomPrompt(data.customPrompt);
-            }
-            const savedBulletRules = normalizeBulletRules(data.bulletRules);
-            if (savedBulletRules) {
-              setBulletRules(savedBulletRules);
-            }
-            if (typeof data.followLinkedInTrends === 'boolean') {
-              setFollowLinkedInTrends(data.followLinkedInTrends);
             }
             if (data.settings) {
               if (typeof data.settings.versioningEnabled === 'boolean') {
@@ -970,8 +837,6 @@ export default function App() {
         userId: user.uid,
         masterResumes: masterResumes, // Sync array of resumes
         customPrompt: customPrompt || "",
-        bulletRules,
-        followLinkedInTrends,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -1008,7 +873,7 @@ export default function App() {
     }, 2000); // Sync 2 seconds after last change
 
     return () => clearTimeout(timeoutId);
-  }, [hasUnsavedChanges, user, resumeText, customPrompt, bulletRules, followLinkedInTrends, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
+  }, [hasUnsavedChanges, user, resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, masterResumes]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -1073,8 +938,6 @@ export default function App() {
         encryptedApiKey: finalEncryptedKey,
         masterResumes: masterResumes,
         customPrompt: customPrompt,
-        bulletRules,
-        followLinkedInTrends,
         settings: {
           versioningEnabled,
           isAutosaveEnabled,
@@ -1152,76 +1015,6 @@ export default function App() {
     setCurrentOptimizingEngine
   } = useResumeStore();
 
-  const validationContext = useMemo<ValidationContext>(() => ({
-    resumeText, brainDump, jobDescription, targetRole, otherResumes: masterResumes,
-  }), [resumeText, brainDump, jobDescription, targetRole, masterResumes]);
-  const validationContextRef = useRef(validationContext);
-  validationContextRef.current = validationContext;
-
-  useEffect(() => {
-    if (isOptimizing || !activeAudience || !results[activeAudience]) return;
-    const current = results[activeAudience];
-    if (validationIsCurrent(current, validationContext)) return;
-    try {
-      const checked = revalidateResume(current, validationContext);
-      setResults(previous => previous[activeAudience] === current ? { ...previous, [activeAudience]: checked } : previous);
-      setExportValidation(null);
-    } catch (error) {
-      console.error('Resume revalidation failed:', error);
-      showToast('Resume checks could not be refreshed. Export will require successful revalidation.', 'error');
-    }
-  }, [results, activeAudience, validationContext, isOptimizing]);
-
-  const prepareExport = async (automatic = false) => {
-    if (isPiiMasked) throw new Error('Unmask candidate details before exporting a complete application resume.');
-    const store = useResumeStore.getState();
-    const audience = store.activeAudience;
-    const current = audience ? store.results[audience] : undefined;
-    if (!current) throw new Error('Optimize a resume before exporting so its claims can be reviewed.');
-    const checked = validationIsCurrent(current, validationContext) ? current : revalidateResume(current, validationContext);
-    if (checked !== current && audience) setResults(previous => ({ ...previous, [audience]: checked }));
-    const snapshot = canonicalResume(checked, profileOverridesRef.current);
-    exportSnapshots.current.set(snapshot, exportOptionsRef.current);
-    snapshot.content_validation = validationStamp(snapshot, validationContext, checked.content_validation?.status || 'checked_in_code');
-    const review = exportReview(snapshot);
-    review.advisories.push(...structuredResumeWarnings(snapshot));
-    if (!atsSafeLayout) review.concerns.push('Custom layout/font settings need visual review. ATS-safe layout uses readable text without shrinking to force a page count.');
-    if (review.advisories.length) showToast(`Eligibility/evidence advisory: ${review.advisories.join('; ')}`, 'info');
-    if (review.concerns.length) {
-      if (automatic) throw new Error('Drive autosave paused: review the current claims and use a manual export to acknowledge them.');
-      if (exportReviewPending.current || confirmDialog) throw new Error('Finish the open confirmation before starting another export.');
-      exportReviewPending.current = true;
-      const approved = await new Promise<boolean>(resolve => {
-        setConfirmDialog({
-          title: 'Review before export',
-          confirmLabel: 'Export anyway',
-          message: `${review.concerns.join('\n\n')}\n\n${review.advisories.length ? `Eligibility/evidence advisories (not export blockers):\n${review.advisories.join('\n')}\n\n` : ''}These issues are not resolved by exporting. Export this version anyway?`,
-          onConfirm: () => { exportReviewPending.current = false; setConfirmDialog(null); resolve(true); },
-          onCancel: () => { exportReviewPending.current = false; setConfirmDialog(null); resolve(false); },
-        });
-      });
-      if (!approved) return null;
-    }
-    const latest = useResumeStore.getState();
-    if (latest.activeAudience !== audience || documentFingerprint(latest.results[audience!]) !== documentFingerprint(checked) ||
-        documentFingerprint(canonicalResume(checked, profileOverridesRef.current)) !== documentFingerprint(snapshot) ||
-        !validationIsCurrent(checked, validationContextRef.current) ||
-        exportSnapshots.current.get(snapshot) !== exportOptionsRef.current) {
-      throw new Error('The resume changed during review. Export again to review the current version.');
-    }
-    return snapshot;
-  };
-
-  const assertExportCurrent = (reviewed: OptimizationResult) => {
-    const store = useResumeStore.getState();
-    const current = store.activeAudience ? store.results[store.activeAudience] : undefined;
-    if (!current || documentFingerprint(canonicalResume(current, profileOverridesRef.current)) !== documentFingerprint(reviewed) ||
-        !validationIsCurrent(reviewed, validationContextRef.current) ||
-        exportSnapshots.current.get(reviewed) !== exportOptionsRef.current) {
-      throw new Error('The resume or its evidence changed during export. Export again to review the current version.');
-    }
-  };
-
   const [linkedInUrl, setLinkedInUrl] = useState(() => localStorage.getItem('linkedInUrl') || '');
   const [linkedInPdfText, setLinkedInPdfText] = useState(() => localStorage.getItem('linkedInPdfText') || '');
   const [linkedInFileName, setLinkedInFileName] = useState(() => localStorage.getItem('linkedInFileName') || '');
@@ -1236,21 +1029,11 @@ export default function App() {
 
   // Profile Overrides
   const [profileName, setProfileName] = useState(() => localStorage.getItem('profileName') || '');
-  const [profileLocation, setProfileLocation] = useState(() => localStorage.getItem('profileLocation') || '');
+  const [profileLocation, setProfileLocation] = useState(() => localStorage.getItem('profileLocation') || 'Hyderabad, Telangana, India');
   const [profileEmail, setProfileEmail] = useState(() => localStorage.getItem('profileEmail') || '');
   const [profilePhone, setProfilePhone] = useState(() => localStorage.getItem('profilePhone') || '');
   const [profileLinkedIn, setProfileLinkedIn] = useState(() => localStorage.getItem('profileLinkedIn') || '');
   const [profileLinkedInText, setProfileLinkedInText] = useState(() => localStorage.getItem('profileLinkedInText') || '');
-  const profileOverridesRef = useRef<Partial<OptimizationResult["personal_info"]>>({});
-  profileOverridesRef.current = {
-    name: profileName, location: profileLocation, email: profileEmail, phone: profilePhone,
-    linkedin: profileLinkedIn, linkedinText: profileLinkedInText,
-  };
-  const activeResult = activeAudience ? results[activeAudience] : undefined;
-  // Memoized: a fresh clone on every render defeated every memo downstream of it.
-  const previewSnapshot = useMemo(() => activeResult
-    ? canonicalResume(activeResult, profileOverridesRef.current) : null,
-  [activeResult, profileName, profileLocation, profileEmail, profilePhone, profileLinkedIn, profileLinkedInText]);
   
   const [isResumePersistent, setIsResumePersistent] = useState(() => localStorage.getItem('isResumePersistent') !== 'false');
 
@@ -1388,57 +1171,17 @@ export default function App() {
   const [showInsights, setShowInsights] = useState(true);
   
   const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
-    // Holds each provider's key. The models come from the admins' catalog
-    // (Admin Dashboard > AI Models), never from here.
     gemini: { 
-      model: '', 
+      model: 'gemini-3.6-flash', 
       apiKey: (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : '') || '' 
     },
     openai: { 
-      model: '', 
+      model: 'gpt-4o', 
       apiKey: (typeof process !== 'undefined' ? process.env.OPENAI_API_KEY : '') || '' 
     },
     production: { model: 'auto', apiKey: '' }
   });
-  const modelCatalog = useModelCatalog();
-  // Starts on the admins' default engine and follows it until the user picks one this session.
-  const [selectedEngine, setSelectedEngine] = useState<EngineMode>(() => getModelCatalog().defaultEngine);
-  const engineChosenRef = useRef(false);
-  const chooseEngine = (mode: EngineMode) => {
-    engineChosenRef.current = true;
-    setSelectedEngine(mode);
-  };
-  useEffect(() => {
-    if (!engineChosenRef.current) setSelectedEngine(modelCatalog.defaultEngine);
-  }, [modelCatalog.defaultEngine]);
-  // The models the last optimization actually ran on, for the header.
-  const [lastRunModels, setLastRunModels] = useState<{ engine: EngineMode; fast: boolean; models: string[] } | null>(null);
-  const [adminTab, setAdminTab] = useState<'analytics' | 'models'>('analytics');
-
-  /** The engine and the primary model of each provider it uses, e.g. "Hybrid Gemini (Gemini 3.1 Pro)". */
-  const engineSummary = (mode: EngineMode) =>
-    `${ENGINE_LABELS[mode]} (${providersOf(mode).map(provider => modelLabel(modelCatalog, modelCatalog.providers[provider].primary)).join(' + ')})`;
-  /** The model that writes the resume under this engine. */
-  const writerModelLabel = (mode: EngineMode) =>
-    modelLabel(modelCatalog, modelCatalog.providers[providerFor(mode, 'writing')].primary);
-  const activeRoutes = engineRoutes(modelCatalog, selectedEngine);
-  const describeRoute = (route: (typeof activeRoutes)[number]) =>
-    `${route.work}: ${PROVIDER_LABELS[route.provider]} ${modelLabel(modelCatalog, route.primary) || '(none set)'}` +
-    (route.fallback ? `, fallback ${modelLabel(modelCatalog, route.fallback)}` : ', no fallback');
-  const lastRunForEngine = lastRunModels && lastRunModels.engine === selectedEngine ? lastRunModels : null;
-  // A fallback answered in a normal run: its primary failed. (Fast mode starts on the fallback by design.)
-  const fallbackUsed = !!lastRunForEngine && !lastRunForEngine.fast && lastRunForEngine.models.some(
-    model => activeRoutes.some(route => route.fallback === model) && !activeRoutes.some(route => route.primary === model)
-  );
-  const engineBadge = `${ENGINE_LABELS[selectedEngine]} · ${activeRoutes.map(route => modelLabel(modelCatalog, route.primary) || `no ${PROVIDER_LABELS[route.provider]} model`).join(' + ')}`;
-  const engineTooltip = [
-    ...activeRoutes.map(describeRoute),
-    ...(lastRunForEngine ? [`Last run used: ${lastRunForEngine.models.map(model => modelLabel(modelCatalog, model)).join(', ') || 'no AI model'}`] : []),
-  ].join('\n');
-  const openModelSettings = () => {
-    setAdminTab('models');
-    setShowAdminDashboard(true);
-  };
+  const [selectedEngine, setSelectedEngine] = useState<'gemini' | 'openai' | 'hybrid-gemini' | 'hybrid-openai'>('gemini');
   const [showEngineSettings, setShowEngineSettings] = useState(false);
   
   const getSectionStyle = (sectionId: string) => {
@@ -1557,8 +1300,6 @@ export default function App() {
         results,
         activeAudience,
         selectedAudiences,
-        customAudience,
-        audienceSuggestion,
         formatting: formattingState
       }
     };
@@ -1838,7 +1579,6 @@ export default function App() {
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [printScale, setPrintScale] = useState(1);
-  const exportOptionsRef = useRef('');
 
   // Sent with every PDF export. Shrink-to-fit for long resumes is applied by the
   // server through Chrome's native print scale (page.pdf({ scale })) instead of a
@@ -1912,7 +1652,6 @@ export default function App() {
   }, [resumeText, results, activeAudience, previewMode, zoom]);
   const [contentHeight, setContentHeight] = useState(1123);
   const [isPiiMasked, setIsPiiMasked] = useState(false);
-  exportOptionsRef.current = JSON.stringify(atsSafeLayout ? [true, atsFont, isPiiMasked] : [false, atsFont, isPiiMasked, previewMode, sectionStyles, printScale]);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
 
   // Autosave to Drive logic
@@ -1928,11 +1667,8 @@ export default function App() {
 
   const handleDriveAutosave = async () => {
     try {
-      const reviewed = await prepareExport(true);
-      if (!reviewed) return;
       const element = document.getElementById('resume-container');
       if (!element) return;
-      const expectedText = element.innerText;
 
       // Get all styles and imports
       const allStyles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
@@ -1950,9 +1686,9 @@ export default function App() {
 
       const role = targetRole || 'Resume';
       const company = companyName ? `-${companyName}` : '';
-      const driveFileName = resumeFileName(reviewed, role, 'pdf', companyName);
+      const driveFileName = `${role}${company}-Harnish Jariwala.pdf`;
       // Keep the company name out of the PDF /Title metadata - see downloadPDF.
-      const pdfTitle = `${reviewed.personal_info.name || 'Candidate'} - ${role}`;
+      const pdfTitle = `Harnish Jariwala - ${role}`;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -1962,8 +1698,6 @@ export default function App() {
           css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
           scale: printScale,
-          atsSafe: atsSafeLayout,
-          atsFont,
           fonts: customFonts.map(font => `
             @font-face {
               font-family: '${font.name}';
@@ -1984,43 +1718,33 @@ export default function App() {
       }
       
       const blob = await pdfResponse.blob();
-      await checkPDFExport(blob, expectedText, reviewed, element);
-      assertExportCurrent(reviewed);
-      if (element.innerText !== expectedText) throw new Error('The preview changed during autosave. Save again after reviewing it.');
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
         const base64data = (reader.result as string).split(',')[1];
-        try {
-          assertExportCurrent(reviewed);
-          const saveResponse = await fetch('/api/save-to-drive', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              pdfData: base64data,
-              fileName: driveFileName,
-              versioningEnabled: versioningEnabled,
-              accessToken: driveAccessToken,
-              parentFolderId: selectedDriveFolder?.id
-            })
-          });
         
-          const saveData = await saveResponse.json();
-          if (saveResponse.ok && saveData.success) {
-            showToast('Autosaved to Google Drive', 'success');
-            fetchDriveFiles();
-          } else {
-            if (saveData.error?.includes('AUTH_EXPIRED')) setDriveAccessToken(null);
-            throw new Error(saveData.error || 'Drive autosave failed.');
-          }
-        } catch (error) {
-          console.error('Drive autosave failed:', error);
-          showToast(error instanceof Error ? error.message : 'Drive autosave failed.', 'error');
+        const saveResponse = await fetch('/api/save-to-drive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pdfData: base64data,
+            fileName: driveFileName,
+            versioningEnabled: versioningEnabled,
+            accessToken: driveAccessToken,
+            parentFolderId: selectedDriveFolder?.id
+          })
+        });
+        
+        const saveData = await saveResponse.json();
+        if (saveResponse.ok && saveData.success) {
+          showToast('Autosaved to Google Drive', 'success');
+          fetchDriveFiles();
+        } else if (saveData.error && saveData.error.includes('AUTH_EXPIRED')) {
+          setDriveAccessToken(null);
         }
       };
     } catch (err) {
       console.error('Autosave error:', err);
-      showToast(err instanceof Error ? err.message : 'PDF autosave failed.', 'error');
     }
   };
 
@@ -2170,7 +1894,6 @@ export default function App() {
     setIsExtracting(true);
     setFileName(file.name);
     try {
-      const { extractTextFromPDFFile } = await import('./lib/pdfUtils');
       const text = await extractTextFromPDFFile(file);
       setResumeText(text);
     } catch (err) {
@@ -2185,7 +1908,6 @@ export default function App() {
     setIsExtractingLinkedIn(true);
     setLinkedInFileName(file.name);
     try {
-      const { extractTextFromPDFFile } = await import('./lib/pdfUtils');
       const text = await extractTextFromPDFFile(file);
       setLinkedInPdfText(text);
     } catch (err) {
@@ -2286,9 +2008,6 @@ export default function App() {
       setActiveAudience(Object.keys(version.data.results)[0]);
     }
     if (version.data.selectedAudiences) setSelectedAudiences(version.data.selectedAudiences);
-    // Older versions predate blending: without a stored suggestion the blend is treated as hand-picked.
-    setAudienceSuggestion(version.data.audienceSuggestion || null);
-    if (typeof version.data.customAudience === 'string') setCustomAudience(version.data.customAudience);
     if (version.data.targetRole) setTargetRole(version.data.targetRole);
     if (version.data.companyName) setCompanyName(version.data.companyName);
     if (version.data.formatting) {
@@ -2298,26 +2017,13 @@ export default function App() {
     navigate('/build');
   };
 
-  const applyAudienceMix = (mix: AudienceMix, forJobDescription: string) => {
-    const custom = mix.entries.find(entry => entry.id === CUSTOM_AUDIENCE_ID);
-    if (custom) setCustomAudience(custom.label);
-    setSelectedAudiences(mix.entries.map(entry => entry.id));
-    setAudienceSuggestion({ mix, posting: postingFingerprint(forJobDescription) });
-  };
-
   const handleAutoSelectAudiences = async () => {
-    if (!jobDescription) {
-      showToast('Paste a job description first - the audience is chosen from it.', 'info');
-      return;
-    }
+    if (!jobDescription) return;
     setIsAutoSelectingAudiences(true);
     try {
-      const mix = await analyzeAudienceMix(jobDescription, targetRole, getRouterConfig());
-      applyAudienceMix(mix, jobDescription);
-      showToast(
-        `${mix.source === 'ai' ? 'Blending' : 'Blending (keyword match - AI unavailable)'}: ${audienceHeadline(mix)}`,
-        'success'
-      );
+      const bestAudiences = await analyzeBestAudiences(jobDescription, targetRole, getRouterConfig());
+      setSelectedAudiences(bestAudiences);
+      showToast('Audience auto-selected!', 'success');
     } catch (e) {
       console.error(e);
       showToast('Failed to auto-select audience', 'error');
@@ -2327,24 +2033,14 @@ export default function App() {
   };
 
   const toggleAudience = (id: string) => {
-    if (selectedAudiences.includes(id)) {
-      setSelectedAudiences(prev => prev.filter(a => a !== id));
-      return;
-    }
-    if (selectedAudiences.length >= MAX_BLENDED_AUDIENCES) {
-      showToast(`Blend up to ${MAX_BLENDED_AUDIENCES} audiences into one resume. Remove one first.`, 'info');
-      return;
-    }
-    setSelectedAudiences(prev => [...prev, id]);
-  };
-
-  const makePrimaryAudience = (id: string) => {
-    setSelectedAudiences(prev => (prev.includes(id) ? [id, ...prev.filter(a => a !== id)] : prev));
+    setSelectedAudiences(prev => 
+      prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
+    );
   };
 
   const getRouterConfig = (): RouterConfig => {
     return {
-      mode: selectedEngine,
+      mode: selectedEngine as any,
       geminiConfig: {
         engine: 'gemini',
         model: engineConfig.gemini.model,
@@ -2517,9 +2213,8 @@ export default function App() {
     // but the backend might handle them. However, we should warn if no key was actually decrypted and no fallback exists.
     
     // Final check for missing API keys with the specific requested message
-    // Hybrid OpenAI needs both: Gemini reads and checks, OpenAI writes.
-    const isGeminiNeeded = providersOf(selectedEngine).includes('gemini');
-    const isOpenAINeeded = providersOf(selectedEngine).includes('openai');
+    const isGeminiNeeded = selectedEngine === 'gemini' || selectedEngine === 'hybrid-gemini';
+    const isOpenAINeeded = selectedEngine === 'openai' || selectedEngine === 'hybrid-openai';
     
     const hasGKey = !!geminiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
     const hasOKey = !!openaiApiKey || (!!encryptedApiKey && encryptedApiKey.includes(':'));
@@ -2549,18 +2244,25 @@ export default function App() {
       return;
     }
 
-    let runAudienceMix = audienceMix;
-    console.log("[Nexus AI] Audience blend:", runAudienceMix ? audienceHeadline(runAudienceMix) : "(none selected)");
+    let currentAudiences = [...selectedAudiences];
+    console.log("[Nexus AI] Current Audiences:", currentAudiences);
 
-    if (!runAudienceMix) {
-      console.log("[Nexus AI] No audiences selected, choosing a blend from the JD...");
+    if (currentAudiences.length === 0) {
+      console.log("[Nexus AI] No audiences selected, analyzing best audiences...");
       setIsOptimizing(true);
       
       try {
-        const mix = await analyzeAudienceMix(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
-        console.log("[Nexus AI] Audience blend chosen:", audienceHeadline(mix));
-        applyAudienceMix(mix, jobDescription);
-        runAudienceMix = mix;
+        const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
+        console.log("[Nexus AI] Best Audiences matched:", bestAudiences);
+        if (bestAudiences && bestAudiences.length > 0) {
+          setSelectedAudiences(bestAudiences);
+          currentAudiences = bestAudiences;
+        } else {
+          console.warn("[Nexus AI] Could not auto-select audience");
+          setError('Could not auto-select audience. Please select at least one manually.');
+          setIsOptimizing(false);
+          return;
+        }
       } catch (err) {
         console.error("[Nexus AI] Auto-selection failed:", err);
         setError('Auto-selection failed. Please select an audience manually.');
@@ -2571,9 +2273,7 @@ export default function App() {
       setIsOptimizing(true);
     }
 
-    console.log("[Nexus AI] Optimization state active. Writing one resume for", runAudienceMix.entries.length, "blended audience(s)");
-    const blend: AudienceMix = runAudienceMix;
-    const blendHeadline = audienceHeadline(blend);
+    console.log("[Nexus AI] Optimization state active. Proceeding with", currentAudiences.length, "audiences");
     setCurrentOptimizingEngine(selectedEngine);
     setResults({});
     setActiveAudience(null);
@@ -2585,14 +2285,20 @@ export default function App() {
     progressIntervalRef.current = setInterval(() => {
       setOptimizationProgress(prev => {
         if (prev < 90) {
-          // Close ~1% of the distance to 90 every 100ms, applied in 500ms steps to cut re-renders
-          return prev + (90 - prev) * 0.049;
+          // Move much slower: close 1% of the distance to 90 every 100ms
+          return prev + (90 - prev) * 0.01;
         }
         return prev;
       });
-    }, 500);
+    }, 100);
     
-    const engineName = engineSummary(selectedEngine);
+    const engineNameMap: Record<string, string> = {
+      'gemini': 'Google Gemini 2.0',
+      'openai': 'OpenAI GPT-4o',
+      'hybrid-gemini': 'Hybrid Strategy (Gemini + Flash)',
+      'hybrid-openai': 'Hybrid Premium (OpenAI + Gemini Flash)'
+    };
+    const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
     setOptimizationStatus(`Initializing ${engineName}...`);
 
     const controller = new AbortController();
@@ -2604,50 +2310,6 @@ export default function App() {
     // here would silently re-optimize the OLD text and discard the skills that
     // were just added.
     let finalResumeText = overrideResumeText || resumeText || "";
-
-    // Auto-select the master resume that already scores highest against this JD.
-    // Ranking is deterministic and local - no model call.
-    //
-    // Skipped whenever the text in the editor is not simply the currently
-    // selected master resume: a caller-supplied document, an uploaded/imported
-    // file, a restored version or a hand-edit all represent a deliberate choice
-    // of document, and swapping a master resume in would destroy it.
-    const selectedMaster = masterResumes.find(r => r.id === selectedResumeId);
-    const editorHoldsSelectedMaster =
-      !!selectedMaster && resumeText === JSON.stringify(selectedMaster.data, null, 2);
-
-    let selection: ResumeRankingResult | null = null;
-    if (
-      !overrideResumeText &&
-      resumeSelectionMode === 'auto' &&
-      editorHoldsSelectedMaster &&
-      masterResumes.length > 1
-    ) {
-      selection = rankResumesByJd({
-        jobDescription,
-        targetRole,
-        resumes: masterResumes.map(r => ({ id: r.id, name: r.name, content: r.data })),
-      });
-
-      if (selection) {
-        const winner = masterResumes.find(r => r.id === selection!.winner.id);
-        if (winner) {
-          finalResumeText = JSON.stringify(winner.data, null, 2);
-          setSelectedResumeId(winner.id);
-          localStorage.setItem('selectedResumeId', winner.id);
-          setMasterResumes(prev => prev.map(r => ({ ...r, isActive: r.id === winner.id })));
-          setResumeText(finalResumeText);
-          console.log(
-            `[Nexus AI] Auto-selected "${winner.name}" (${selection.winner.score}%)` +
-            (selection.runnerUp ? ` over "${selection.runnerUp.name}" (${selection.runnerUp.score}%)` : '')
-          );
-        } else {
-          selection = null;
-        }
-      }
-    }
-    // A thin JD returns null; keep whatever the user already had rather than guess.
-    setAutoSelection(selection);
 
     try {
       const finalTargetRole = targetRole || "Professional Candidate";
@@ -2663,75 +2325,122 @@ export default function App() {
       }
       
       const routerConfig = getRouterConfig();
+      let completedAudiences = 0;
+      const totalAudiences = currentAudiences.length;
+      const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
 
-      // ONE run for the whole blend: every selected reader shapes the same document
-      // through a weighted brief, instead of one full optimization per audience.
-      setOptimizationStatus(`Writing one resume for: \n${blendHeadline}`);
-
-      // Progress reporting for hybrid mode
-      if (selectedEngine.includes('hybrid')) {
-        setTimeout(() => {
-          if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming...`);
-        }, 4000);
-        setTimeout(() => {
-          if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${writerModelLabel(selectedEngine)}...`);
-        }, 8000);
-      }
-
-      const data = await optimizeResume(
-        finalResumeText, 
-        jobDescription, 
-        finalTargetRole, 
-        finalMode, 
-        blendHeadline, 
-        routerConfig, 
-        linkedInUrl, 
-        linkedInPdfText, 
-        jobUrl, 
-        fastMode, 
-        recruiterSimulationMode,
-        customPrompt,
-        selectedEngine.includes('hybrid') ? selectedEngine : undefined,
-        targetCompany,
-        brainDump,
-        blend,
-        { bulletRules, linkedinTrends: followLinkedInTrends }
+      // Set a combined status for all audiences to avoid rapid overwriting
+      const allAudienceLabels = currentAudiences.map(audienceId => 
+        audienceId === 'custom' 
+          ? (customAudience || 'Custom Persona') 
+          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId)
       );
+      setOptimizationStatus(`Optimizing for: \n${allAudienceLabels.join(', ')}`);
 
-      setOptimizationProgress(95);
-
-      // Update token usage, per provider: under Hybrid OpenAI, Gemini read and checked and OpenAI wrote.
-      for (const provider of ['gemini', 'openai'] as const) {
-        const usage = data._usageByProvider?.[provider];
-        if (!usage) continue;
-        const inputDelta = usage.promptTokenCount || 0;
-        const outputDelta = usage.candidatesTokenCount || 0;
-        setTokenUsage(prev => ({
-          ...prev,
-          [provider]: {
-            input: (prev[provider].input || 0) + inputDelta,
-            output: (prev[provider].output || 0) + outputDelta
+      // Run all audience optimizations in parallel
+      const optimizationPromises = currentAudiences.map(async (audienceId, index) => {
+        const audienceLabel = audienceId === 'custom' 
+          ? (customAudience || 'Custom Persona') 
+          : (AUDIENCES.find(a => a.id === audienceId)?.label || audienceId);
+        
+        // Progress reporting for hybrid mode (only set by first one to prevent overlap)
+        if (selectedEngine.includes('hybrid') && index === 0) {
+          setTimeout(() => {
+            if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming for ${allAudienceLabels.length} audiences...`);
+          }, 4000);
+          setTimeout(() => {
+            if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
+          }, 8000);
+        }
+        
+        const data = await optimizeResume(
+          finalResumeText, 
+          jobDescription, 
+          finalTargetRole, 
+          finalMode, 
+          audienceLabel, 
+          routerConfig, 
+          linkedInUrl, 
+          linkedInPdfText, 
+          jobUrl, 
+          fastMode, 
+          recruiterSimulationMode,
+          customPrompt,
+          selectedEngine.includes('hybrid') ? selectedEngine : undefined,
+          targetCompany,
+          brainDump
+        );
+        
+        completedAudiences++;
+        setOptimizationProgress(Math.min(95, (completedAudiences / currentAudiences.length) * 100));
+        
+        // Update token usage
+        if (data._engine === 'hybrid-v2') {
+          // Handle V2 Pipeline (OpenAI + Gemini)
+          if (data._usage) {
+            const openaiInput = data._usage.promptTokenCount || 0;
+            const openaiOutput = data._usage.candidatesTokenCount || 0;
+            setTokenUsage(prev => ({
+              ...prev,
+              openai: {
+                input: (prev.openai.input || 0) + openaiInput,
+                output: (prev.openai.output || 0) + openaiOutput
+              }
+            }));
+            syncTokenUsage('openai', openaiInput, openaiOutput);
           }
-        }));
-        syncTokenUsage(provider, inputDelta, outputDelta);
-      }
+          if (data._geminiUsage) {
+            const geminiInput = data._geminiUsage.promptTokenCount || 0;
+            const geminiOutput = data._geminiUsage.candidatesTokenCount || 0;
+            setTokenUsage(prev => ({
+              ...prev,
+              gemini: {
+                input: (prev.gemini.input || 0) + geminiInput,
+                output: (prev.gemini.output || 0) + geminiOutput
+              }
+            }));
+            syncTokenUsage('gemini', geminiInput, geminiOutput);
+          }
+        } else if (data._usage && data._engine) {
+          // Handle Legacy Pipeline
+          const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
+          const inputDelta = data._usage!.promptTokenCount || 0;
+          const outputDelta = data._usage!.candidatesTokenCount || 0;
+          
+          setTokenUsage(prev => ({
+            ...prev,
+            [engine]: {
+              input: (prev[engine].input || 0) + inputDelta,
+              output: (prev[engine].output || 0) + outputDelta
+            }
+          }));
+          
+          syncTokenUsage(engine, inputDelta, outputDelta);
+        }
 
-      // The models this optimization's own calls ran on, reported with its result.
-      const usedModels: string[] = Array.isArray(data._models) ? data._models : [];
-      setLastRunModels({ engine: selectedEngine, fast: fastMode, models: usedModels });
+        // Update results
+        setResults(prev => {
+          const newResults = { 
+            ...prev, 
+            [audienceId]: { 
+              ...data, 
+              _engine: selectedEngine, 
+              _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
+            } as any
+          };
+          
+          if (!activeAudience) {
+            setActiveAudience(audienceId);
+          }
+          
+          return newResults;
+        });
 
-      setResults({
-        [BLENDED_RESULT_KEY]: {
-          ...data,
-          content_validation: validationStamp(data, validationContext, 'generated'),
-          _engine: selectedEngine,
-          _model: usedModels.map(model => modelLabel(modelCatalog, model)).join(', '),
-          _models: usedModels
-        } as any
+        return data;
       });
-      setActiveAudience(BLENDED_RESULT_KEY);
 
-      const matchScore = data?.match_score || 0;
+      const optimizationResults = await Promise.all(optimizationPromises);
+      const matchScore = optimizationResults[0]?.match_score || 0;
       
       // Save version immediately after optimization
       saveResumeVersion(`Optimized - ${companyName} - ${new Date().toLocaleString()}`);
@@ -2785,9 +2494,6 @@ export default function App() {
         const errorMessage = err.message || 'Failed to optimize resume. Please try again.';
         if (errorMessage.includes('DECRYPTION_FAILED')) {
           setError('Your session or encryption key has changed. Please go to the Profile tab and re-save your API keys.');
-        } else if (isModelChainError(err)) {
-          // Names each model that failed and why; an admin can change them in Admin Dashboard > AI Models.
-          setError(`The AI models failed, so the run stopped. ${errorMessage}`);
         } else {
           setError(errorMessage);
         }
@@ -3012,58 +2718,27 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     }
   };
 
-  const checkPDFExport = async (blob: Blob, expectedText: string, snapshot: OptimizationResult, element: HTMLElement) => {
-    setExportValidation(null);
-    const sourceText = exportBlocks(snapshot).filter(block => block.kind !== 'heading').map(block => block.text).join('\n');
-    const previewReport = validateExportText(sourceText, [expectedText]);
-    if (previewReport.errors.length) {
-      setExportValidation(previewReport);
-      throw new Error(`Source-to-preview validation failed: ${previewReport.errors[0]}. Switch to ATS-safe layout or restore missing content.`);
-    }
-    const { validatePDFExport } = await import('./lib/pdfUtils');
-    const report = await validatePDFExport(blob, expectedText);
-    if (blob.size > 2_500_000) report.warnings.push("PDF exceeds Greenhouse's documented 2.5 MB parsing limit; check the target portal.");
-    const samples = Array.from(element.querySelectorAll('p, li, .resume-bullet-text')).filter(node => node.textContent?.trim());
-    for (const sample of samples) {
-      const style = getComputedStyle(sample);
-      const sizePx = parseFloat(style.fontSize);
-      const spacing = style.letterSpacing === 'normal' ? 0 : parseFloat(style.letterSpacing) / sizePx;
-      const warnings = typographyWarnings(style.fontFamily, sizePx * 0.75, parseFloat(style.lineHeight) / sizePx, spacing);
-      warnings.forEach(warning => { if (!report.warnings.includes(warning)) report.warnings.push(warning); });
-    }
-    setExportValidation(report);
-    if (report.errors.length) {
-      throw new Error(`PDF validation failed. ${report.errors[0]} Fix the layout before exporting.`);
-    }
-    if (report.warnings.length) showToast(report.warnings.join(' '), 'info');
-    return report;
-  };
-
   const downloadPDF = async () => {
-    let reviewed: OptimizationResult;
-    try {
-      reviewed = await prepareExport();
-      if (!reviewed) return;
-    } catch (error) {
-      console.error('Pre-export review failed:', error);
-      showToast(error instanceof Error ? error.message : 'Resume export checks failed.', 'error');
-      return;
-    }
     const element = document.getElementById('resume-container');
     if (!element) return;
+
+    // Save version automatically
+    saveResumeVersion();
+
+    // Sync to Job Tracker as Applied
+    syncJobTrackerApplied();
+
 
     // Temporarily clear active section for clean PDF
     const previousActiveSection = activeSection;
     formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: null });
     setIsDownloading(true);
-    let pdfSucceeded = false;
 
     try {
       // Small delay to allow React to re-render without highlights
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       const targetOuterHTML = element.outerHTML;
-      const expectedText = element.innerText;
 
       // Show the loader UI overlay
       setOptimizationProgress(0);
@@ -3115,15 +2790,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       const role = targetRole || 'Resume';
       const companyStr = companyName ? `-${companyName}` : '';
-      const driveFileName = resumeFileName(reviewed, role, 'pdf', companyName);
-      const downloadFileName = resumeFileName(reviewed, role, 'pdf');
+      const driveFileName = `${role}${companyStr}-Harnish Jariwala.pdf`;
+      const downloadFileName = `${role}-Harnish Jariwala.pdf`;
       // The company name is deliberately kept OUT of the PDF's Title metadata.
       // Chrome writes document.title into the PDF /Title field, which every reader
       // shows in its title bar and document properties. Embedding the target
       // company there means a recruiter at the next company opens the file and
       // sees it was tailored for a competitor. The company still goes in the
       // Google Drive filename, which is private to the user.
-      const pdfTitle = `${reviewed.personal_info.name || 'Candidate'} - ${role}`;
+      const pdfTitle = `Harnish Jariwala - ${role}`;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -3135,8 +2810,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           css: allStyles + '\n' + scaleCSS,
           title: pdfTitle,
           scale: printScale,
-          atsSafe: atsSafeLayout,
-          atsFont,
           fonts: customFonts.map(font => `
             @font-face {
               font-family: '${font.name}';
@@ -3172,9 +2845,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       }
       
       const blob = await pdfResponse.blob();
-      await checkPDFExport(blob, expectedText, reviewed, element);
-      assertExportCurrent(reviewed);
-      if (element.innerText !== expectedText) throw new Error('The preview changed during export. Export again after reviewing it.');
 
       // Convert blob to base64 for Drive saving
       const reader = new FileReader();
@@ -3184,7 +2854,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         
         // Save to Google Drive
         try {
-          assertExportCurrent(reviewed);
           const driveSaveResponse = await fetch('/api/save-to-drive', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3219,10 +2888,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
       // Trigger download
       saveAs(blob, downloadFileName);
-      saveResumeVersion();
-      syncJobTrackerApplied();
-      pdfSucceeded = true;
-      showToast('PDF downloaded; text and reading order checked.', 'success');
+      showToast('PDF Downloaded successfully!', 'success');
 
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
@@ -3233,7 +2899,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         progressIntervalRef.current = null;
       }
       setOptimizationProgress(100);
-      setOptimizationStatus(pdfSucceeded ? "PDF Generated Successfully!" : "PDF Export Failed");
+      setOptimizationStatus("PDF Generated Successfully!");
       
       setTimeout(() => {
         setIsOptimizing(false);
@@ -3247,14 +2913,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   };
 
   const handleDownloadDOCX = async () => {
-    try {
-      const res = await prepareExport();
-      if (!res) return;
-      if (await downloadDOCX(res, targetRole, companyName, showToast, () => assertExportCurrent(res), atsFont)) syncJobTrackerApplied();
-    } catch (error) {
-      console.error('DOCX pre-export review failed:', error);
-      showToast(error instanceof Error ? error.message : 'Resume export checks failed.', 'error');
-    }
+    const res = results[activeAudience!] || data;
+    await downloadDOCX(res, targetRole, companyName, showToast);
+    
+    // Sync to Job Tracker as Applied
+    syncJobTrackerApplied();
   };
 
   const copyToClipboard = (text: string) => {
@@ -3273,7 +2936,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     setSuitabilityResult(null);
     setOptimizationProgress(0);
     setSelectedAudiences(['microsoft']);
-    setAudienceSuggestion(null);
     
     // Clear the backend cache
     fetch('/api/cache/clear', { method: 'POST' }).catch(err => console.error("Failed to clear backend cache", err));
@@ -3344,7 +3006,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <h2 className="font-bold border-b border-black/10 mb-1 uppercase tracking-[0.05em]" style={{ fontSize: '13pt' }}>Projects</h2>
             {res.projects.map((proj: any, i: number) => (
               <div key={i} className="mb-1.5">
-                <div className="font-bold" style={{ fontSize: '11.5pt' }}>{typeof proj === 'string' ? proj : proj.title}</div>
+                <div className="font-bold" style={{ fontSize: '11.5' }}>{typeof proj === 'string' ? proj : proj.title}</div>
                 {typeof proj !== 'string' && proj.description && (
                   <div className="flex gap-2">
                     <span className="shrink-0 text-[10.5pt]">•</span>
@@ -3661,15 +3323,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   };
 
   if (showAdminDashboard) {
-    return (
-      <AdminDashboard
-        onBack={() => setShowAdminDashboard(false)}
-        isDarkMode={isDarkMode}
-        initialTab={adminTab}
-        canEditModels={isAdminEmail(user?.email)}
-        onTestModel={(provider, model, thinking) => testModelConnection(provider, model, getRouterConfig(), thinking)}
-      />
-    );
+    return <AdminDashboard onBack={() => setShowAdminDashboard(false)} isDarkMode={isDarkMode} />;
   }
 
   if (!isAuthReady) {
@@ -3684,7 +3338,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   if (!user) {
     return (
       <Suspense fallback={
-        <div className={`h-dvh flex flex-col items-center justify-center px-4 text-center ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-slate-100 text-slate-900'}`}>
+        <div 
+          className={`h-screen flex flex-col items-center justify-center ${isDarkMode ? 'text-white' : 'text-neutral-900'} relative`}
+          style={{ backgroundImage: 'var(--glass-bg-image)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+        >
+          <div className="absolute inset-0 bg-black/20 pointer-events-none" />
+          <div className="liquid-container z-0 opacity-30">
+            <div className="liquid-blob w-[110vw] h-[110vh] bg-blue-500/20 -top-1/2 -left-1/4" />
+          </div>
           <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
           <h2 className="text-xl font-bold tracking-tighter opacity-50 uppercase">Loading Welcome Suite...</h2>
         </div>
@@ -3741,8 +3402,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             onConfirm={confirmDialog.onConfirm} 
             onCancel={confirmDialog.onCancel} 
             isDarkMode={isDarkMode} 
-            title={confirmDialog.title}
-            confirmLabel={confirmDialog.confirmLabel}
           />
         )}
 
@@ -3847,8 +3506,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   <button onClick={resetLayout} className={`p-2 hidden md:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Reset Layout">
                       <Maximize className="w-[18px] h-[18px]" />
                   </button>
-                  {isAdminEmail(user?.email) && (
-                      <button onClick={() => { setAdminTab('analytics'); setShowAdminDashboard(true); }} className={`p-1.5 sm:p-2 hidden sm:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Admin Dashboard">
+                  {(user?.email === 'param_jariwala@yahoo.com' || user?.email === 'hackerharnish@gmail.com') && (
+                      <button onClick={() => setShowAdminDashboard(true)} className={`p-1.5 sm:p-2 hidden sm:flex rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`} title="Admin Dashboard">
                           <BarChart3 className="w-[18px] h-[18px]" />
                       </button>
                   )}
@@ -3921,20 +3580,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </AnimatePresence>
                   </div>
                   <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0</span>
-                  <div
-                    role={isAdminEmail(user?.email) ? 'button' : undefined}
-                    tabIndex={isAdminEmail(user?.email) ? 0 : undefined}
-                    onClick={isAdminEmail(user?.email) ? openModelSettings : undefined}
-                    onKeyDown={isAdminEmail(user?.email) ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModelSettings(); } } : undefined}
-                    className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-bold uppercase ${
-                      fallbackUsed ? 'border-amber-500/30 bg-amber-500/10 text-amber-500' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 animate-pulse'
-                    } ${isAdminEmail(user?.email) ? 'cursor-pointer hover:bg-emerald-500/20' : ''}`}
-                    title={isAdminEmail(user?.email) ? `${engineTooltip}\n\nClick to manage AI models` : engineTooltip}
-                  >
+                  <div className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-500 animate-pulse`}>
                       <Cpu className="w-3 h-3" />
-                      <span>{engineBadge}</span>
-                      {fallbackUsed && <span className="ml-1 px-1.5 rounded bg-amber-500/20">Fallback used</span>}
-                      {isAdminEmail(user?.email) && <Settings className="w-3 h-3 ml-0.5 opacity-70" />}
+                      <span>{engineConfig.gemini.model === 'gemini-3.1-pro-preview' ? 'GEMINI 3.1 PRO (MULTI-FALLBACK)' : 'GEMINI 3.5 FLASH (MULTI-FALLBACK)'}</span>
                   </div>
                   <Link to="/profile" className={`flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full border transition-colors ${isDarkMode ? 'border-white/20 hover:border-emerald-500/50 bg-neutral-900' : 'border-black/10 hover:border-emerald-500/50 bg-white'}`}>
                     {user ? (
@@ -4040,342 +3688,29 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           {/* Analysis Content */}
                           <div className="space-y-4">
                             <h3 className="text-xs font-bold uppercase tracking-widest text-white/80">2. Job Analysis</h3>
-                            {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (() => {
-                              const result = results[activeAudience];
-                              const breakdown = result.score_breakdown;
-                              const optimizedBreakdown = breakdown?.optimized;
-                              const baselineBreakdown = breakdown?.baseline;
-                              const readiness = optimizedBreakdown?.readiness;
-                              const required = optimizedBreakdown?.required;
-                              const preferred = optimizedBreakdown?.preferred;
-                              const readinessTone: Record<string, string> = {
-                                strong: 'bg-emerald-500/15 text-emerald-500',
-                                good: 'bg-sky-500/15 text-sky-500',
-                                partial: 'bg-amber-500/15 text-amber-500',
-                                low: 'bg-rose-500/15 text-rose-500',
-                              };
-                              const tierRow = (label: string, hint: string, now?: { total: number; matched: string[]; partial: string[] }, before?: { matched: string[] }) =>
-                                now && now.total > 0 ? (
-                                  <div className="flex items-center justify-between gap-3 text-[11px]">
-                                    <span className="font-bold truncate" title={hint}>{label}</span>
-                                    <span className="font-bold tabular-nums whitespace-nowrap">
-                                      {before && before.matched.length !== now.matched.length && (
-                                        <span className="opacity-40 mr-1">{before.matched.length} →</span>
-                                      )}
-                                      <span className="text-emerald-500">{now.matched.length}</span>
-                                      <span className="opacity-60"> / {now.total}</span>
-                                      {now.partial.length > 0 && <span className="opacity-50"> (+{now.partial.length} partial)</span>}
-                                    </span>
-                                  </div>
-                                ) : null;
-                              const missingRequired = required ? required.missing : (optimizedBreakdown?.missing || []);
-                              const missingPreferred = preferred ? preferred.missing : [];
-                              return (
-                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
-                                <div className="flex items-center justify-between">
-                                  <div>
-                                    <div className="flex items-center gap-2">
-                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Composite JD Alignment</h3>
-                                      {readiness && (
-                                        <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${readinessTone[readiness.level] || ''}`} title={readiness.guidance}>
-                                          {readiness.label}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>
-                                      {breakdown
-                                        ? `Combined wording coverage, experience depth, role vocabulary and tenure fit (${breakdown.jd_keywords_evaluated} terms). The separate 80% target measures source-supported keywords only.`
-                                        : 'Legacy composite score; not an ATS pass or hiring probability.'}
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center gap-3">
-                                    {result.baseline_score !== undefined && (
-                                      <div className="text-right">
-                                        <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
-                                        <span className={`font-bold text-lg opacity-60 line-through`}>{result.baseline_score}%</span>
-                                      </div>
-                                    )}
-                                    <div className="text-right">
-                                      <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
-                                      <span className={`font-bold text-2xl text-emerald-500`}>{result.match_score}%</span>
-                                    </div>
-                                  </div>
+                            {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (
+                              <div className={`p-4 rounded-xl border flex items-center justify-between ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
+                                <div>
+                                  <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                                  <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>Based on current JD</p>
                                 </div>
-                                {(required || preferred) && (
-                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
-                                    {tierRow('Required skills covered', 'Skills the posting requires. Recruiters filter on these first.', required, baselineBreakdown?.required)}
-                                    {tierRow('Nice-to-have covered', 'Skills the posting lists as preferred or desirable. Each counts half as much as a required skill.', preferred, baselineBreakdown?.preferred)}
-                                    {readiness && <p className="text-[10px] opacity-70 pt-1">{readiness.guidance}</p>}
-                                  </div>
-                                )}
-                                {breakdown && (
-                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
-                                    {breakdown.optimized.components.map((component) => {
-                                      const baselineComponent = breakdown.baseline.components
-                                        .find((c) => c.id === component.id);
-                                      return (
-                                        <div key={component.id} className="flex items-center justify-between gap-3 text-[10px]">
-                                          <span className="opacity-70 truncate" title={component.detail}>
-                                            {component.label}
-                                            <span className="opacity-50"> · {Math.round(component.weight * 100)}% weight</span>
-                                          </span>
-                                          <span className="font-bold tabular-nums whitespace-nowrap">
-                                            {baselineComponent && (
-                                              <span className="opacity-40 mr-1">{Math.round(baselineComponent.score * 100)}% →</span>
-                                            )}
-                                            <span className="text-emerald-500">{Math.round(component.score * 100)}%</span>
-                                          </span>
-                                        </div>
-                                      );
-                                    })}
-                                    {missingRequired.length > 0 && (
-                                      <p className="text-[10px] opacity-70 pt-1">
-                                        <span className="font-bold">{required ? 'Missing required' : 'Still missing'}:</span> {missingRequired.slice(0, 10).join(', ')}
-                                        {missingRequired.length > 10 && <span className="opacity-60"> +{missingRequired.length - 10} more</span>}
-                                      </p>
-                                    )}
-                                    {missingPreferred.length > 0 && (
-                                      <p className="text-[10px] opacity-50">
-                                        <span className="font-bold">Missing nice-to-have:</span> {missingPreferred.slice(0, 8).join(', ')}
-                                        {missingPreferred.length > 8 && <span> +{missingPreferred.length - 8} more</span>}
-                                      </p>
-                                    )}
-                                    <p className="text-[10px] opacity-40 pt-1">
-                                      No ATS applies one universal cutoff such as 80% - recruiters filter on the required skills. Add a missing skill to your master resume or brain dump only if you have it. Requirement Evidence shows what your experience actually proves.
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                              );
-                            })()}
-                            {activeAudience && results[activeAudience] && (
-                              <RequirementEvidenceCard
-                                evidence={results[activeAudience].requirement_evidence}
-                                verification={results[activeAudience].draft_verification}
-                                coverage={results[activeAudience].input_coverage}
-                                isDarkMode={isDarkMode}
-                                onSaveEvidence={note => setBrainDump(previous => [previous.trim(), note].filter(Boolean).join('\n'))}
-                              />
-                            )}
-                            {previewSnapshot && <AtsCompatibilityCard
-                              resume={previewSnapshot} context={validationContext} safe={atsSafeLayout} font={atsFont}
-                              masked={isPiiMasked}
-                              onSafe={setAtsSafeLayout} onFont={setAtsFont}
-                              onCopy={text => { navigator.clipboard.writeText(text).then(() => showToast('Application fields copied. Review before submitting.', 'success')).catch(error => { console.error('Copy failed:', error); showToast('Could not copy application fields.', 'error'); }); }}
-                            />}
-                            {activeAudience && results[activeAudience] && !validationIsCurrent(results[activeAudience], validationContext) && (
-                              <p className="p-3 rounded-xl border text-xs text-amber-500" role="status">
-                                Content or evidence changed. Previous reports are stale until revalidation completes; export will recheck this version.
-                              </p>
-                            )}
-                            {activeAudience && validationIsCurrent(results[activeAudience], validationContext) && results[activeAudience]?.content_validation?.status === 'checked_in_code' && (
-                              <p className="p-3 rounded-xl border text-xs" role="status">
-                                Current content checked in code; scores refreshed. AI semantic review and generation-only reports are no longer current. Run Optimize again for a full review.
-                              </p>
-                            )}
-                            {exportValidation && (
-                              <div className="p-4 rounded-xl border text-xs" role="status">
-                                <h3 className="font-bold">Last PDF export check</h3>
-                                <p>{exportValidation.page_count} pages · {exportValidation.blocks_checked} text blocks checked. {exportValidation.errors.length ? 'Export stopped.' : 'Text preserved in reading order.'}</p>
-                                {[...exportValidation.errors, ...exportValidation.warnings].map((message, index) => <p className="mt-1" key={index}>{message}</p>)}
-                                <p className="mt-1 opacity-60">Checks extracted text against the rendered preview, not hiring probability or every ATS. Review visual layout separately.</p>
-                              </div>
-                            )}
-                            {activeAudience && results[activeAudience]?.impact_audit && (() => {
-                              const audit = results[activeAudience].impact_audit!;
-                              const tone = audit.score >= 75 ? 'text-emerald-500' : audit.score >= 55 ? 'text-amber-500' : 'text-rose-500';
-                              return (
-                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-sky-400' : 'text-sky-700'}`}>Impact Audit</h3>
-                                      <p className="text-[10px] mt-1 opacity-70">
-                                        FAANG-style bullet quality across {audit.bullets_evaluated} bullets · {Math.round(audit.quantified_ratio * 100)}% quantified
-                                      </p>
-                                    </div>
+                                <div className="flex items-center gap-3">
+                                  {results[activeAudience].baseline_score !== undefined && (
                                     <div className="text-right">
-                                      <span className="text-[10px] uppercase tracking-widest opacity-60 block">Score</span>
-                                      <span className={`font-bold text-2xl ${tone}`}>{audit.score}</span>
-                                    </div>
-                                  </div>
-                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
-                                    {audit.components.map((component) => (
-                                      <div key={component.id} className="flex items-center justify-between gap-3 text-[10px]">
-                                        <span className="opacity-70 truncate" title={component.detail}>
-                                          {component.label}
-                                          <span className="opacity-50"> · {Math.round(component.weight * 100)}% weight</span>
-                                        </span>
-                                        <span className="font-bold tabular-nums whitespace-nowrap">
-                                          {Math.round(component.score * 100)}%
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  {audit.findings.length > 0 && (
-                                    <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
-                                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">
-                                        Top fixes ({audit.findings.length} found)
-                                      </p>
-                                      {audit.findings.slice(0, 4).map((finding, idx) => (
-                                        <div key={`${finding.id}-${idx}`} className="text-[10px] leading-relaxed">
-                                          <span className={`font-bold uppercase tracking-wider mr-1 ${
-                                            finding.severity === 'high' ? 'text-rose-500'
-                                              : finding.severity === 'medium' ? 'text-amber-500' : 'opacity-50'
-                                          }`}>{finding.severity}</span>
-                                          <span className="opacity-80">{finding.issue}</span>
-                                          <span className="opacity-50"> → {finding.fix}</span>
-                                          {finding.bullet && (
-                                            <p className="opacity-40 italic truncate mt-0.5" title={finding.bullet}>“{finding.bullet}”</p>
-                                          )}
-                                        </div>
-                                      ))}
+                                      <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
+                                      <span className={`font-bold text-lg opacity-60 line-through`}>{results[activeAudience].baseline_score}%</span>
                                     </div>
                                   )}
-                                </div>
-                              );
-                            })()}
-                            {activeAudience && results[activeAudience]?.bullet_budget_report && (
-                              <BulletBudgetReportCard report={results[activeAudience].bullet_budget_report!} isDarkMode={isDarkMode} />
-                            )}
-                            {activeAudience && results[activeAudience]?.linkedin_trends && (
-                              <LinkedInTrendsCard report={results[activeAudience].linkedin_trends} isDarkMode={isDarkMode} />
-                            )}
-                            {activeAudience && results[activeAudience]?.audience_coverage && (() => {
-                              const coverage = results[activeAudience].audience_coverage!;
-                              const tone = (value: number | null) =>
-                                value === null ? 'opacity-50' : value >= 70 ? 'text-emerald-500' : value >= 45 ? 'text-amber-500' : 'text-rose-500';
-                              return (
-                                <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-fuchsia-400' : 'text-fuchsia-700'}`}>Audience Coverage</h3>
-                                      <p className="text-[10px] mt-1 opacity-70 truncate" title={coverage.headline}>
-                                        One resume for: {coverage.headline}
-                                      </p>
-                                    </div>
-                                    {coverage.weighted !== null && (
-                                      <div className="text-right whitespace-nowrap">
-                                        <span className="text-[10px] uppercase tracking-widest opacity-60 block">Weighted</span>
-                                        {coverage.baseline_weighted !== null && coverage.baseline_weighted !== coverage.weighted && (
-                                          <span className="font-bold text-sm opacity-50 line-through mr-2">{coverage.baseline_weighted}%</span>
-                                        )}
-                                        <span className={`font-bold text-2xl ${tone(coverage.weighted)}`}>{coverage.weighted}%</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div className="mt-3 pt-3 border-t border-white/10 space-y-3">
-                                    {coverage.entries.map((entry) => (
-                                      <div key={entry.id} className="text-[10px]">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <span className="opacity-80 truncate" title={entry.reason}>
-                                            <span className="font-bold">{entry.label}</span>
-                                            <span className="opacity-50"> · {entry.weight}%{entry.primary ? ' · Primary' : ''}</span>
-                                          </span>
-                                          <span className="font-bold tabular-nums whitespace-nowrap">
-                                            {entry.scored ? (
-                                              <>
-                                                {entry.baseline !== null && entry.baseline !== entry.coverage && (
-                                                  <span className="opacity-50 line-through mr-1">{entry.baseline}%</span>
-                                                )}
-                                                <span className={tone(entry.coverage)}>{entry.coverage}%</span>
-                                              </>
-                                            ) : (
-                                              <span className="opacity-50" title="Custom readers have no signal set to check">Not scored</span>
-                                            )}
-                                          </span>
-                                        </div>
-                                        {entry.scored && (
-                                          <div className="mt-1 flex flex-wrap gap-1">
-                                            {entry.matched.map((label) => {
-                                              const gained = entry.gained.includes(label);
-                                              return (
-                                                <span
-                                                  key={label}
-                                                  title={gained ? 'Newly evidenced by this version' : 'Evidenced in this version'}
-                                                  className={`px-1.5 py-0.5 rounded ${gained ? 'bg-emerald-500/20 text-emerald-500' : (isDarkMode ? 'bg-white/10 opacity-80' : 'bg-black/5 opacity-80')}`}
-                                                >
-                                                  {gained ? '+ ' : ''}{label}
-                                                </span>
-                                              );
-                                            })}
-                                            {entry.missing.map((label) => {
-                                              const lost = entry.lost.includes(label);
-                                              return (
-                                                <span
-                                                  key={label}
-                                                  title={lost
-                                                    ? 'In your original resume but not in this version - check whether it was trimmed'
-                                                    : 'Not evidenced - add it to your resume only if it is true'}
-                                                  className={`px-1.5 py-0.5 rounded border border-dashed ${lost ? 'border-rose-500 text-rose-500' : 'border-current opacity-50'}`}
-                                                >
-                                                  {label}
-                                                </span>
-                                              );
-                                            })}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                  <p className="mt-3 text-[10px] opacity-50">
-                                    Keyword evidence of what each reader scans for. Dashed signals are absent from the text - add one only if it is true.
-                                  </p>
-                                </div>
-                              );
-                            })()}
-                            {autoSelection && (                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'glass-panel border-white/10' : 'glass-panel-light border-black/5'}`}>
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
-                                    <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>Auto-selected Master Resume</h3>
-                                    <p className="text-[10px] mt-1 opacity-70">
-                                      Ranked {autoSelection.ranked.length} resumes against {autoSelection.jd_keywords_evaluated} JD requirements
-                                    </p>
-                                  </div>
                                   <div className="text-right">
-                                    <span className="text-[10px] uppercase tracking-widest text-indigo-400 block">Winner</span>
-                                    <span className="font-bold text-lg text-indigo-400">{autoSelection.winner.score}%</span>
+                                    <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
+                                    <span className={`font-bold text-2xl text-emerald-500`}>{results[activeAudience].match_score}%</span>
                                   </div>
                                 </div>
-                                <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
-                                  {autoSelection.ranked.slice(0, 5).map((entry, index) => (
-                                    <div key={entry.id} className="flex items-center justify-between gap-3 text-[10px]">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleSetActiveResume(entry.id)}
-                                        title={`Pin "${entry.name}" and stop auto-selecting`}
-                                        className={`truncate text-left hover:underline ${index === 0 ? 'font-bold' : 'opacity-70'}`}
-                                      >
-                                        {index === 0 ? '★ ' : `${index + 1}. `}{entry.name}
-                                      </button>
-                                      <span className="font-bold tabular-nums whitespace-nowrap opacity-80">{entry.score}%</span>
-                                    </div>
-                                  ))}
-                                  {autoSelection.closeCall && (
-                                    <p className="text-[10px] text-amber-500 pt-1">
-                                      Close call — only {autoSelection.margin} point{autoSelection.margin === 1 ? '' : 's'} separate the top two. Review both.
-                                    </p>
-                                  )}
-                                  <p className="text-[10px] opacity-50 pt-1">Click any resume above to pin it and turn auto-selection off.</p>
-                                </div>
-                              </div>
-                            )}
-                            {resumeSelectionMode === 'manual' && masterResumes.length > 1 && (
-                              <div className="flex items-center justify-between gap-3 px-1">
-                                <p className="text-[10px] opacity-60">
-                                  Auto-selection is off — optimizing your pinned resume.
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={() => setResumeSelectionModePersisted('auto')}
-                                  className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 hover:underline whitespace-nowrap"
-                                >
-                                  Enable auto-select
-                                </button>
                               </div>
                             )}
                             <div className="relative" ref={audienceDropdownRef}>
                               <div className="flex items-center justify-between mb-2">
-                                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Audiences (blend up to {MAX_BLENDED_AUDIENCES})</label>
+                                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white/70' : 'text-slate-800'}`}>Target Audiences (Multi-select)</label>
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -4394,16 +3729,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 }`}
                               >
                                 <span className="truncate flex items-center gap-2">
-                                  {audienceMix
+                                  {selectedAudiences.length > 0
                                     ? (
                                       <>
-                                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
-                                          {audienceMix.source === 'manual' ? 'Manual' : 'Auto'}
-                                        </span>
-                                        <span className="truncate">{audienceHeadline(audienceMix)}</span>
+                                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">Auto</span>
+                                        {selectedAudiences.map(id => id === 'custom' ? (customAudience || 'Custom Persona') : (AUDIENCES.find(a => a.id === id)?.label || id)).join(', ')}
                                       </>
                                     )
-                                    : 'Select audiences, or leave empty to auto-select'}
+                                    : 'Select audiences...'}
                                 </span>
                                 <ChevronDown className="w-4 h-4 opacity-50" />
                               </button>
@@ -4416,7 +3749,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedAudiences(['microsoft']);
-                                        setAudienceSuggestion(null);
                                       }}
                                       className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-500 rounded hover:bg-emerald-500/20 transition-colors"
                 >
@@ -4426,57 +3758,27 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedAudiences([]);
-                                        setAudienceSuggestion(null);
                                       }}
                                       className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-red-500/10 text-red-500 rounded hover:bg-red-500/20 transition-colors"
                                     >
                                       Clear
                                     </button>
                                   </div>
-                                  {AUDIENCES.map((audience) => {
-                                    const isSelected = selectedAudiences.includes(audience.id);
-                                    const mixEntry = audienceMix?.entries.find(entry => entry.id === audience.id);
-                                    const isPrimary = !!mixEntry && audienceMix?.entries[0]?.id === audience.id;
-                                    return (
-                                      <div
-                                        key={audience.id}
-                                        className={`flex items-center ${
-                                          isSelected
-                                            ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
-                                            : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
-                                        }`}
-                                      >
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleAudience(audience.id)}
-                                          title={mixEntry?.reason}
-                                          className="flex-1 min-w-0 px-3 py-2 text-xs flex items-center gap-2 text-left"
-                                        >
-                                          <span>{audience.icon}</span>
-                                          <span className="truncate">{audience.label}</span>
-                                          {mixEntry && (
-                                            <span className="ml-auto text-[10px] font-bold tabular-nums whitespace-nowrap">
-                                              {mixEntry.weight}%{isPrimary ? ' · Primary' : ''}
-                                            </span>
-                                          )}
-                                          {isSelected && <CheckCircle2 className={`w-4 h-4 shrink-0 ${mixEntry ? '' : 'ml-auto'}`} />}
-                                        </button>
-                                        {mixEntry && !isPrimary && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              makePrimaryAudience(audience.id);
-                                            }}
-                                            title="Make this the primary reader: it frames the summary and each role's opening bullet"
-                                            className="px-2 py-1 mr-2 text-[9px] font-bold uppercase tracking-widest rounded border border-current opacity-70 hover:opacity-100 whitespace-nowrap"
-                                          >
-                                            Make primary
-                                          </button>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
+                                  {AUDIENCES.map((audience) => (
+                                    <button
+                                      key={audience.id}
+                                      onClick={() => toggleAudience(audience.id)}
+                                      className={`w-full px-3 py-2 text-xs flex items-center gap-2 ${
+                                        selectedAudiences.includes(audience.id)
+                                          ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
+                                          : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
+                                      }`}
+                                    >
+                                      <span>{audience.icon}</span>
+                                      {audience.label}
+                                      {selectedAudiences.includes(audience.id) && <CheckCircle2 className="w-4 h-4 ml-auto" />}
+                                    </button>
+                                  ))}
                                 </div>
                               )}
                               {selectedAudiences.includes('custom') && (
@@ -4495,25 +3797,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     }`}
                                   />
                                 </motion.div>
-                              )}
-                              {audienceMix && (
-                                <div className={`mt-2 p-2 rounded-lg border text-[10px] ${isDarkMode ? 'border-white/10 bg-white/5' : 'border-black/5 bg-black/5'}`}>
-                                  <p className="opacity-60 mb-1">
-                                    One resume is written for this blend. The primary reader frames the summary and each role's opening bullet; the others decide what else earns a place.
-                                  </p>
-                                  <ul className="space-y-1">
-                                    {audienceMix.entries.map((entry, idx) => (
-                                      <li key={entry.id} className="leading-snug">
-                                        <span className="font-bold">{entry.label}</span>
-                                        <span className="opacity-60"> · {entry.weight}%{idx === 0 ? ' · Primary' : ''}</span>
-                                        {entry.reason && <span className="block opacity-50 italic">{entry.reason}</span>}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {selectedAudiences.length > MAX_BLENDED_AUDIENCES && (
-                                    <p className="mt-1 text-amber-500">Only the first {MAX_BLENDED_AUDIENCES} selected audiences are blended.</p>
-                                  )}
-                                </div>
                               )}
                             </div>
                             
@@ -4752,11 +4035,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     onChange={(e) => setFastMode(e.target.checked)}
                                     className="accent-emerald-500"
                                   />
-                                  <span className="text-[11px] font-bold">
-                                    Fast Mode{providersOf(selectedEngine).some(provider => modelCatalog.providers[provider].fallback)
-                                      ? ` (start on ${providersOf(selectedEngine).map(provider => modelLabel(modelCatalog, modelCatalog.providers[provider].fallback || modelCatalog.providers[provider].primary)).join(' + ')})`
-                                      : ' (skips the evidence steps)'}
-                                  </span>
+                                  <span className="text-[11px] font-bold">Fast Mode (Use Flash Model)</span>
                                 </label>
                               </div>
                             </div>
@@ -4773,45 +4052,59 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               <div>
                                 <label className="block text-[10px] font-black uppercase tracking-widest mb-3 opacity-50">Select Engine</label>
                                 <div className="grid grid-cols-2 gap-2">
-                                  {ENGINE_MODES.map((eng) => (
+                                  {(['gemini', 'openai', 'hybrid-gemini', 'hybrid-openai'] as const).map((eng) => (
                                     <button
                                       key={eng}
-                                      onClick={() => chooseEngine(eng)}
-                                      title={ENGINE_DESCRIPTIONS[eng]}
-                                      className={`py-2 text-[9px] font-black rounded-lg border transition-all tracking-widest ${
+                                      onClick={() => setSelectedEngine(eng)}
+                                      className={`py-2 text-[9px] font-black rounded-lg border transition-all capitalize tracking-widest ${
                                         selectedEngine === eng 
                                           ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500' : 'bg-black text-white border-black')
                                           : (isDarkMode ? 'bg-white/5 text-white/40 border-white/10' : 'bg-white text-black/40 border-black/5')
                                       }`}
                                     >
-                                      {ENGINE_LABELS[eng]}{eng === modelCatalog.defaultEngine ? ' · Default' : ''}
+                                      {eng.replace('hybrid-', 'Hybrid ')}
                                     </button>
                                   ))}
                                 </div>
                               </div>
 
-                              <div className={`p-3 rounded-xl border space-y-2 ${isDarkMode ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}>
-                                <p className="text-[10px] opacity-70 leading-relaxed font-medium">{ENGINE_DESCRIPTIONS[selectedEngine]}</p>
-                                {activeRoutes.map(route => (
-                                  <div key={route.provider} className="flex items-start gap-2">
-                                    <Zap className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                                    <p className="text-[10px] leading-relaxed">
-                                      <span className="font-bold">{route.work}:</span>{' '}
-                                      {modelLabel(modelCatalog, route.primary) || `no ${PROVIDER_LABELS[route.provider]} model set`}
-                                      <span className="opacity-60">
-                                        {route.fallback ? `, then ${modelLabel(modelCatalog, route.fallback)} if it fails` : ', no fallback: stops if it fails'}
-                                      </span>
-                                    </p>
+                              <div className="space-y-4">
+                                {!selectedEngine.startsWith('hybrid') ? (
+                                  <div className="relative">
+                                    <select 
+                                      className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 appearance-none ${
+                                        isDarkMode ? 'bg-black text-white border-white/10' : 'bg-white text-black border-black/10'
+                                      }`}
+                                      value={engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'].model}
+                                      onChange={(e) => setEngineConfig({
+                                        ...engineConfig,
+                                        [selectedEngine === 'gemini' ? 'gemini' : 'openai']: { ...engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'], model: e.target.value }
+                                      })}
+                                    >
+                                      {selectedEngine === 'gemini' && (
+                                        <>
+                                          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                                          <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                                          <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                                          <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                                        </>
+                                      )}
+                                      {selectedEngine === 'openai' && (
+                                        <>
+                                          <option value="gpt-4o">GPT-4o</option>
+                                          <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                          <option value="o3-mini">OpenAI o3-mini</option>
+                                        </>
+                                      )}
+                                    </select>
+                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 opacity-40 pointer-events-none" />
                                   </div>
-                                ))}
-                                <p className="text-[9px] opacity-50">
-                                  Models are set by the admins for every user.
-                                  {isAdminEmail(user?.email) && (
-                                    <button onClick={openModelSettings} className="ml-1 underline font-bold text-emerald-500 opacity-100">
-                                      Manage AI models
-                                    </button>
-                                  )}
-                                </p>
+                                ) : (
+                                  <div className={`p-3 rounded-xl border flex items-center gap-3 ${isDarkMode ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}>
+                                    <Zap className="w-4 h-4 text-emerald-500 shrink-0" />
+                                    <p className="text-[10px] opacity-70 leading-relaxed font-medium">Smart routing enabled: Using Gemini for analysis and OpenAI for tone optimization.</p>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -4980,50 +4273,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             />
                             <p className="text-[10px] opacity-40 mt-1">These instructions will be given high priority during the resume optimization process.</p>
                           </div>
-
-                          {/* Bullet Rules summary (edited on the Profile tab) */}
-                          <div className={`mt-4 flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-[11px] ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-                            <span className="min-w-0 truncate" title={bulletRulesSummary(bulletRules).join(' \u00b7 ')}>
-                              <span className="text-[10px] font-bold uppercase tracking-widest">Bullet Rules: </span>
-                              <span className={isDarkMode ? 'opacity-60' : 'opacity-70'}>
-                                {!bulletRules.enabled
-                                  ? 'Off - the system sizes every role by tenure'
-                                  : bulletRulesSummary(bulletRules).join(' \u00b7 ') || 'On, but no rule is active - the system sizes every role by tenure'}
-                              </span>
-                            </span>
-                            <Link to="/profile" className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-emerald-500 hover:underline">
-                              Edit
-                            </Link>
-                          </div>
-
-                          {/* LinkedIn trends switch: curated trending skills for the target role */}
-                          <div className={`mt-2 flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-[11px] ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-                            <span
-                              className="min-w-0 truncate"
-                              title={trendPreview
-                                ? `Curated LinkedIn trends for ${trendPreview.label} (reviewed ${trendPreview.as_of}). Only trending skills your own material supports are used; the rest are listed as gaps after the run.`
-                                : 'Trending skills are not considered'}
-                            >
-                              <span className="text-[10px] font-bold uppercase tracking-widest">LinkedIn Trends: </span>
-                              <span className={isDarkMode ? 'opacity-60' : 'opacity-70'}>
-                                {trendPreview
-                                  ? `On - ${trendPreview.label} (curated, reviewed ${trendPreview.as_of}) - only skills your resume supports`
-                                  : 'Off - trending skills are not considered'}
-                              </span>
-                            </span>
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={followLinkedInTrends}
-                              aria-label="Follow LinkedIn trends"
-                              onClick={() => setFollowLinkedInTrends(on => !on)}
-                              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                                followLinkedInTrends ? 'bg-emerald-500' : isDarkMode ? 'bg-white/15' : 'bg-black/15'
-                              }`}
-                            >
-                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${followLinkedInTrends ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
-                            </button>
-                          </div>
                         
                         {/* Optimize Button Section */}
                           <div className="pt-4 border-t border-black/5 dark:border-white/10">
@@ -5139,10 +4388,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               </AnimatePresence>
                               <div className="flex justify-end mb-2">
                                 <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest text-right">
-                                  {`Active Engine: ${engineSummary(selectedEngine)}`}
+                                  {selectedEngine.includes('hybrid') ? 'Hybrid Mode' : `Active Engine: ${engineConfig.gemini.model}`}
                                   <br />
                                   <span className="opacity-40 text-[7px]">
-                                    {activeRoutes.map(describeRoute).join(' · ')}
+                                    {engineConfig.gemini.model === 'gemini-3.1-pro-preview' && 'Fallback Chain: 3.5 Flash → 3.1 Flash Lite'}
+                                    {engineConfig.gemini.model === 'gemini-3.5-flash' && 'Fallback Chain: 3.1 Flash Lite'}
+                                    {engineConfig.gemini.model === 'gemini-3.1-flash-lite' && 'Fallback Chain: 3.5 Flash'}
                                   </span>
                                 </span>
                               </div>
@@ -5150,7 +4401,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               <div className="space-y-3">
                                 {(selectedEngine === 'gemini' || selectedEngine.startsWith('hybrid')) && (
                                   <div className={selectedEngine.startsWith('hybrid') ? 'pb-2 border-b border-black/5 dark:border-white/5' : ''}>
-                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 block mb-1">Gemini: {activeRoutes.find(route => route.provider === 'gemini')?.work}</span>}
+                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 block mb-1">Stage 1: Gemini Analysis</span>}
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col">
                                         <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
@@ -5166,7 +4417,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 
                                 {(selectedEngine === 'openai' || selectedEngine === 'hybrid-openai') && (
                                   <div className="pt-2">
-                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest text-blue-500 block mb-1">OpenAI: {activeRoutes.find(route => route.provider === 'openai')?.work}</span>}
+                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest text-blue-500 block mb-1">Stage 3: OpenAI Generation</span>}
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col">
                                         <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
@@ -5193,25 +4444,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 <h3 className="font-bold text-sm">Optimization Insights</h3>
                               </div>
                               <div className="p-4 text-xs leading-relaxed opacity-80 space-y-4">
-                                {results[activeAudience].match_score !== undefined && (() => {
-                                  const insight = results[activeAudience];
-                                  const level = insight.score_breakdown?.optimized?.readiness?.level
-                                    || (insight.match_score >= 70 ? 'strong' : insight.match_score >= 55 ? 'good' : insight.match_score >= 40 ? 'partial' : 'low');
-                                  const tone = level === 'strong' ? 'text-emerald-500' : level === 'good' ? 'text-sky-500' : level === 'partial' ? 'text-yellow-500' : 'text-red-500';
-                                  return (
+                                {results[activeAudience].match_score !== undefined && (
                                   <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
-                                    <span className="font-bold" title="Composite alignment, not the separate evidence-limited 80% keyword target">Composite JD Alignment</span>
-                                    <span className={`font-bold text-sm ${tone}`} title={insight.score_breakdown?.optimized?.readiness?.label}>
-                                      {insight.match_score}%
-                                    </span>
-                                  </div>
-                                  );
-                                })()}
-                                {typeof results[activeAudience].requirement_evidence?.qualification_evidence === 'number' && (
-                                  <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
-                                    <span className="font-bold" title="What your own material proves for this posting's requirements">Requirements Proven</span>
-                                    <span className="font-bold text-sm">
-                                      {results[activeAudience].requirement_evidence!.qualification_evidence}%
+                                    <span className="font-bold">Match Score</span>
+                                    <span className={`font-bold text-sm ${results[activeAudience].match_score >= 80 ? 'text-emerald-500' : results[activeAudience].match_score >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
+                                      {results[activeAudience].match_score}%
                                     </span>
                                   </div>
                                 )}
@@ -5469,14 +4706,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       </div>
                     )}
                   </section>
-
-                  <BulletRulesSettings
-                    rules={bulletRules}
-                    onChange={setBulletRules}
-                    isDarkMode={isDarkMode}
-                    resumeText={resumeText}
-                    jobDescription={jobDescription}
-                  />
 
                   {/* Google Drive Status/Reconnect */}
                   {!driveAccessToken && user && (
@@ -5860,7 +5089,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       <div className="flex flex-wrap items-center justify-start lg:justify-end gap-2">
                         <div className="flex items-center gap-1 bg-black/5 dark:bg-white/5 rounded-lg p-0.5 mr-2">
                           <button 
-                            onClick={() => { if (previewSnapshot) downloadJSON(previewSnapshot, targetRole, companyName, showToast); }}
+                            onClick={() => downloadJSON(activeAudience ? results[activeAudience] : data, targetRole, companyName, showToast)}
                             className={`p-1.5 rounded-md transition-colors hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400`}
                             title="Download Resume JSON"
                           >
@@ -5989,12 +5218,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               id="resume-container"
                               className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                             >
-                          {atsSafeLayout && previewSnapshot ? (
-                            <AtsResumePreview resume={isPiiMasked ? {
-                              ...previewSnapshot,
-                              personal_info: { ...previewSnapshot.personal_info, location: '[REDACTED LOCATION]', email: '[REDACTED EMAIL]', phone: '[REDACTED PHONE]', linkedin: '' },
-                            } : previewSnapshot} font={atsFont} />
-                          ) : previewMode === 'standard' ? (
+                          {previewMode === 'standard' ? (
                             <div className="resume-page" style={{ paddingBottom: isDownloading ? '0' : '2rem' }}>
                               {renderSection('header')}
                               {renderSection('summary')}

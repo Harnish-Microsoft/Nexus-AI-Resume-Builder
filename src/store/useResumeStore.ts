@@ -16,6 +16,7 @@ interface ResumeStore {
   targetRole: string;
   audience: string;
   isOptimizing: boolean;
+  aiEngine: string;
   comparisonData: any | null;
 
   // Actions
@@ -30,7 +31,7 @@ interface ResumeStore {
   toggleGrid: () => void;
   toggleDarkMode: () => void;
   resetResume: () => void;
-  updateConfig: (updates: { jobDescription?: string; targetRole?: string; audience?: string }) => void;
+  updateConfig: (updates: { jobDescription?: string; targetRole?: string; audience?: string; aiEngine?: string }) => void;
   setIsOptimizing: (val: boolean) => void;
   setComparisonData: (data: any | null) => void;
   applyOptimization: (optimizedElements: CanvasElement[]) => void;
@@ -76,6 +77,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
   targetRole: '',
   audience: 'Technical Recruiter',
   isOptimizing: false,
+  aiEngine: 'gemini-3-flash-preview',
   comparisonData: null,
 
   saveToHistory: () => {

@@ -1,8 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowLeft, Send, Bot, User, Loader2, RefreshCw, Pause, Play, CheckCircle2 } from 'lucide-react';
 import { getDecryptedKey } from '../services/geminiService';
-import { geminiThinkingConfig, providerChain, useModelCatalog } from '../services/modelCatalog';
-import { modelLabel, runModelChain } from '../lib/aiModels';
 import { AutoResizeTextarea } from './AutoResizeTextarea';
 import { GoogleGenAI } from "@google/genai";
 
@@ -27,10 +25,6 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [chatSession, setChatSession] = useState<any>(null);
   const [status, setStatus] = useState<'active' | 'paused' | 'completed' | 'idle'>('idle');
-  const catalog = useModelCatalog();
-  // The model the conversation runs on now; the client that made its chat.
-  const [chatModel, setChatModel] = useState('');
-  const aiRef = useRef<GoogleGenAI | null>(null);
 
   const getSystemPrompt = () => {
     switch (toolId) {
@@ -53,19 +47,7 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
     }
   };
 
-  // A chat on one model; `history` carries a conversation over to the fallback.
-  const createChat = (ai: GoogleGenAI, model: string, history?: any[]) =>
-    ai.chats.create({
-      model,
-      ...(history ? { history } : {}),
-      config: {
-        systemInstruction: getSystemPrompt(),
-        temperature: 0.7,
-        ...geminiThinkingConfig(model),
-      }
-    });
-
-  // Initialize chat on the Gemini primary, or the fallback if the primary fails.
+  // Initialize chat
   const initChat = useCallback(async (isReset = false) => {
     setIsLoading(true);
     if (isReset) {
@@ -78,20 +60,22 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
       if (!apiKey) throw new Error("API key missing");
 
       const ai = new GoogleGenAI({ apiKey });
-      aiRef.current = ai;
-      const { value, model } = await runModelChain('gemini', providerChain('gemini'), async (candidate) => {
-        const chat = createChat(ai, candidate);
-        // Start conversation
-        const response = await chat.sendMessage({ message: "Hello! I'm ready to start." });
-        return { chat, response };
+      const chat = ai.chats.create({
+        model: 'gemini-3-flash-preview',
+        config: {
+          systemInstruction: getSystemPrompt(),
+          temperature: 0.7,
+        }
       });
-      setChatSession(value.chat);
-      setChatModel(model);
+      setChatSession(chat);
       setStatus('active');
-      setMessages([{ role: 'model', content: value.response.text || "Let's begin." }]);
+      
+      // Start conversation
+      const response = await chat.sendMessage({ message: "Hello! I'm ready to start." });
+      setMessages([{ role: 'model', content: response.text || "Let's begin." }]);
     } catch (error) {
       console.error("Error initializing chat:", error);
-      setMessages([{ role: 'model', content: `Sorry, there was an error starting the session. ${error instanceof Error ? error.message : "Please check your API key."}` }]);
+      setMessages([{ role: 'model', content: "Sorry, there was an error starting the session. Please check your API key." }]);
       setStatus('idle');
     }
     setIsLoading(false);
@@ -118,27 +102,13 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
     setIsLoading(true);
 
     try {
-      // The conversation's model first; if it fails, the fallback carries on with the history so far.
-      const chain = providerChain('gemini');
-      const from = chain.indexOf(chatModel);
-      const { value, model } = await runModelChain('gemini', from >= 0 ? chain.slice(from) : chain, async (candidate) => {
-        const chat = candidate === chatModel || !aiRef.current
-          ? chatSession
-          : createChat(aiRef.current, candidate, chatSession.getHistory());
-        const response = await chat.sendMessage({ message: userMsg });
-        return { chat, response };
-      });
-      if (model !== chatModel) {
-        setChatSession(value.chat);
-        setChatModel(model);
-      }
-      const response = value.response;
+      const response = await chatSession.sendMessage({ message: userMsg });
       if (status === 'active') { // Only add if still active (not paused/completed while waiting)
         setMessages(prev => [...prev, { role: 'model', content: response.text || "" }]);
       }
     } catch (error) {
       console.error("Error sending message:", error);
-      setMessages(prev => [...prev, { role: 'model', content: `Sorry, I encountered an error processing your response. ${error instanceof Error ? error.message : ""}`.trim() }]);
+      setMessages(prev => [...prev, { role: 'model', content: "Sorry, I encountered an error processing your response." }]);
     }
     setIsLoading(false);
   };
@@ -165,7 +135,7 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
           <div>
             <h2 className="text-xl font-bold">{title}</h2>
             <div className="flex items-center gap-2">
-              <p className="text-xs opacity-70">Powered by {modelLabel(catalog, chatModel || catalog.providers.gemini.primary) || 'Gemini'}</p>
+              <p className="text-xs opacity-70">Powered by Gemini 1.5 Pro</p>
               <div className={`w-1.5 h-1.5 rounded-full ${
                 status === 'active' ? 'bg-emerald-500 animate-pulse' : 
                 status === 'paused' ? 'bg-amber-500' : 

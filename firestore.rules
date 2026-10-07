@@ -2,83 +2,24 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Hardened Helper Functions
-    // ===============================================================
-
+    // Basic helper: Check if user is signed in
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // Every signed-in user with a verified email is an admin (ALL_USERS_ARE_ADMINS in src/constants.ts).
-    // To limit admins again, add back:
-    //   && request.auth.token.email.lower() in ['hackerharnish@gmail.com', 'param_jariwala@yahoo.com']
-    function isAdmin() {
-      return isSignedIn()
-        && request.auth.token.email_verified == true;
-    }
-
+    // Basic helper: Check if user is accessing their own data
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    function hasRequiredFields(fields) {
-      return incoming().keys().hasAll(fields);
-    }
-
-    // Validation for UserProfile
-    function isValidUserProfile(data) {
-      // Must have exact keys
-      return data.keys().hasAll(['userId', 'encryptedApiKey', 'masterResume']) &&
-             data.keys().hasAny(['customPrompt', 'driveAccessToken', 'settings', 'updatedAt']) == false ||               
-             data.keys().hasAll(['userId', 'encryptedApiKey', 'masterResume', 'customPrompt', 'driveAccessToken', 'settings', 'updatedAt']) ||
-             data.keys().hasAll(['userId', 'encryptedApiKey', 'masterResume', 'customPrompt', 'driveAccessToken', 'settings']) ||
-             // Add all combinations if needed or simplify
-             true; // Simplification for now, but need strict enforcement
-    }
-
-    // Correct validation pattern (Stricter)
-    function validateUserProfile(data) {
-        return data.userId is string && data.userId.size() <= 128 &&
-               data.encryptedApiKey is string && data.encryptedApiKey.size() <= 2000 &&
-               data.masterResume is string && data.masterResume.size() <= 500000 &&
-               (!('customPrompt' in data) || (data.customPrompt is string && data.customPrompt.size() <= 5000)) &&
-               (!('driveAccessToken' in data) || (data.driveAccessToken is string && data.driveAccessToken.size() <= 2000)) &&
-               (!('settings' in data) || data.settings is map) &&
-               (!('updatedAt' in data) || data.updatedAt is timestamp);
-    }
-    
-    // Correct validation pattern for resume version
-    function validateResumeVersion(data) {
-        return data.userId is string && data.userId.size() <= 128 &&
-               data.timestamp is timestamp &&
-               data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-               data.data is map;
-    }
-    
-    // ===============================================================
-    // Fortress Rules
-    // ===============================================================
-
+    // Default deny for all other resources
     match /{document=**} {
       allow read, write: if false;
     }
 
+    // User-specific data: Only the owner can access their own document and subcollections
     match /users/{userId} {
       allow read, write: if isOwner(userId);
-      allow read: if isSignedIn() && userId == 'admin';
       
       match /resumeVersions/{versionId} {
         allow read, write: if isOwner(userId);
@@ -89,17 +30,18 @@ service cloud.firestore {
       }
 
       match /tokenUsage/{monthId} {
-        allow read, write: if isSignedIn();
+        allow read, write: if isOwner(userId);
       }
     }
 
-    match /analytics/{docId} {
-      allow read: if request.auth != null;
+    // Shared config: anyone can read admin settings (like shared API keys)
+    match /users/admin {
+      allow read: if true;
     }
 
-    match /config/aiModels {
-      allow read: if true;
-      allow write: if isAdmin();
+    // Analytics: Any signed-in user can read (if applicable)
+    match /analytics/{docId} {
+      allow read: if isSignedIn();
     }
   }
 }

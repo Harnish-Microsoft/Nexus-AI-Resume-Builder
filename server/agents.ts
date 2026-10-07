@@ -1,7 +1,8 @@
-import type { ModelRunner } from "./modelRunner";
+import { GoogleGenAI } from "@google/genai";
 
-/** Each agent's call runs on the admins' writing models through the request's ModelRunner. */
-export async function runAgents(input: any, runner: ModelRunner) {
+export async function runAgents(input: any, geminiKey: string) {
+  const genAI = new GoogleGenAI({ apiKey: geminiKey });
+
   const agents = {
     hr: "Improve clarity, impact, and signal-to-noise ratio. ANTI-BUZZWORD rule: Replace 'Strategic', 'Visionary', 'Spearheaded' with direct outcomes.",
     ats: "Optimize for ATS keywords. Ensure clean hierarchy.",
@@ -23,7 +24,24 @@ Return structured JSON.
 `;
 
     try {
-      const res = await runner.call(prompt, "writing");
+      let currentModel = "gemini-3.5-flash";
+      let res;
+      try {
+        res = await genAI.models.generateContent({
+          model: currentModel,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { responseMimeType: "application/json" }
+        });
+      } catch (e) {
+        console.warn(`[Agent] ${currentModel} failed, falling back to 3.1-flash-lite...`);
+        currentModel = "gemini-3.1-flash-lite";
+        res = await genAI.models.generateContent({
+          model: currentModel,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { responseMimeType: "application/json" }
+        });
+      }
+
       results[key] = JSON.parse(res.text || "{}");
     } catch (err) {
       console.error(`[Agent ${key}] Failed:`, err);
