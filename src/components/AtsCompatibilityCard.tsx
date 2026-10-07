@@ -20,7 +20,7 @@ interface Props {
 export function AtsCompatibilityCard({ resume, context, safe, font, masked, onSafe, onFont, onCopy }: Props) {
   const material = useMemo(() => buildCandidateMaterial(context.resumeText, context.brainDump, { otherResumes: context.otherResumes }), [context]);
   const goal = useMemo(() => computeKeywordCoverageTarget(resume, context.jobDescription, material.text, context.targetRole), [resume, context, material]);
-  const warnings = structuredResumeWarnings(resume);
+  const warnings = useMemo(() => structuredResumeWarnings(resume), [resume]);
   return <section className="p-4 rounded-xl border space-y-3 text-xs">
     <h3 className="font-bold">Greenhouse + Workday compatibility</h3>
     <label className="flex gap-2 items-center">

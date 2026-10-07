@@ -1246,8 +1246,11 @@ export default function App() {
     name: profileName, location: profileLocation, email: profileEmail, phone: profilePhone,
     linkedin: profileLinkedIn, linkedinText: profileLinkedInText,
   };
-  const previewSnapshot = activeAudience && results[activeAudience]
-    ? canonicalResume(results[activeAudience], profileOverridesRef.current) : null;
+  const activeResult = activeAudience ? results[activeAudience] : undefined;
+  // Memoized: a fresh clone on every render defeated every memo downstream of it.
+  const previewSnapshot = useMemo(() => activeResult
+    ? canonicalResume(activeResult, profileOverridesRef.current) : null,
+  [activeResult, profileName, profileLocation, profileEmail, profilePhone, profileLinkedIn, profileLinkedInText]);
   
   const [isResumePersistent, setIsResumePersistent] = useState(() => localStorage.getItem('isResumePersistent') !== 'false');
 
@@ -2582,12 +2585,12 @@ export default function App() {
     progressIntervalRef.current = setInterval(() => {
       setOptimizationProgress(prev => {
         if (prev < 90) {
-          // Move much slower: close 1% of the distance to 90 every 100ms
-          return prev + (90 - prev) * 0.01;
+          // Close ~1% of the distance to 90 every 100ms, applied in 500ms steps to cut re-renders
+          return prev + (90 - prev) * 0.049;
         }
         return prev;
       });
-    }, 100);
+    }, 500);
     
     const engineName = engineSummary(selectedEngine);
     setOptimizationStatus(`Initializing ${engineName}...`);

@@ -28,10 +28,22 @@ export function documentFingerprint(resume: unknown): string {
     .map(key => [key, data[key]]));
 }
 
+const contextJson = new WeakMap<object, string>();
+
+/** The context holds every resume's full text; it is immutable once built, so stringify it once. */
+function serializeContext(context: ValidationContext): string {
+  let json = contextJson.get(context);
+  if (json === undefined) {
+    json = JSON.stringify(context);
+    contextJson.set(context, json);
+  }
+  return json;
+}
+
 export function validationStamp(resume: unknown, context: ValidationContext, status: ValidationStamp["status"]): ValidationStamp {
   return {
     document: documentFingerprint(resume),
-    context: JSON.stringify(context),
+    context: serializeContext(context),
     posting: JSON.stringify([context.jobDescription, context.targetRole]),
     status,
   };
