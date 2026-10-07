@@ -1023,7 +1023,8 @@ export async function optimizeResume(
 
         // The same models again after a pause: a transient failure is retried, never
         // swapped for a model the admins did not choose.
-        const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
+        // Capped: uncapped doubling waited 4+8+16+32+64s (about two minutes) on a rate limit.
+        const delay = Math.min(Math.pow(2, retryCount) * 2000, 8000) + Math.random() * 1000;
         const retryMsg = isRateLimit 
           ? `AI API quota exceeded. Retrying with exponential backoff (${retryCount}/${maxRetries})...`
           : `Invalid AI response format. Retrying (${retryCount}/${maxRetries})...`;
@@ -1186,6 +1187,8 @@ export async function performSkillAssessment(
  * deterministic keyword match when the model is unavailable or returns nothing
  * usable, so it always returns at least one reader.
  */
+const AUDIENCE_SELECT_TIMEOUT_MS = 15000;
+
 export async function analyzeAudienceMix(
   jobDescription: string,
   targetRole: string,
@@ -1193,7 +1196,10 @@ export async function analyzeAudienceMix(
   fastMode: boolean = false
 ): Promise<AudienceMix> {
   const routedConfig = routeTask('multi_audience', config);
-  const modelsToUse = fastMode ? providerChain(routedConfig.engine, { fast: true }) : routedConfig.model;
+  // Picking readers is a small classification: the quick chain is enough, and it
+  // must never leave the button spinning behind a slow or rate-limited model.
+  const modelsToUse = providerChain(routedConfig.engine, { fast: true });
+  void fastMode;
 
   const catalog = AUDIENCE_PROFILES
     .map((profile) => `- ${profile.id}: ${profile.label} - ${profile.reader}`)
@@ -1222,7 +1228,13 @@ export async function analyzeAudienceMix(
   `;
 
   try {
-    const data = await callAI(prompt, modelsToUse, routedConfig.engine, routedConfig.apiKey);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const data = await Promise.race([
+      callAI(prompt, modelsToUse, routedConfig.engine, routedConfig.apiKey),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Auto-audience selection timed out")), AUDIENCE_SELECT_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
     const resultText = extractJson(data.result || "");
     const mix = normalizeAudienceMix(JSON.parse(resultText || 'null'), 'ai');
     if (mix) return mix;
