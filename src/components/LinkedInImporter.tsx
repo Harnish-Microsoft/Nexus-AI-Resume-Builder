@@ -12,7 +12,6 @@ import {
   Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { extractTextFromPDFFile } from '../lib/pdfUtils';
 import { EngineType, scanResumeImage } from '../services/geminiService';
 
 interface LinkedInImporterProps {
@@ -54,6 +53,7 @@ export const LinkedInImporter: React.FC<LinkedInImporterProps> = ({
         setIsExtracting(true);
         setLinkedInFileName(file.name);
         try {
+          const { extractTextFromPDFFile } = await import('../lib/pdfUtils');
           const text = await extractTextFromPDFFile(file);
           setLinkedInPdfText(text);
           onImport(text);

@@ -1,5 +1,4 @@
 import { saveAs } from "file-saver";
-import { createResumeDOCX } from "../lib/docxExport";
 import { resumeFileName } from "../lib/atsDocument";
 import type { AtsFont } from "../lib/atsDocument";
 import type { OptimizationResult } from "./geminiService";
@@ -10,6 +9,7 @@ export const downloadDOCX = async (
   beforeSave?: () => void, font: AtsFont = "Arial"
 ) => {
   try {
+    const { createResumeDOCX } = await import("../lib/docxExport");
     const blob = await createResumeDOCX(resume, font);
     beforeSave?.();
     if (blob.size > 2_500_000) showToast("This DOCX exceeds Greenhouse's documented 2.5 MB parsing limit. Check your portal's limit.", "info");

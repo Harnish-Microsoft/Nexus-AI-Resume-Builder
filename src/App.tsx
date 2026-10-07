@@ -79,7 +79,6 @@ import { ENGINE_DESCRIPTIONS, ENGINE_LABELS, ENGINE_MODES, PROVIDER_LABELS, engi
 import type { EngineMode } from './lib/aiModels';
 import Markdown from 'react-markdown';
 import { RouterConfig } from './services/aiRouter';
-import { extractTextFromPDFFile, validatePDFExport } from './lib/pdfUtils';
 import type { ExportValidationReport } from './lib/exportValidation';
 import { documentFingerprint, exportReview, revalidateResume, validationIsCurrent, validationStamp } from './lib/resumeValidation';
 import type { ValidationContext } from './lib/resumeValidation';
@@ -2168,6 +2167,7 @@ export default function App() {
     setIsExtracting(true);
     setFileName(file.name);
     try {
+      const { extractTextFromPDFFile } = await import('./lib/pdfUtils');
       const text = await extractTextFromPDFFile(file);
       setResumeText(text);
     } catch (err) {
@@ -2182,6 +2182,7 @@ export default function App() {
     setIsExtractingLinkedIn(true);
     setLinkedInFileName(file.name);
     try {
+      const { extractTextFromPDFFile } = await import('./lib/pdfUtils');
       const text = await extractTextFromPDFFile(file);
       setLinkedInPdfText(text);
     } catch (err) {
@@ -3016,6 +3017,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       setExportValidation(previewReport);
       throw new Error(`Source-to-preview validation failed: ${previewReport.errors[0]}. Switch to ATS-safe layout or restore missing content.`);
     }
+    const { validatePDFExport } = await import('./lib/pdfUtils');
     const report = await validatePDFExport(blob, expectedText);
     if (blob.size > 2_500_000) report.warnings.push("PDF exceeds Greenhouse's documented 2.5 MB parsing limit; check the target portal.");
     const samples = Array.from(element.querySelectorAll('p, li, .resume-bullet-text')).filter(node => node.textContent?.trim());
